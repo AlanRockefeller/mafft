@@ -1,0 +1,8 @@
+bin/
+binaries/
+core/*.o
+
+# Ignore all files that don't have an extension
+core/[!.]*
+
+scripts/
