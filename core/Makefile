@@ -49,6 +49,8 @@ endif
 
 ifeq ($(shell uname),Darwin)
 LIBS += -framework Accelerate
+GPUOBJ = l11gpu.o
+GPULIBS = -framework Metal -framework Foundation
 endif
 
 MYCFLAGS = $(MNO_CYGWIN) $(ENABLE_MULTITHREAD) $(ENABLE_ATOMIC) $(STDF) $(CFLAGS)
@@ -86,7 +88,7 @@ OBJPAIRASH = mtxutl.o io.o mltaln9.o tddis.o constants.o partSalignmm.o Lalignmm
 			 pairash.o defs.o fft.o fftFunctions.o
 OBJPAIRLOCALALIGN = mtxutl.o io.o mltaln9.o tddis.o constants.o partSalignmm.o Lalignmm.o rna.o Salignmm.o Dalignmm.o \
 		            Falign.o MSalignmm.o Galign11.o Lalign11.o genalign11.o MSalign11.o suboptalign11.o SAalignmm.o \
-					pairlocalalignmain.o pairlocalalign.o defs.o fft.o fftFunctions.o
+					pairlocalalignmain.o pairlocalalign.o defs.o fft.o fftFunctions.o $(GPUOBJ)
 OBJDUMMY = mtxutl.o io.o mltaln9.o tddis.o constants.o partSalignmm.o Lalignmm.o rna.o Salignmm.o Dalignmm.o \
 		    Falign.o Falign_localhom.o Galign11.o Lalign11.o genalign11.o SAalignmm.o MSalignmm.o \
 			disttbfast_dummy.o dummy.o defs.o fft.o fftFunctions.o
@@ -108,11 +110,11 @@ OBJMAKEDIRECTIONLIST = mtxutl.o io.o mltaln9.o tddis.o constants.o partSalignmm.
 OBJTBFAST = mtxutl.o io.o mltaln9.o tddis.o constants.o MSalignmm.o partSalignmm.o Lalignmm.o rna.o Salignmm.o Dalignmm.o \
 		    Falign.o Falign_localhom.o Galign11.o Lalign11.o genalign11.o SAalignmm.o \
 			tbfast.o defs.o fft.o fftFunctions.o addfunctions.o \
-			pairlocalalign.o MSalign11.o 
+			pairlocalalign.o MSalign11.o  $(GPUOBJ)
 OBJNODPAIR = mtxutl.o io.o mltaln9.o tddis.o constants.o MSalignmm.o partSalignmm.o Lalignmm.o rna.o Salignmm.o Dalignmm.o \
 		    Falign.o Falign_localhom.o Galign11.o Lalign11.o genalign11.o SAalignmm.o \
 			nodepair.o defs.o fft.o fftFunctions.o addfunctions.o \
-			pairlocalalign.o MSalign11.o
+			pairlocalalign.o MSalign11.o $(GPUOBJ)
 OBJADDSINGLE = mtxutl.o io.o mltaln9.o tddis.o constants.o MSalignmm.o partSalignmm.o Lalignmm.o rna.o Salignmm.o Dalignmm.o \
 		    Falign.o Falign_localhom.o Galign11.o Lalign11.o genalign11.o SAalignmm.o \
 			addsingle.o defs.o fft.o fftFunctions.o addfunctions.o
@@ -193,10 +195,10 @@ hex2maffttext : hex2maffttext.c
 	$(CC) -o $@ hex2maffttext.c $(MYCFLAGS) $(LDFLAGS) $(LIBS)
 
 tbfast : $(OBJTBFAST)
-	$(CC) -o $@ $(OBJTBFAST) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
+	$(CC) -o $@ $(OBJTBFAST) $(MYCFLAGS) $(LDFLAGS) $(LIBS) $(GPULIBS)
 
 nodepair : $(OBJNODPAIR)
-	$(CC) -o $@ $(OBJNODPAIR) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
+	$(CC) -o $@ $(OBJNODPAIR) $(MYCFLAGS) $(LDFLAGS) $(LIBS) $(GPULIBS)
 
 addsingle : $(OBJADDSINGLE)
 	$(CC) -o $@ $(OBJADDSINGLE) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
@@ -259,7 +261,7 @@ contrafoldwrap : $(OBJCONTRAFOLDWRAP)
 	$(CC) -o $@ $(OBJCONTRAFOLDWRAP) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
 
 pairlocalalign : $(OBJPAIRLOCALALIGN)
-	$(CC) -o $@ $(OBJPAIRLOCALALIGN) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
+	$(CC) -o $@ $(OBJPAIRLOCALALIGN) $(MYCFLAGS) $(LDFLAGS) $(LIBS) $(GPULIBS)
 
 pairash : $(OBJPAIRASH)
 	$(CC) -o $@ $(OBJPAIRASH) $(MYCFLAGS) $(LDFLAGS) $(LIBS)
@@ -468,6 +470,9 @@ mccaskillwrap.o : mccaskillwrap.c $(HEADER)
 
 contrafoldwrap.o : contrafoldwrap.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c contrafoldwrap.c
+
+l11gpu.o : l11gpu.m l11gpu.h
+	$(CC) -O2 -fobjc-arc -c l11gpu.m
 
 pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER)
 	$(CC) $(MYCFLAGS) -c pairlocalalign.c

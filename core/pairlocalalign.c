@@ -1944,6 +1944,138 @@ static double score2dist( double pscore, double selfscore1, double selfscore2)
 }
 
 #if enablemultithread
+
+#ifdef __APPLE__
+#include "l11gpu.h"
+/*
+ * GPU precompute for the all-pairs local alignments (alg 'L').  Every pair that pairalign()
+ * will pass to L__align11( n_dis_consweight_multi, 0.0, ... ) is aligned up front by
+ * l11gpu_align(), which runs the same integer DP as Lfill_int() + Ltracking(); the pair loop
+ * then takes the stored result.  Only pairs meeting Lfill_int()'s preconditions are sent;
+ * anything else, or anything the GPU did not do, goes through L__align11() as before.
+ */
+static l11res *gpupairs = NULL;
+static int gpun = 0;
+
+static size_t gpuidx( int i, int j ) /* i < j */
+{
+	return( (size_t)i * gpun - (size_t)i * ( i + 1 ) / 2 + ( j - i - 1 ) );
+}
+
+static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen )
+{
+	int code[0x100], chof[0x100], ncode = 0, a, b, i, j, *mtx, *lens, *pi, *pj, np = 0, maxabs = 0, ithr;
+	unsigned char used[0x100];
+	double **A, v, total = 0.0;
+
+	gpupairs = NULL;
+	if( alg != 'L' || use_fft || !store_localhom || nadd || trywarp || getenv( "MAFFT_NOGPU" ) ) return;
+	if( njob < 2 || njob > 20000 ) return;
+	v = -offset + 0.0 * 600;
+	if( v != (double)(int)v ) return;
+	ithr = (int)v;
+
+	/* amino_dynamicmtx as L__align11 builds it; every character used must be set there */
+	for( a=0; a<0x100; a++ ) { code[a] = -1; chof[a] = 0; used[a] = 0; }
+	for( i=0; i<njob; i++ ) for( j=0; seq[i][j]; j++ ) used[(unsigned char)seq[i][j]] = 1;
+	for( a=0; a<nalphabets; a++ ) chof[(unsigned char)amino[a]] = 1;
+	for( a=0; a<0x100; a++ ) if( used[a] && !chof[a] ) return;
+	for( a=0; a<nalphabets; a++ ) for( b=0; b<nalphabets; b++ )
+	{
+		v = n_dis_consweight_multi[a][b];
+		if( v != (double)(int)v ) return;
+		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+	}
+	A = AllocateDoubleMtx( 0x100, 0x100 );
+	for( a=0; a<nalphabets; a++ ) for( b=0; b<nalphabets; b++ )
+		A[(int)amino[a]][(int)amino[b]] = (double)n_dis_consweight_multi[a][b];
+	for( a=0; a<0x100; a++ ) if( used[a] ) code[a] = ncode++;
+	mtx = calloc( ( ncode+1 ) * ( ncode+1 ), sizeof( int ) );
+	for( a=0; a<0x100; a++ ) if( used[a] ) for( b=0; b<0x100; b++ ) if( used[b] )
+	{
+		v = A[a][b];
+		if( v != (double)(int)v || fabs( v ) > 1e6 ) { FreeDoubleMtx( A ); free( mtx ); return; }
+		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+		mtx[code[a]*( ncode+1 )+code[b]] = (int)v;
+	}
+	FreeDoubleMtx( A );
+
+	lens = malloc( sizeof( int ) * njob );
+	for( i=0; i<njob; i++ ) lens[i] = strlen( seq[i] );
+	pi = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
+	pj = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
+	for( i=0; i<njob-1; i++ ) for( j=i+1; j<njob; j++ )
+	{
+		if( !lens[i] || !lens[j] ) continue;
+		if( !( targetmap[i] != -1 || targetmap[j] != -1 ) ) continue;
+		/* Lfill_int's int32 range check (with maxabs over every character in use) */
+		if( (double)( maxabs + abs( penalty ) + abs( penalty_ex ) + abs( ithr ) + 1 ) * ( lens[i] + lens[j] + 4 ) * 2.0 > 5.0e8 ) continue;
+		if( lens[i] + lens[j] > alloclen || lens[i] + lens[j] > N ) continue;
+		total += 2.0 * ( lens[i] + lens[j] + 1 );
+		pi[np] = i; pj[np] = j; np++;
+	}
+	if( np && total < 1.0e9 )
+	{
+		l11res *r = calloc( np, sizeof( l11res ) );
+		if( r && l11gpu_align( njob, seq, lens, code, ncode, mtx, penalty, penalty_ex, ithr, *newgapstr, np, pi, pj, r ) )
+		{
+			gpun = njob;
+			gpupairs = calloc( (size_t)njob * ( njob - 1 ) / 2, sizeof( l11res ) );
+			if( gpupairs )
+			{
+				size_t x;
+				for( x=0; x<(size_t)njob*(njob-1)/2; x++ ) gpupairs[x].status = -1;
+				for( a=0; a<np; a++ ) gpupairs[gpuidx( pi[a], pj[a] )] = r[a];
+			}
+			else
+				for( a=0; a<np; a++ ) { free( r[a].s1 ); free( r[a].s2 ); }
+		}
+		else if( r )
+			for( a=0; a<np; a++ ) { free( r[a].s1 ); free( r[a].s2 ); }
+		free( r );
+	}
+	free( pi ); free( pj ); free( lens ); free( mtx );
+}
+
+static void gpupairs_free( void )
+{
+	size_t x;
+	if( !gpupairs ) return;
+	for( x=0; x<(size_t)gpun*(gpun-1)/2; x++ ) { free( gpupairs[x].s1 ); free( gpupairs[x].s2 ); }
+	free( gpupairs );
+	gpupairs = NULL;
+}
+#endif
+
+/* L__align11( n_dis_consweight_multi, 0.0, ... ) for the pair (i,j) of pairalign() */
+static double L__align11_pair( int i, int j, char **mseq1, char **mseq2, int alloclen, int *off1pt, int *off2pt )
+{
+#ifdef __APPLE__
+	if( gpupairs && i < j && j < gpun )
+	{
+		l11res *r = gpupairs + gpuidx( i, j );
+		if( r->status == 0 )
+		{
+			strcpy( mseq1[0], r->s1 );
+			strcpy( mseq2[0], r->s2 );
+			*off1pt = r->off1; *off2pt = r->off2;
+			free( r->s1 ); free( r->s2 ); r->s1 = r->s2 = NULL; r->status = -1;
+			return( (double)r->maxwm );
+		}
+		if( r->status == 1 )
+		{
+			strcpy( mseq1[0], "" );
+			strcpy( mseq2[0], "" );
+			*off1pt = *off2pt = 0;
+			fprintf( stderr, "maxwm <- 0.0 \n" );
+			r->status = -1;
+			return( 0.0 );
+		}
+	}
+#endif
+	return( L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, off1pt, off2pt ) );
+}
+
 static void *athread( void *arg ) // alg='R', alg='r' -> tsukawarenai.
 {
 	thread_arg_t *targ = (thread_arg_t *)arg;
@@ -2127,7 +2259,7 @@ static void *athread( void *arg ) // alg='R', alg='r' -> tsukawarenai.
 					{
 						if( usenaivescoreinsteadofalignmentscore )
 						{
-							L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, &off1, &off2 );
+							L__align11_pair( i, j, mseq1, mseq2, alloclen, &off1, &off2 );
 							pscore = (double)naivepairscore11( mseq1[0], mseq2[0], 0.0 ); // uwagaki
 						}
 						else
@@ -2135,7 +2267,7 @@ static void *athread( void *arg ) // alg='R', alg='r' -> tsukawarenai.
 //							if( store_localhom )
 							if( store_localhom && ( targetmap[i] != -1 || targetmap[j] != -1 ) )
 							{
-								pscore = L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, &off1, &off2 );
+								pscore = L__align11_pair( i, j, mseq1, mseq2, alloclen, &off1, &off2 );
 								if( thereisx ) pscore = L__align11_noalign( n_dis_consweight_multi, distseq1, distseq2 ); // uwagaki
 #if 1
 								if( specificityconsideration > 0.0 )
@@ -2596,6 +2728,9 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 //		fprintf( stderr, "selfscore[%d] = %f\n", i, selfscore[i] );
 	}
 
+#ifdef __APPLE__
+	gpupairs_prepare( njob, seq, targetmap, alloclen );
+#endif
 #if enablemultithread
 	if( nthread > 0 ) // alg=='r' || alg=='R' -> nthread:=0 (sukoshi ue)
 	{
@@ -2814,7 +2949,7 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 							{
 								if( usenaivescoreinsteadofalignmentscore )
 								{
-									L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, &off1, &off2 );
+									L__align11_pair( i, j, mseq1, mseq2, alloclen, &off1, &off2 );
 									pscore = (double)naivepairscore11( mseq1[0], mseq2[0], 0.0 ); // uwagaki
 								}
 								else
@@ -2822,7 +2957,7 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 //									if( store_localhom )
 									if( store_localhom && ( targetmap[i] != -1 || targetmap[j] != -1 ) )
 									{
-										pscore = L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, &off1, &off2 ); // all pair
+										pscore = L__align11_pair( i, j, mseq1, mseq2, alloclen, &off1, &off2 ); // all pair
 										if( thereisx ) pscore = L__align11_noalign( n_dis_consweight_multi, distseq1, distseq2 ); // all pair
 #if 1
 										if( specificityconsideration > 0.0 )
@@ -2973,6 +3108,9 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 		}
 		if( dynamicmtx ) FreeDoubleMtx( dynamicmtx );
 	}
+#ifdef __APPLE__
+	gpupairs_free();
+#endif
 
 
 	if( store_dist && ngui == 0 )
