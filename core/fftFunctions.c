@@ -242,6 +242,40 @@ int alignableReagion( int    clus1, int    clus2,
 
 	totaleff = 0.0;
 	for( i=0; i<clus1; i++ ) for( j=0; j<clus2; j++ ) totaleff += eff1[i] * eff2[j];
+	/* Build every column profile row-wise (contiguous in each sequence) instead of column-major.
+	   Each prf[i][bin] still receives eff[j] in ascending j, so the sums are bit-identical. */
+	{
+		int ok = 1;
+		for( j=0; j<clus1 && ok; j++ ) for( i=0; i<len; i++ ) { int b = amino_n[(unsigned char)seq1[j][i]]; if( b < 0 || b >= nalphabets ) { ok = 0; break; } }
+		for( j=0; j<clus2 && ok; j++ ) for( i=0; i<len; i++ ) { int b = amino_n[(unsigned char)seq2[j][i]]; if( b < 0 || b >= nalphabets ) { ok = 0; break; } }
+		if( ok )
+		{
+			double *allprf1 = calloc( (size_t)len * nalphabets, sizeof( double ) );
+			double *allprf2 = calloc( (size_t)len * nalphabets, sizeof( double ) );
+			for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; double e = eff1[j]; for( i=0; i<len; i++ ) allprf1[i*nalphabets+amino_n[s[i]]] += e; }
+			for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; double e = eff2[j]; for( i=0; i<len; i++ ) allprf2[i*nalphabets+amino_n[s[i]]] += e; }
+			for( i=0; i<len; i++ )
+			{
+				memcpy( prf1, allprf1 + i*nalphabets, sizeof( double ) * nalphabets );
+				memcpy( prf2, allprf2 + i*nalphabets, sizeof( double ) * nalphabets );
+				pre1 = pre2 = nalphabets;
+				for( j=25; j>=0; j-- )
+				{
+					if( prf1[j] ) { hat1[pre1] = j; pre1 = j; }
+					if( prf2[j] ) { hat2[pre2] = j; pre2 = j; }
+				}
+				hat1[pre1] = -1;
+				hat2[pre2] = -1;
+				stra[i] = 0.0;
+				for( k=hat1[nalphabets]; k!=-1; k=hat1[k] ) 
+					for( j=hat2[nalphabets]; j!=-1; j=hat2[j] ) 
+						stra[i] += n_disFFT[k][j] * prf1[k] * prf2[j];
+				stra[i] /= totaleff;
+			}
+			free( allprf1 ); free( allprf2 );
+			goto profiles_done;
+		}
+	}
 	for( i=0; i<len; i++ )
 	{
 		/* make prfs */
@@ -287,6 +321,7 @@ int alignableReagion( int    clus1, int    clus2,
 		stra[i] /= totaleff;
 	}
 
+profiles_done:
 	(seg+0)->skipForeward = 0;
 	(seg+1)->skipBackward = 0;
 	status = 0;

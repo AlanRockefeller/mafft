@@ -411,6 +411,7 @@ extern void compacttreegivendist( int njob, double *mindists, int *neighbors, in
 extern double distcompact( int len1, int len2, int *table1, int *point2, int ss1, int ss2 );
 extern double distcompact_msa( char *seq1, char *seq2, int *skiptable1, int *skiptable2, int ss1, int ss2 );
 extern void fillimp( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2 );
+extern void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2, int *rowlo, int *rowhi );
 extern void fillimp_file( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2, int *uselh, int *seedinlh1, int *seedinlh2, int nodeid, int nfiles );
 extern int pairlocalalign( int ngui, int lgui, char **namegui, char **seqgui, double **distancemtx, LocalHom **localhomtable, int argc, char **argv, double **expdist );
 extern char creverse( char f );

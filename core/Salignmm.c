@@ -1083,9 +1083,92 @@ static double Atracking( double *lasthorizontalw, double *lastverticalw,
 	return( wm );
 }
 
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+/*
+ * One row of the A__align fill for trywarp == 0 and fpenalty_ex == 0.0 (the default), equivalent
+ * to the scalar j-loop.  All candidates for cell (i,j) come from row i-1; the horizontal state mi is
+ * a running maximum (ties take the later position, as the original '>=' does) followed by
+ * "+ fpenalty_ex", which for 0.0 only turns -0 into +0 and never changes a comparison, so it is
+ * applied once to each scanned value.  The multiply-adds are the same single-rounding fmas the
+ * compiler emits for the original expressions, so results are bit-identical.
+ */
+static void A_row( int i, int lgth2, double *prev, double *cur, double *m, int *mp, int *ijrow,
+                   double *fgcp2, double *ogcp2, double *gf2,
+                   double fgcp1va, double ogcp1va, double gf1va, double gf1vapre, double mi0, double ext,
+                   double *MI, int *MPI )
+{
+	int j, bi = 0;
+	double best = mi0, g;
+
+	MI[1] = mi0; MPI[1] = 0;
+	for( j=1; j<lgth2; j++ )
+	{
+		g = fma( ogcp2[j], gf1vapre, prev[j-1] );
+		if( g >= best ) { best = g; bi = j-1; }
+		MI[j+1] = best + ext; MPI[j+1] = bi;
+	}
+
+	j = 1;
+#if defined(__ARM_NEON)
+	{
+		float64x2_t vgf1va = vdupq_n_f64( gf1va ), vfgcp1va = vdupq_n_f64( fgcp1va ), vogcp1va = vdupq_n_f64( ogcp1va ), vext = vdupq_n_f64( ext );
+		int32x2_t vi = vdup_n_s32( i ), vi1 = vdup_n_s32( i-1 ), vzero = vdup_n_s32( 0 ), vtwo = vdup_n_s32( 2 );
+		int32x2_t vj = { 1, 2 };
+		for( ; j+1<=lgth2; j+=2 )
+		{
+			float64x2_t p = vld1q_f64( prev + j - 1 );
+			float64x2_t wm, g1, g3, g4, mv;
+			uint64x2_t c;
+			int32x2_t ij, mpv;
+
+			g1 = vfmaq_f64( vld1q_f64( MI + j ), vld1q_f64( fgcp2 + j - 1 ), vgf1va );
+			c = vcgtq_f64( g1, p );
+			wm = vbslq_f64( c, g1, p );
+			ij = vbsl_s32( vmovn_u64( c ), vsub_s32( vld1_s32( MPI + j ), vj ), vzero );
+
+			mv = vld1q_f64( m + j );
+			mpv = vld1_s32( mp + j );
+			g3 = vfmaq_f64( mv, vfgcp1va, vld1q_f64( gf2 + j ) );
+			c = vcgtq_f64( g3, wm );
+			wm = vbslq_f64( c, g3, wm );
+			ij = vbsl_s32( vmovn_u64( c ), vsub_s32( vi, mpv ), ij );
+
+			g4 = vfmaq_f64( p, vogcp1va, vld1q_f64( gf2 + j - 1 ) );
+			c = vcgeq_f64( g4, mv );
+			vst1q_f64( m + j, vaddq_f64( vbslq_f64( c, g4, mv ), vext ) );
+			vst1_s32( mp + j, vbsl_s32( vmovn_u64( c ), vi1, mpv ) );
+
+			vst1q_f64( cur + j, vaddq_f64( vld1q_f64( cur + j ), wm ) );
+			vst1_s32( ijrow + j, ij );
+			vj = vadd_s32( vj, vtwo );
+		}
+	}
+#endif
+	for( ; j<=lgth2; j++ )
+	{
+		double p = prev[j-1], wm = p;
+		int ij = 0;
+		g = fma( fgcp2[j-1], gf1va, MI[j] );
+		if( g > wm ) { wm = g; ij = -( j - MPI[j] ); }
+		g = fma( fgcp1va, gf2[j], m[j] );
+		if( g > wm ) { wm = g; ij = +( i - mp[j] ); }
+		g = fma( ogcp1va, gf2[j-1], p );
+		if( g >= m[j] ) { m[j] = g; mp[j] = i-1; }
+		m[j] += ext;
+		cur[j] += wm;
+		ijrow[j] = ij;
+	}
+}
+
 double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **seq1, char **seq2, double *eff1, double *eff2, int icyc, int jcyc, int alloclen, int constraint, double *impmatch, char *sgap1, char *sgap2, char *egap1, char *egap2, int *chudanpt, int chudanref, int *chudanres, int headgp, int tailgp, int firstmem, int calledbyfulltreebase, double ***cpmxchild0, double ***cpmxchild1, double ***cpmxresult, double orieff1, double orieff2 )
 /* score no keisan no sai motokaraaru gap no atukai ni mondai ga aru */
 {
+	static TLS double *rowMI = NULL;
+	static TLS int *rowMPI = NULL;
+	static TLS int rowalloc = 0;
 
 	int reuseprofiles;
 	static TLS int previousfirstlen; // 2016/Feb/1 // MEMBER NO CHECK GA HITSUYOU!!!!
@@ -1785,6 +1868,13 @@ double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **
 		lastverticalw[0] = currentw[lgth2-1];
 
 	if( tailgp ) lasti = lgth1+1; else lasti = lgth1;
+	if( rowalloc < lgth2+2 )
+	{
+		free( rowMI ); free( rowMPI );
+		rowalloc = lgth2+2;
+		rowMI = malloc( sizeof( double ) * rowalloc );
+		rowMPI = malloc( sizeof( int ) * rowalloc );
+	}
 	lastj = lgth2+1;
 
 #if XXXXXXX
@@ -1895,6 +1985,14 @@ fprintf( stderr, "\n" );
 		}
 
 
+#if USE_PENALTY_EX
+		if( !trywarp && fpenalty_ex == 0.0 )
+		{
+			A_row( i, lgth2, previousw, currentw, m, mp, ijp[i], fgcp2, ogcp2, gapfreq2pt,
+			       fgcp1va, ogcp1va, gf1va, gf1vapre, mi, fpenalty_ex, rowMI, rowMPI );
+			goto A_rowdone;
+		}
+#endif
 		for( j=1; j<lastj; j++ )
 		{
 #ifdef xxxenablemultithread
@@ -2012,6 +2110,9 @@ fprintf( stderr, "\n" );
 			gf2ptpre++;
 			gf2pt++;
 		}
+#if USE_PENALTY_EX
+A_rowdone:
+#endif
 		lastverticalw[i] = currentw[lgth2-1];
 
 		if( trywarp )

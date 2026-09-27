@@ -58,6 +58,8 @@ static void st_FinalGapCount( double *fgcp, int clus, char **seq, double *eff, i
 
 static TLS int impalloclen = 0;
 static TLS double **impmtx = NULL;
+static TLS int *improwlo = NULL, *improwhi = NULL;
+static TLS int impclean = 0; /* 1: impmtx is zero outside [improwlo[i],improwhi[i]] */
 double part_imp_match_out_sc( int i1, int j1 )
 {
 //	fprintf( stderr, "impalloclen = %d\n", impalloclen );
@@ -116,6 +118,7 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 	{
 		if( impmtx ) FreeFloatMtx( impmtx );
 		impmtx = NULL;
+		free( improwlo ); free( improwhi ); improwlo = improwhi = NULL; impclean = 0;
 //		if( nocount1 ) free( nocount1 );
 //		nocount1 = NULL;
 //		if( nocount2 ) free( nocount2 );
@@ -133,9 +136,28 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 		impmtx = AllocateFloatMtx( impalloclen, impalloclen );
 //		nocount1 = AllocateCharVec( impalloclen );
 //		nocount2 = AllocateCharVec( impalloclen );
+		free( improwlo ); free( improwhi );
+		improwlo = malloc( sizeof( int ) * impalloclen );
+		improwhi = malloc( sizeof( int ) * impalloclen );
+		impclean = 0;
 	}
 
-	fillimp( impmtx, imp, clus1, clus2, lgth1, lgth2, seq1, seq2, eff1, eff2, eff1_kozo, eff2_kozo, localhom, swaplist, forscore, orinum1, orinum2 );
+	/* Instead of zeroing lgth1 x lgth2 doubles on every call, zero the whole matrix once and
+	   afterwards only the per-row column ranges written by the previous fillimp. */
+	{
+		int i, j;
+		if( !impclean )
+		{
+			for( i=0; i<impalloclen; i++ ) for( j=0; j<impalloclen; j++ ) impmtx[i][j] = 0.0;
+		}
+		else
+		{
+			for( i=0; i<impalloclen; i++ ) for( j=improwlo[i]; j<=improwhi[i]; j++ ) impmtx[i][j] = 0.0;
+		}
+		for( i=0; i<impalloclen; i++ ) { improwlo[i] = impalloclen; improwhi[i] = -1; }
+		impclean = 1;
+	}
+	fillimp_track( impmtx, imp, clus1, clus2, lgth1, lgth2, seq1, seq2, eff1, eff2, eff1_kozo, eff2_kozo, localhom, swaplist, forscore, orinum1, orinum2, improwlo, improwhi );
 }
 #else
 #endif
@@ -144,13 +166,164 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 void part_imp_rna( int nseq1, int nseq2, char **seq1, char **seq2, double *eff1, double *eff2, RNApair ***grouprna1, RNApair ***grouprna2, int *gapmap1, int *gapmap2, RNApair *additionalpair )
 {
 	foldrna( nseq1, nseq2, seq1, seq2, eff1, eff2, grouprna1, grouprna2, impmtx, gapmap1, gapmap2, additionalpair );
+	impclean = 0; /* foldrna writes outside the tracked ranges */
 }
 
 
 
 
+
+/*
+ * Columns of cpmx2 grouped by their ordered list of nonzero letters.  match_calc() adds, for each
+ * column, scarr[l] * cpmx2[l][j] over the nonzero l in ascending order with fused multiply-adds;
+ * within a group every column uses the same scarr[] scalars, so each group is a short vector loop
+ * doing exactly the same fma sequence per column.
+ */
+static TLS int mc_len = -1, mc_alloc = 0, mc_ngrp = 0, mc_ready = 0;
+static TLS int *mc_perm = NULL;      /* column at permuted position */
+static TLS int *mc_gstart = NULL;    /* group g occupies positions [gstart[g], gstart[g+1]) */
+static TLS int *mc_gcnt = NULL;      /* letters in group g */
+static TLS int *mc_glet = NULL;      /* letters of group g at [goff[g], goff[g]+gcnt[g]) */
+static TLS int *mc_goff = NULL;
+static TLS double *mc_val = NULL;    /* value of the k-th letter of the column at position pos: mc_val[mc_vstart[g]+k*gsize+ (pos-gstart)] */
+static TLS int *mc_vstart = NULL;
+static TLS double *mc_scarr = NULL;
+
+static void mc_build( double **cpmx2, int lgth2 )
+{
+	int j, l, g, k, n, cnt, *key, *colgrp, *keyoff, *keycnt, *fill;
+	unsigned long long h, *hash;
+	int nkey = 0, tabsize, *tab, keylen = 0;
+
+	mc_ready = 0;
+	if( mc_alloc < lgth2 + 2 )
+	{
+		free( mc_perm ); free( mc_gstart ); free( mc_gcnt ); free( mc_goff ); free( mc_vstart ); free( mc_glet ); free( mc_val );
+		mc_alloc = lgth2 + 2;
+		mc_perm = malloc( sizeof( int ) * mc_alloc );
+		mc_gstart = malloc( sizeof( int ) * ( mc_alloc + 1 ) );
+		mc_gcnt = malloc( sizeof( int ) * mc_alloc );
+		mc_goff = malloc( sizeof( int ) * mc_alloc );
+		mc_vstart = malloc( sizeof( int ) * mc_alloc );
+		mc_glet = NULL; mc_val = NULL;
+	}
+	key = malloc( sizeof( int ) * ( lgth2 * nalphabets + 1 ) );
+	colgrp = malloc( sizeof( int ) * ( lgth2 + 1 ) );
+	keyoff = malloc( sizeof( int ) * ( lgth2 + 1 ) );
+	keycnt = malloc( sizeof( int ) * ( lgth2 + 1 ) );
+	hash = malloc( sizeof( unsigned long long ) * ( lgth2 + 1 ) );
+	for( tabsize=64; tabsize < 2*lgth2+2; tabsize*=2 ) ;
+	tab = malloc( sizeof( int ) * tabsize );
+	for( k=0; k<tabsize; k++ ) tab[k] = -1;
+
+	for( j=0; j<lgth2; j++ )
+	{
+		int *kj = key + keylen, slot;
+		cnt = 0; h = 1469598103934665603ULL;
+		for( l=0; l<nalphabets; l++ ) if( cpmx2[l][j] ) { kj[cnt++] = l; h = ( h ^ (unsigned long long)( l + 1 ) ) * 1099511628211ULL; }
+		h = ( h ^ (unsigned long long)cnt ) * 1099511628211ULL;
+		slot = (int)( h & (unsigned long long)( tabsize - 1 ) );
+		for( ;; slot = ( slot + 1 ) & ( tabsize - 1 ) )
+		{
+			g = tab[slot];
+			if( g < 0 )
+			{
+				g = nkey++;
+				tab[slot] = g;
+				keyoff[g] = keylen; keycnt[g] = cnt; hash[g] = h;
+				keylen += cnt;
+				break;
+			}
+			if( hash[g] == h && keycnt[g] == cnt && !memcmp( key + keyoff[g], kj, sizeof( int ) * cnt ) ) break;
+		}
+		colgrp[j] = g;
+	}
+	mc_ngrp = nkey;
+	/* counting sort of columns by group, keeping ascending column order inside a group */
+	for( g=0; g<=nkey; g++ ) mc_gstart[g] = 0;
+	for( j=0; j<lgth2; j++ ) mc_gstart[colgrp[j]+1]++;
+	for( g=0; g<nkey; g++ ) mc_gstart[g+1] += mc_gstart[g];
+	fill = malloc( sizeof( int ) * ( nkey + 1 ) );
+	for( g=0; g<nkey; g++ ) fill[g] = mc_gstart[g];
+	for( j=0; j<lgth2; j++ ) mc_perm[fill[colgrp[j]]++] = j;
+	free( mc_glet );
+	mc_glet = malloc( sizeof( int ) * ( keylen + 1 ) );
+	n = 0;
+	for( g=0; g<nkey; g++ )
+	{
+		int gsize = mc_gstart[g+1] - mc_gstart[g];
+		mc_gcnt[g] = keycnt[g];
+		mc_goff[g] = keyoff[g];
+		for( k=0; k<keycnt[g]; k++ ) mc_glet[keyoff[g]+k] = key[keyoff[g]+k];
+		mc_vstart[g] = n;
+		n += gsize * keycnt[g];
+	}
+	free( mc_val );
+	mc_val = malloc( sizeof( double ) * ( n + 1 ) );
+	for( g=0; g<nkey; g++ )
+	{
+		int gs = mc_gstart[g], gsize = mc_gstart[g+1] - gs;
+		for( k=0; k<mc_gcnt[g]; k++ )
+		{
+			double *v = mc_val + mc_vstart[g] + (size_t)k * gsize;
+			double *row = cpmx2[mc_glet[mc_goff[g]+k]];
+			for( n=0; n<gsize; n++ ) v[n] = row[mc_perm[gs+n]];
+		}
+	}
+	free( key ); free( colgrp ); free( keyoff ); free( keycnt ); free( hash ); free( tab ); free( fill );
+	mc_len = lgth2;
+	mc_ready = 1;
+}
+
+static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
+{
+	int g, k, l, j, n;
+	double *scarr;
+	static TLS int scalloc = 0;
+	if( scalloc < nalphabets ) { free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc ); }
+	scarr = mc_scarr;
+	for( l=0; l<nalphabets; l++ )
+	{
+		double s = 0.0;
+		for( j=0; j<nalphabets; j++ )
+			s = fma( n_dis_consweight_multi[j][l], cpmx1[j][i1], s );
+		scarr[l] = s;
+	}
+	for( g=0; g<mc_ngrp; g++ )
+	{
+		int gs = mc_gstart[g], gsize = mc_gstart[g+1] - gs, cnt = mc_gcnt[g];
+		int *let = mc_glet + mc_goff[g], *perm = mc_perm + gs;
+		double *v = mc_val + mc_vstart[g];
+		if( cnt == 0 ) { for( n=0; n<gsize; n++ ) match[perm[n]] = 0.0; continue; }
+		if( cnt == 1 )
+		{
+			double s0 = scarr[let[0]];
+			for( n=0; n<gsize; n++ ) match[perm[n]] = fma( s0, v[n], 0.0 );
+		}
+		else if( cnt == 2 )
+		{
+			double s0 = scarr[let[0]], s1 = scarr[let[1]], *v1 = v + gsize;
+			for( n=0; n<gsize; n++ ) match[perm[n]] = fma( s1, v1[n], fma( s0, v[n], 0.0 ) );
+		}
+		else
+		{
+			for( n=0; n<gsize; n++ )
+			{
+				double acc = 0.0;
+				for( k=0; k<cnt; k++ ) acc = fma( scarr[let[k]], v[(size_t)k*gsize+n], acc );
+				match[perm[n]] = acc;
+			}
+		}
+	}
+}
+
 static void match_calc( double *match, double **cpmx1, double **cpmx2, int i1, int lgth2, double **doublework, int **intwork, int initialize )
 {
+	if( !initialize && mc_ready && mc_len == lgth2 )
+	{
+		mc_match( match, cpmx1, i1, lgth2 );
+		return;
+	}
 #if FASTMATCHCALC
 	int j, l;
 //	double scarr[26];
@@ -177,6 +350,7 @@ static void match_calc( double *match, double **cpmx1, double **cpmx2, int i1, i
 			}
 			cpmxpdn[j][count] = -1;
 		}
+		mc_build( cpmx2, lgth2 );
 	}
 
 	{
@@ -394,6 +568,7 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 						int *warpis, int *warpjs, int warpbase )
 {
 	int i, j, l, iin, jin, ifi, jfi, lgth1, lgth2, k, limk;
+	int *col1, *col2, cp;
 //	char gap[] = "-";
 	char *gap;
 	double wm;
@@ -442,16 +617,12 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
         ijp[0][j] = -( j + 1 );
     }
 
-	for( i=0; i<icyc; i++ )
-	{
-		mseq1[i] += lgth1+lgth2;
-		*mseq1[i] = 0;
-	}
-	for( j=0; j<jcyc; j++ )
-	{
-		mseq2[j] += lgth1+lgth2;
-		*mseq2[j] = 0;
-	}
+	/* Trace the path into column lists first (col1/col2: residue index or -1 for a gap, filled
+	   from the end), then write every sequence row by row.  Same output as writing each column
+	   across all sequences, without touching icyc+jcyc cache lines per column. */
+	col1 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
+	col2 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
+	cp = lgth1+lgth2;
 	iin = lgth1; jin = lgth2;
 	*impwmpt = 0.0;
 	limk = lgth1+lgth2+1;
@@ -480,19 +651,13 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 			l = iin;
 			while( --l >= 0 )
 			{
-				for( i=0; i<icyc; i++ )
-					*--mseq1[i] = seq1[i][l];
-				for( j=0; j<jcyc; j++ ) 
-					*--mseq2[j] = *gap;
+				--cp; col1[cp] = l; col2[cp] = -1;
 				k++;
 			}
 			l= jin;
 			while( --l >= 0 )
 			{
-				for( i=0; i<icyc; i++ ) 
-					*--mseq1[i] = *gap;
-				for( j=0; j<jcyc; j++ ) 
-					*--mseq2[j] = seq2[j][l];
+				--cp; col1[cp] = -1; col2[cp] = l;
 				k++;
 			}
 			break;
@@ -502,19 +667,13 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 			l = iin - ifi;
 			while( --l ) 
 			{
-				for( i=0; i<icyc; i++ )
-					*--mseq1[i] = seq1[i][ifi+l];
-				for( j=0; j<jcyc; j++ ) 
-					*--mseq2[j] = *gap;
+				--cp; col1[cp] = ifi+l; col2[cp] = -1;
 				k++;
 			}
 			l= jin - jfi;
 			while( --l )
 			{
-				for( i=0; i<icyc; i++ ) 
-					*--mseq1[i] = *gap;
-				for( j=0; j<jcyc; j++ ) 
-					*--mseq2[j] = seq2[j][jfi+l];
+				--cp; col1[cp] = -1; col2[cp] = jfi+l;
 				k++;
 			}
 		}
@@ -524,13 +683,30 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 //			fprintf( stderr, "impwm = %f (iin=%d, jin=%d) seq1=%c, seq2=%c\n", *impwmpt, iin, jin, seq1[0][iin], seq2[0][jin] );
 		}
 		if( iin <= 0 || jin <= 0 ) break;
-		for( i=0; i<icyc; i++ )
-			*--mseq1[i] = seq1[i][ifi];
-		for( j=0; j<jcyc; j++ )
-			*--mseq2[j] = seq2[j][jfi];
+		--cp; col1[cp] = ifi; col2[cp] = jfi;
 		k++;
 		iin = ifi; jin = jfi;
 	}
+	{
+		int c, ncol = lgth1+lgth2-cp;
+		for( i=0; i<icyc; i++ )
+		{
+			char *d, *s = seq1[i];
+			mseq1[i] += cp;
+			d = mseq1[i];
+			for( c=0; c<ncol; c++ ) d[c] = ( col1[cp+c] >= 0 ) ? s[col1[cp+c]] : *gap;
+			d[ncol] = 0;
+		}
+		for( j=0; j<jcyc; j++ )
+		{
+			char *d, *s = seq2[j];
+			mseq2[j] += cp;
+			d = mseq2[j];
+			for( c=0; c<ncol; c++ ) d[c] = ( col2[cp+c] >= 0 ) ? s[col2[cp+c]] : *gap;
+			d[ncol] = 0;
+		}
+	}
+	free( col1 ); free( col2 );
 }
 
 static double Atracking( double *lasthorizontalw, double *lastverticalw, 
@@ -675,6 +851,85 @@ static double Atracking( double *lasthorizontalw, double *lastverticalw,
 	return( 0.0 );
 }
 
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+/*
+ * One row of the partA__align fill (trywarp == 0, USE_PENALTY_EX == 0), equivalent to the scalar
+ * j-loop.  Every candidate for cell (i,j) comes from row i-1, and without the extension penalty
+ * the horizontal state mi is just a running maximum (ties keep the earlier position), so it is
+ * computed first as a scan and the cells are then independent.  Each multiply-add is the same
+ * single-rounding fma the compiler emits for the original expressions, so values, ijp and the
+ * m/mp state are bit-identical.
+ */
+static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, int *mp, int *ijrow,
+                       double *fgcp2, double *ogcp2, double *gapfreq2,
+                       double fgcp1va, double ogcp1va, double gf1va, double gf1vapre, double mi0,
+                       double *MI, int *MPI )
+{
+	int j, bi = 0;
+	double best = mi0, g;
+
+	MI[1] = mi0; MPI[1] = 0;
+	for( j=1; j<lgth2; j++ )
+	{
+		g = fma( ogcp2[j], gf1vapre, prev[j-1] );
+		if( g > best ) { best = g; bi = j-1; }
+		MI[j+1] = best; MPI[j+1] = bi;
+	}
+
+	j = 1;
+#if defined(__ARM_NEON)
+	{
+		float64x2_t vgf1va = vdupq_n_f64( gf1va ), vfgcp1va = vdupq_n_f64( fgcp1va ), vogcp1va = vdupq_n_f64( ogcp1va );
+		int32x2_t vi = vdup_n_s32( i ), vi1 = vdup_n_s32( i-1 ), vzero = vdup_n_s32( 0 ), vtwo = vdup_n_s32( 2 );
+		int32x2_t vj = { 1, 2 };
+		for( ; j+1<=lgth2; j+=2 )
+		{
+			float64x2_t p = vld1q_f64( prev + j - 1 );
+			float64x2_t wm, g1, g3, g4, mv;
+			uint64x2_t c;
+			int32x2_t ij, mpv;
+
+			g1 = vfmaq_f64( vld1q_f64( MI + j ), vld1q_f64( fgcp2 + j - 1 ), vgf1va );
+			c = vcgtq_f64( g1, p );
+			wm = vbslq_f64( c, g1, p );
+			ij = vbsl_s32( vmovn_u64( c ), vsub_s32( vld1_s32( MPI + j ), vj ), vzero );
+
+			mv = vld1q_f64( m + j );
+			mpv = vld1_s32( mp + j );
+			g3 = vfmaq_f64( mv, vfgcp1va, vld1q_f64( gapfreq2 + j ) );
+			c = vcgtq_f64( g3, wm );
+			wm = vbslq_f64( c, g3, wm );
+			ij = vbsl_s32( vmovn_u64( c ), vsub_s32( vi, mpv ), ij );
+
+			g4 = vfmaq_f64( p, vogcp1va, vld1q_f64( gapfreq2 + j - 1 ) );
+			c = vcgtq_f64( g4, mv );
+			vst1q_f64( m + j, vbslq_f64( c, g4, mv ) );
+			vst1_s32( mp + j, vbsl_s32( vmovn_u64( c ), vi1, mpv ) );
+
+			vst1q_f64( cur + j, vaddq_f64( vld1q_f64( cur + j ), wm ) );
+			vst1_s32( ijrow + j, ij );
+			vj = vadd_s32( vj, vtwo );
+		}
+	}
+#endif
+	for( ; j<=lgth2; j++ )
+	{
+		double p = prev[j-1], wm = p;
+		int ij = 0;
+		g = fma( fgcp2[j-1], gf1va, MI[j] );
+		if( g > wm ) { wm = g; ij = -( j - MPI[j] ); }
+		g = fma( fgcp1va, gapfreq2[j], m[j] );
+		if( g > wm ) { wm = g; ij = +( i - mp[j] ); }
+		g = fma( ogcp1va, gapfreq2[j-1], p );
+		if( g > m[j] ) { m[j] = g; mp[j] = i-1; }
+		cur[j] += wm;
+		ijrow[j] = ij;
+	}
+}
+
 double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int icyc, int jcyc, int alloclen, int constraint, double *impmatch, int start1, int end1, int start2, int end2, int *gapmap1, int *gapmap2, char *sgap1, char *sgap2, char *egap1, char *egap2, int *chudanpt, int chudanref, int *chudanres )
 /* score no keisan no sai motokaraaru gap no atukai ni mondai ga aru */
 {
@@ -742,6 +997,9 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 	double curm = 0.0;
 	double *wmrecordspt, *wmrecords1pt, *prevwmrecordspt;
 	int *warpipt, *warpjpt;
+	static TLS double *rowMI = NULL;
+	static TLS int *rowMPI = NULL;
+	static TLS int rowalloc = 0;
 
 
 	if( seq1 == NULL )
@@ -1093,6 +1351,13 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 	lastverticalw[0] = currentw[lgth2-1];
 
 	if( outgap ) lasti = lgth1+1; else lasti = lgth1;
+	if( rowalloc < lgth2+2 )
+	{
+		free( rowMI ); free( rowMPI );
+		rowalloc = lgth2+2;
+		rowMI = malloc( sizeof( double ) * rowalloc );
+		rowMPI = malloc( sizeof( int ) * rowalloc );
+	}
 	lastj = lgth2+1;
 
 #if XXXXXXX
@@ -1190,6 +1455,14 @@ fprintf( stderr, "\n" );
 			warpjpt = warpj + 1;
 		}
 
+#if !USE_PENALTY_EX
+		if( !trywarp )
+		{
+			partA_row( i, lgth2, previousw, currentw, m, mp, ijp[i], fgcp2, ogcp2, gapfreq2,
+			           fgcp1va, ogcp1va, gf1va, gf1vapre, mi, rowMI, rowMPI );
+			goto partA_rowdone;
+		}
+#endif
 		for( j=1; j<lastj; j++ )
 		{
 #ifdef xxxenablemultithread
@@ -1298,6 +1571,9 @@ fprintf( stderr, "\n" );
 			gf2pt++;
 
 		}
+#if !USE_PENALTY_EX
+partA_rowdone:
+#endif
 		lastverticalw[i] = currentw[lgth2-1];
 
 		if( trywarp )

@@ -401,6 +401,290 @@ void intergroup_score_multimtx( int **whichmtx, double ***scoringmatrices, char 
 #endif
 //	return( score );
 }
+/*
+ * Fast path for intergroup_score().  The original per-pair loop is a gap-run state machine;
+ * its result decomposes exactly as
+ *   sum over columns with no gap in either row of D[a][b]
+ * + for each maximal gap stretch [s,e] in row 1, at c = first column of the stretch where
+ *   row 2 has a residue (if any):  penalty + D['-'][b_c] * ( 2 + e - c )
+ * + the symmetric term for gap stretches in row 2.
+ * All terms are integers when D is integral, so the per-pair double sum is exact regardless
+ * of order; the pair loop order (and hence *value) is unchanged.
+ */
+typedef struct { int s, e; } igs_run;
+
+
+
+#ifdef __APPLE__
+/* Accelerate's cblas_dgemm (runs on the AMX matrix units on Apple silicon).  Declared by hand:
+   Accelerate.h clashes with the single-letter macros in mltaln.h (M, N, B, ...). */
+enum { IGS_CblasRowMajor = 101, IGS_CblasNoTrans = 111, IGS_CblasTrans = 112 };
+extern void cblas_dgemm( int, int, int, int, int, int, double, const double *, int, const double *, int, double, double *, int );
+extern void cblas_sgemm( int, int, int, int, int, int, float, const float *, int, const float *, int, float, float *, int );
+#endif
+/*
+ * colsum[i*clus2+j] = sum_k dz[seq1[i][k]][seq2[j][k]] for all pairs at once, as a matrix product
+ *   X (clus1 x K) * Y^T (K x clus2),  K = (#common letters) * len,
+ *   X[i][(a,k)] = [seq1[i][k] == a],  Y[j][(a,k)] = dz[a][seq2[j][k]],
+ * plus a sparse correction for the rare letters of seq1 (N, IUPAC codes, ...).
+ * Every entry and partial sum is an integer, and the product is done in fp32 only when all
+ * partial sums stay below 2^24 (fp64 otherwise, below 2^53), so the result is exact whatever
+ * order the BLAS sums in.  Returns NULL when not worthwhile or not available.
+ */
+static double *igs_colsums( char **seq1, char **seq2, int clus1, int clus2, int len, double *dz )
+{
+#ifdef __APPLE__
+	int i, j, k, a, na = 0, nrare = 0;
+	int letter[0x80], idx[0x80];
+	long count[0x80];
+	double maxabs = 0.0, *gc;
+	size_t K;
+	int single;
+
+	if( (double)clus1 * clus2 * len < 2.0e5 || clus2 < 2 ) return( NULL );
+	memset( count, 0, sizeof( count ) );
+	for( i=0; i<clus1; i++ ) for( k=0; k<len; k++ ) count[(unsigned char)seq1[i][k]]++;
+	count['-'] = 0;
+	for( a=0; a<0x80; a++ ) idx[a] = -1;
+	for( a=0; a<0x80; a++ ) if( count[a] )
+	{
+		if( count[a] * 64 >= (long)clus1 * len / 16 || count[a] > 4096 ) { idx[a] = na; letter[na++] = a; }
+		else { idx[a] = -2; nrare += count[a]; }
+	}
+	if( na == 0 || na > 32 ) return( NULL );
+	for( a=0; a<0x80; a++ ) if( count[a] ) for( k=0; k<0x80; k++ ) if( fabs( dz[a*0x100+k] ) > maxabs ) maxabs = fabs( dz[a*0x100+k] );
+	if( maxabs * len > 4.0e15 ) return( NULL );
+	single = ( maxabs * len < 8.0e6 );
+
+	K = (size_t)na * len;
+	gc = malloc( (size_t)clus1 * clus2 * sizeof( double ) );
+	if( !gc ) return( NULL );
+	if( single )
+	{
+		float *gx = calloc( (size_t)clus1 * K, sizeof( float ) );
+		float *gy = malloc( (size_t)clus2 * K * sizeof( float ) );
+		float *gcf = malloc( (size_t)clus1 * clus2 * sizeof( float ) );
+		if( !gx || !gy || !gcf ) { free( gx ); free( gy ); free( gcf ); free( gc ); return( NULL ); }
+		for( i=0; i<clus1; i++ )
+		{
+			float *x = gx + (size_t)i * K;
+			for( k=0; k<len; k++ ) { a = idx[(unsigned char)seq1[i][k]]; if( a >= 0 ) x[(size_t)a*len+k] = 1.0f; }
+		}
+		for( j=0; j<clus2; j++ )
+		{
+			float *y = gy + (size_t)j * K;
+			unsigned char *s = (unsigned char *)seq2[j];
+			for( a=0; a<na; a++ )
+			{
+				double *row = dz + letter[a]*0x100; float *ya = y + (size_t)a*len;
+				for( k=0; k<len; k++ ) ya[k] = (float)row[s[k]];
+			}
+		}
+		cblas_sgemm( IGS_CblasRowMajor, IGS_CblasNoTrans, IGS_CblasTrans, clus1, clus2, (int)K, 1.0f, gx, (int)K, gy, (int)K, 0.0f, gcf, clus2 );
+		for( i=0; i<clus1*clus2; i++ ) gc[i] = (double)gcf[i];
+		free( gx ); free( gy ); free( gcf );
+	}
+	else
+	{
+		double *gx = calloc( (size_t)clus1 * K, sizeof( double ) );
+		double *gy = malloc( (size_t)clus2 * K * sizeof( double ) );
+		if( !gx || !gy ) { free( gx ); free( gy ); free( gc ); return( NULL ); }
+		for( i=0; i<clus1; i++ )
+		{
+			double *x = gx + (size_t)i * K;
+			for( k=0; k<len; k++ ) { a = idx[(unsigned char)seq1[i][k]]; if( a >= 0 ) x[(size_t)a*len+k] = 1.0; }
+		}
+		for( j=0; j<clus2; j++ )
+		{
+			double *y = gy + (size_t)j * K;
+			unsigned char *s = (unsigned char *)seq2[j];
+			for( a=0; a<na; a++ )
+			{
+				double *row = dz + letter[a]*0x100, *ya = y + (size_t)a*len;
+				for( k=0; k<len; k++ ) ya[k] = row[s[k]];
+			}
+		}
+		cblas_dgemm( IGS_CblasRowMajor, IGS_CblasNoTrans, IGS_CblasTrans, clus1, clus2, (int)K, 1.0, gx, (int)K, gy, (int)K, 0.0, gc, clus2 );
+		free( gx ); free( gy );
+	}
+	/* rare letters of seq1: add their columns directly (integers, exact in any order) */
+	if( nrare )
+	{
+		for( i=0; i<clus1; i++ ) for( k=0; k<len; k++ )
+		{
+			unsigned char c = (unsigned char)seq1[i][k];
+			if( idx[c] == -2 )
+			{
+				double *row = dz + c*0x100, *gci = gc + (size_t)i * clus2;
+				for( j=0; j<clus2; j++ ) gci[j] += row[(unsigned char)seq2[j][k]];
+			}
+		}
+	}
+	return( gc );
+#else
+	return( NULL );
+#endif
+}
+
+/* One pass over a gapped row: checks it is exactly len 7-bit characters, and builds
+   nxt[k] (first residue column >= k, len if none) and the list of gap stretches. */
+static int igs_prep( char *seq, int len, int *nxt, igs_run *runs, int *nrun )
+{
+	int k, n = 0, inrun = 0;
+	unsigned char c;
+	if( seq[len] != 0 ) return( 0 );
+	nxt[len] = len;
+	for( k=len-1; k>=0; k-- )
+	{
+		c = (unsigned char)seq[k];
+		if( c == 0 || c >= 0x80 ) return( 0 );
+		if( c == '-' )
+		{
+			nxt[k] = nxt[k+1];
+			if( !inrun ) { runs[n].e = k; inrun = 1; }
+			runs[n].s = k;
+		}
+		else
+		{
+			nxt[k] = k;
+			if( inrun ) { n++; inrun = 0; }
+		}
+	}
+	if( inrun ) n++;
+	/* runs were collected right to left; reverse to left-to-right (order does not affect sums) */
+	for( k=0; k<n/2; k++ ) { igs_run t = runs[k]; runs[k] = runs[n-1-k]; runs[n-1-k] = t; }
+	*nrun = n;
+	return( 1 );
+}
+
+static int intergroup_score_fast( char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
+{
+	static TLS double **tabsrc = NULL;
+	static TLS int integral = -1;
+	static TLS double *dz = NULL; /* D with gap row/column zeroed, indexed [a*256+b] */
+	static TLS int *dzi = NULL;   /* same, as int32, indexed [a*128+b] */
+	static TLS int dzmax = 0;
+	int i, j, k, r, n1, n2, c, ok = 1;
+	int *nxtbuf, **nxt1, **nxt2, *nrun1, *nrun2;
+	igs_run *runbuf, **run1, **run2;
+	double tmpscore, s, *colsum = NULL;
+	size_t stride = (size_t)len + 1, rstride = (size_t)len / 2 + 2;
+
+	if( tabsrc != amino_dis_consweight_multi )
+	{
+		tabsrc = amino_dis_consweight_multi;
+		/* amino_dis_consweight_multi may be only 0x80 x 0x80 (charsize); use 7-bit characters only. */
+		if( !dz ) dz = calloc( 0x10000, sizeof( double ) );
+		if( !dzi ) dzi = calloc( 0x4000, sizeof( int ) );
+		integral = 1;
+		dzmax = 0;
+		for( i=0; i<0x80 && integral; i++ ) for( j=0; j<0x80; j++ )
+		{
+			double v = amino_dis_consweight_multi[i][j];
+			if( v != (double)(long long)v || fabs( v ) > 1e9 ) { integral = 0; break; }
+			dz[i*0x100+j] = ( i == '-' || j == '-' ) ? 0.0 : v;
+			dzi[i*0x80+j] = (int)dz[i*0x100+j];
+			if( abs( dzi[i*0x80+j] ) > dzmax ) dzmax = abs( dzi[i*0x80+j] );
+		}
+	}
+	if( !integral ) return( 0 );
+
+	nxtbuf = malloc( sizeof( int ) * stride * ( clus1 + clus2 ) );
+	runbuf = malloc( sizeof( igs_run ) * rstride * ( clus1 + clus2 ) );
+	nxt1 = malloc( sizeof( int * ) * clus1 ); run1 = malloc( sizeof( igs_run * ) * clus1 ); nrun1 = malloc( sizeof( int ) * clus1 );
+	nxt2 = malloc( sizeof( int * ) * clus2 ); run2 = malloc( sizeof( igs_run * ) * clus2 ); nrun2 = malloc( sizeof( int ) * clus2 );
+	for( i=0; i<clus1 && ok; i++ )
+	{
+		nxt1[i] = nxtbuf + stride * i; run1[i] = runbuf + rstride * i;
+		ok = igs_prep( seq1[i], len, nxt1[i], run1[i], nrun1+i );
+	}
+	for( j=0; j<clus2 && ok; j++ )
+	{
+		nxt2[j] = nxtbuf + stride * ( clus1 + j ); run2[j] = runbuf + rstride * ( clus1 + j );
+		ok = igs_prep( seq2[j], len, nxt2[j], run2[j], nrun2+j );
+	}
+	if( !ok )
+	{
+		free( nxtbuf ); free( runbuf ); free( nxt1 ); free( run1 ); free( nrun1 ); free( nxt2 ); free( run2 ); free( nrun2 );
+		return( 0 );
+	}
+
+	/* Column sums: one GEMM when both groups are big; otherwise a direct int32 sum per pair. */
+	if( MIN( clus1, clus2 ) >= 24 ) colsum = igs_colsums( seq1, seq2, clus1, clus2, len, dz );
+	if( !colsum && (double)dzmax * len < 1.0e9 )
+	{
+		colsum = malloc( sizeof( double ) * clus1 * clus2 );
+		for( i=0; i<clus1; i++ )
+		{
+			unsigned char *m1 = (unsigned char *)seq1[i];
+			for( j=0; j<clus2; j++ )
+			{
+				unsigned char *m2 = (unsigned char *)seq2[j];
+				int s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+				for( k=0; k+3<len; k+=4 )
+				{
+					s0 += dzi[(m1[k  ]<<7)|m2[k  ]];
+					s1 += dzi[(m1[k+1]<<7)|m2[k+1]];
+					s2 += dzi[(m1[k+2]<<7)|m2[k+2]];
+					s3 += dzi[(m1[k+3]<<7)|m2[k+3]];
+				}
+				for( ; k<len; k++ ) s0 += dzi[(m1[k]<<7)|m2[k]];
+				colsum[i*clus2+j] = (double)( (long long)s0 + s1 + s2 + s3 );
+			}
+		}
+	}
+
+	*value = 0.0;
+	for( i=0; i<clus1; i++ ) 
+	{
+		unsigned char *m1 = (unsigned char *)seq1[i];
+		for( j=0; j<clus2; j++ ) 
+		{
+			unsigned char *m2 = (unsigned char *)seq2[j];
+			double efficient = eff1[i] * eff2[j];
+			if( colsum ) tmpscore = colsum[i*clus2+j];
+			else
+			{
+				double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+				for( k=0; k+3<len; k+=4 )
+				{
+					s0 += dz[m1[k  ]*0x100+m2[k  ]];
+					s1 += dz[m1[k+1]*0x100+m2[k+1]];
+					s2 += dz[m1[k+2]*0x100+m2[k+2]];
+					s3 += dz[m1[k+3]*0x100+m2[k+3]];
+				}
+				for( ; k<len; k++ ) s0 += dz[m1[k]*0x100+m2[k]];
+				tmpscore = ( s0 + s1 ) + ( s2 + s3 );
+			}
+
+			n1 = nrun1[i];
+			for( r=0; r<n1; r++ )
+			{
+				c = nxt2[j][run1[i][r].s];
+				if( c <= run1[i][r].e )
+				{
+					s = amino_dis_consweight_multi['-'][m2[c]];
+					tmpscore += (double)penalty + s * (double)( 2 + run1[i][r].e - c );
+				}
+			}
+			n2 = nrun2[j];
+			for( r=0; r<n2; r++ )
+			{
+				c = nxt1[i][run2[j][r].s];
+				if( c <= run2[j][r].e )
+				{
+					s = amino_dis_consweight_multi[m1[c]]['-'];
+					tmpscore += (double)penalty + s * (double)( 2 + run2[j][r].e - c );
+				}
+			}
+			*value += (double)tmpscore * (double)efficient;
+		}
+	}
+
+	free( nxtbuf ); free( runbuf ); free( nxt1 ); free( run1 ); free( nrun1 ); free( nxt2 ); free( run2 ); free( nrun2 ); free( colsum );
+	return( 1 );
+}
+
 void intergroup_score( char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
 {
 	int i, j, k;
@@ -418,6 +702,7 @@ void intergroup_score( char **seq1, char **seq2, double *eff1, double *eff2, int
 //	totaleff1 = 0.0; for( i=0; i<clus1; i++ ) totaleff1 += eff1[i];
 //	totaleff2 = 0.0; for( i=0; i<clus2; i++ ) totaleff2 += eff2[i];
 
+	if( intergroup_score_fast( seq1, seq2, eff1, eff2, clus1, clus2, len, value ) ) return;
 	*value = 0.0;
 	for( i=0; i<clus1; i++ ) 
 	{
@@ -10599,28 +10884,23 @@ void commongappick_record( int nseq, char **seq, int *map )
 {
 	int i, j, count;
 	int len = strlen( seq[0] );
+	char *keep;
 
-
-	for( i=0, count=0; i<=len; i++ ) 
+	/* Same result as the column-major original, but walks each row contiguously. */
+	keep = calloc( len+1, 1 );
+	keep[len] = 1; /* the terminating NUL is never '-' */
+	for( j=0; j<nseq; j++ )
 	{
-	/*
-		allgap = 1;
-		for( j=0; j<nseq; j++ ) 
-			allgap *= ( seq[j][i] == '-' );
-		if( !allgap )
-	*/
-		for( j=0; j<nseq; j++ )
-			if( seq[j][i] != '-' ) break;
-		if( j != nseq )
-		{
-			for( j=0; j<nseq; j++ )
-			{
-				seq[j][count] = seq[j][i];
-			}
-			map[count] = i;
-			count++;
-	 	}
+		char *s = seq[j];
+		for( i=0; i<len; i++ ) keep[i] |= ( s[i] != '-' );
 	}
+	for( i=0, count=0; i<=len; i++ ) if( keep[i] ) map[count++] = i;
+	for( j=0; j<nseq; j++ )
+	{
+		char *s = seq[j];
+		for( i=0; i<count; i++ ) s[i] = s[map[i]];
+	}
+	free( keep );
 }
 
 
@@ -15138,15 +15418,13 @@ void gapcountf( double *freq, char **seq, int nseq, double *eff, int lgth )
 //	for( i=0; i<lgth; i++ ) freq[i] = 0.0;
 //	return;
 
-	for( i=0; i<lgth; i++ )
+	/* row-wise; freq[i] still receives eff[j] in ascending j, so the sums are unchanged */
+	for( i=0; i<lgth; i++ ) freq[i] = 0.0;
+	for( j=0; j<nseq; j++ )
 	{
-		fr = 0.0;
-		for( j=0; j<nseq; j++ )
-		{
-			if( seq[j][i] == '-' ) fr += eff[j];
-		}
-		freq[i] = fr;
-//		reporterr(       "in gapcountf, freq[%d] = %f\n", i, freq[i] );
+		char *s = seq[j];
+		fr = eff[j];
+		for( i=0; i<lgth; i++ ) if( s[i] == '-' ) freq[i] += fr;
 	}
 //	reporterr(       "\n" );
 	return;
@@ -15557,121 +15835,115 @@ static void movereg_swap( char *seq1, char *seq2, LocalHom *tmpptr, int *start1p
 	}
 }
 
-void fillimp( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2 )
+/* Residue index -> alignment column map for one gapped sequence.  Returns the number of residues. */
+static int makeresmap( char *seq, int *map )
 {
-	int i, j, k1, k2, start1, start2, end1, end2;
-	double effij, effijx, effij_kozo; 
-	char *pt1, *pt2;
+	int n = 0, col;
+	for( col=0; seq[col]; col++ ) if( seq[col] != '-' ) map[n++] = col;
+	return( n );
+}
+
+/* rowlo/rowhi == NULL: zero lgth1 x lgth2 first (original behaviour).
+   Otherwise the caller guarantees impmtx is already zero and gets, per row, the range of columns written. */
+void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2, int *rowlo, int *rowhi )
+{
+	int i, j, n, nlim, s1, e1, s2, e2, swap, start1, start2, end1, end2;
+	double effij, effijx, effij_kozo, w, segimp;
+	int *pos1, *pos2, **map1, **map2, *nres1, *nres2;
 	LocalHom *tmpptr;
-	void (*movefunc)(char *, char *, LocalHom *, int *, int *, int *, int * );
 
-#if 0
-	fprintf( stderr, "eff1 in _init_strict = \n" );
-	for( i=0; i<clus1; i++ )
-		fprintf( stderr, "eff1[] = %f\n", eff1[i] );
-	for( i=0; i<clus2; i++ )
-		fprintf( stderr, "eff2[] = %f\n", eff2[i] );
-#endif
-
-	for( i=0; i<lgth1; i++ ) for( j=0; j<lgth2; j++ )
-		impmtx[i][j] = 0.0;
+	if( !rowlo )
+	{
+		for( i=0; i<lgth1; i++ ) for( j=0; j<lgth2; j++ )
+			impmtx[i][j] = 0.0;
+	}
 	effijx = 1.0 * fastathreshold;
+
+	/* The original movereg() rescanned both gapped sequences from the start for every segment.
+	   Precompute residue->column maps once; the walk below visits the same (k1,k2) cells in the
+	   same order, so impmtx is bit-identical. */
+	map1 = malloc( clus1 * sizeof( int * ) );
+	map2 = malloc( clus2 * sizeof( int * ) );
+	nres1 = malloc( clus1 * sizeof( int ) );
+	nres2 = malloc( clus2 * sizeof( int ) );
+	for( i=0; i<clus1; i++ ) { map1[i] = malloc( ( lgth1 + 1 ) * sizeof( int ) ); nres1[i] = makeresmap( seq1[i], map1[i] ); }
+	for( j=0; j<clus2; j++ ) { map2[j] = malloc( ( lgth2 + 1 ) * sizeof( int ) ); nres2[j] = makeresmap( seq2[j], map2[j] ); }
+
 	for( i=0; i<clus1; i++ )
 	{
-		if( swaplist && swaplist[i] ) movefunc = movereg_swap;
-		else movefunc = movereg;
+		swap = ( swaplist && swaplist[i] );
 		for( j=0; j<clus2; j++ )
 		{
-
 			if( swaplist == NULL && orinum1 && orinum2 ) // muda. 
-			{
-				if( orinum1[i]>orinum2[j] )
-					movefunc = movereg_swap;
-				else
-					movefunc = movereg;
-			}
+				swap = ( orinum1[i]>orinum2[j] );
 
-//			effij = eff1[i] * eff2[j] * effijx;
 			effij = eff1[i] * eff2[j] * effijx;
 			effij_kozo = eff1_kozo[i] * eff2_kozo[j] * effijx;
-			tmpptr = localhom[i][j];
-			while( tmpptr )
+			pos1 = map1[i]; pos2 = map2[j];
+			for( tmpptr = localhom[i][j]; tmpptr; tmpptr = tmpptr->next )
 			{
-//				fprintf( stderr, "start1 = %d\n", tmpptr->start1 );
-//				fprintf( stderr, "end1   = %d\n", tmpptr->end1   );
-//				fprintf( stderr, "i = %d, seq1 = \n%s\n", i, seq1[i] );
-//				fprintf( stderr, "j = %d, seq2 = \n%s\n", j, seq2[j] );
+				if( swap ) { s1 = tmpptr->start2; e1 = tmpptr->end2; s2 = tmpptr->start1; e2 = tmpptr->end1; }
+				else       { s1 = tmpptr->start1; e1 = tmpptr->end1; s2 = tmpptr->start2; e2 = tmpptr->end2; }
+				/* The original adds importance * eff with one fused multiply-add per cell; keep that rounding. */
+				segimp = tmpptr->importance;
+				w = ( tmpptr->korh == 'k' ) ? effij_kozo : effij;
 
-				movefunc( seq1[i], seq2[j], tmpptr, &start1, &start2, &end1, &end2 );
-
-
-//				fprintf( stderr, "start1 = %d (%c), end1 = %d (%c), start2 = %d (%c), end2 = %d (%c)\n", start1, seq1[i][start1], end1, seq1[i][end1], start2, seq2[j][start2], end2, seq2[j][end2] );
-//				fprintf( stderr, "step 0\n" );
-				if( end1 - start1 != end2 - start2 )
+				if( s1 < 0 || s2 < 0 || e1 < s1 || e2 < s2 || e1 >= nres1[i] || e2 >= nres2[j] )
 				{
-//					fprintf( stderr, "CHUUI!!, start1 = %d, end1 = %d, start2 = %d, end2 = %d\n", start1, end1, start2, end2 );
+					/* Out-of-range segment: fall back to the original column walk. */
+					char *pt1, *pt2;
+					int k1, k2;
+					if( swap ) movereg_swap( seq1[i], seq2[j], tmpptr, &start1, &start2, &end1, &end2 );
+					else       movereg( seq1[i], seq2[j], tmpptr, &start1, &start2, &end1, &end2 );
+					k1 = start1; k2 = start2;
+					pt1 = seq1[i] + k1;
+					pt2 = seq2[j] + k2;
+					while( *pt1 && *pt2 )
+					{
+						if( *pt1 != '-' && *pt2 != '-' )
+						{
+							impmtx[k1][k2] = fma( segimp, w, impmtx[k1][k2] );
+							if( rowlo ) { if( k2 < rowlo[k1] ) rowlo[k1] = k2; if( k2 > rowhi[k1] ) rowhi[k1] = k2; }
+							k1++; k2++; pt1++; pt2++;
+						}
+						else if( *pt1 != '-' ) { k2++; pt2++; }
+						else if( *pt2 != '-' ) { k1++; pt1++; }
+						else { k1++; pt1++; k2++; pt2++; }
+						if( k1 > end1 || k2 > end2 ) break;
+					}
+					continue;
 				}
 
-				k1 = start1; k2 = start2;
-				pt1 = seq1[i] + k1;
-				pt2 = seq2[j] + k2;
-				while( *pt1 && *pt2 )
+				nlim = MIN( e1 - s1, e2 - s2 );
+				if( rowlo )
 				{
-					if( *pt1 != '-' && *pt2 != '-' )
+					for( n=0; n<=nlim; n++ )
 					{
-// 重みを二重にかけないように注意して下さい。
-//						impmtx[k1][k2] += tmpptr->wimportance * fastathreshold;
-//						impmtx[k1][k2] += tmpptr->importance * effij;
-//						impmtx[k1][k2] += tmpptr->fimportance * effij;
-						if( tmpptr->korh == 'k' )
-							impmtx[k1][k2] += tmpptr->importance * effij_kozo;
-						else
-							impmtx[k1][k2] += tmpptr->importance * effij;
-//						fprintf( stderr, "k1=%d, k2=%d, impalloclen=%d\n", k1, k2, impalloclen );
-//						fprintf( stderr, "mark, %d (%c) - %d (%c) \n", k1, *pt1, k2, *pt2 );
-						k1++; k2++;
-						pt1++; pt2++;
+						int k1 = pos1[s1+n], k2 = pos2[s2+n];
+						impmtx[k1][k2] = fma( segimp, w, impmtx[k1][k2] );
+						if( k2 < rowlo[k1] ) rowlo[k1] = k2;
+						if( k2 > rowhi[k1] ) rowhi[k1] = k2;
 					}
-					else if( *pt1 != '-' && *pt2 == '-' )
-					{
-//						fprintf( stderr, "skip, %d (%c) - %d (%c) \n", k1, *pt1, k2, *pt2 );
-						k2++; pt2++;
-					}
-					else if( *pt1 == '-' && *pt2 != '-' )
-					{
-//						fprintf( stderr, "skip, %d (%c) - %d (%c) \n", k1, *pt1, k2, *pt2 );
-						k1++; pt1++;
-					}
-					else if( *pt1 == '-' && *pt2 == '-' )
-					{
-//						fprintf( stderr, "skip, %d (%c) - %d (%c) \n", k1, *pt1, k2, *pt2 );
-						k1++; pt1++;
-						k2++; pt2++;
-					}
-					if( k1 > end1 || k2 > end2 ) break;
 				}
-				tmpptr = tmpptr->next;
+				else
+				{
+					for( n=0; n<=nlim; n++ )
+					{
+						double *cell = &impmtx[pos1[s1+n]][pos2[s2+n]];
+						*cell = fma( segimp, w, *cell );
+					}
+				}
 			}
 		}
 	}
-#if 0
-	printf( "orinum1=%d, orinum2=%d\n", *orinum1, *orinum2 );
-	if( *orinum1 == 0 )
-	{
-		fprintf( stdout, "impmtx = \n" );
-		for( k2=0; k2<lgth2; k2++ )
-			fprintf( stdout, "%6.3f ", (double)k2 );
-		fprintf( stdout, "\n" );
-		for( k1=0; k1<lgth1; k1++ )
-		{
-			fprintf( stdout, "%d", k1 );
-			for( k2=0; k2<lgth2; k2++ )
-				fprintf( stdout, "%2.1f ", impmtx[k1][k2] );
-			fprintf( stdout, "\n" );
-		}
-		exit( 1 );
-	}
-#endif
+	for( i=0; i<clus1; i++ ) free( map1[i] );
+	for( j=0; j<clus2; j++ ) free( map2[j] );
+	free( map1 ); free( map2 ); free( nres1 ); free( nres2 );
+}
+
+void fillimp( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2 )
+{
+	fillimp_track( impmtx, imp, clus1, clus2, lgth1, lgth2, seq1, seq2, eff1, eff2, eff1_kozo, eff2_kozo, localhom, swaplist, forscore, orinum1, orinum2, NULL, NULL );
 }
 
 static void readlocalhomtable2_single_bin_noseek( FILE *fp, LocalHom *localhomtable ) // pos ha tsukawanai

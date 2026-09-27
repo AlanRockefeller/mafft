@@ -1188,6 +1188,175 @@ static void *ylmsacompactdisthalfmtxthread( void *arg ) // enablemultithread == 
 	}
 }
 
+/*
+ * All-pairs version of naivepairscorefast() for the distance matrix computed from an MSA.
+ *
+ * For a pair (s1,s2), naivepairscorefast() drops the columns where both have a gap and then adds
+ *   amino_dis[a][b] for every column with a residue in both, and
+ *   penal once per maximal gap run of s1 and once per maximal gap run of s2 (in the reduced alignment).
+ * A maximal gap stretch of s1 becomes one such run exactly when s2 has a residue inside it, so the
+ * run count is a few prefix-count lookups per stretch.  Everything is an integer, so the result is
+ * exact whatever order it is summed in; the substitution sums of all pairs are one-hot matrix
+ * products done with Accelerate's GEMM (fp32 only when every partial sum is below 2^24).
+ * Returns 0 (nothing written) when the preconditions do not hold.
+ */
+#ifdef __APPLE__
+enum { AP_CblasRowMajor = 101, AP_CblasNoTrans = 111, AP_CblasTrans = 112 };
+extern void cblas_sgemm( int, int, int, int, int, int, float, const float *, int, const float *, int, float, float *, int );
+extern void cblas_dgemm( int, int, int, int, int, int, double, const double *, int, const double *, int, double, double *, int );
+#endif
+
+static int allpairs_naivescore_dist( int njob, char **seq, int *selfscore, int penal, double **iscore )
+{
+#ifdef __APPLE__
+	int i, j, k, a, len, na = 0, single;
+	const int tile = 512;
+	long count[0x80], nres = 0;
+	int letter[0x80], idx[0x80];
+	double maxabs = 0.0;
+	int **cnt, **stretch, *nstretch;
+
+	if( njob < 64 ) return( 0 );
+	len = strlen( seq[0] );
+	if( len < 1 ) return( 0 );
+	for( i=0; i<njob; i++ )
+	{
+		unsigned char *s = (unsigned char *)seq[i];
+		for( k=0; k<len; k++ ) if( s[k] == 0 || s[k] >= 0x80 ) return( 0 );
+		if( s[len] != 0 ) return( 0 );
+	}
+	memset( count, 0, sizeof( count ) );
+	for( i=0; i<njob; i++ ) for( k=0; k<len; k++ ) count[(unsigned char)seq[i][k]]++;
+	count['-'] = 0;
+	for( a=0; a<0x80; a++ ) nres += count[a];
+	for( a=0; a<0x80; a++ ) idx[a] = -1;
+	for( a=0; a<0x80; a++ ) if( count[a] )
+	{
+		if( count[a] * 256 >= nres ) { idx[a] = na; letter[na++] = a; }
+		else idx[a] = -2; /* rare: added directly */
+	}
+	if( na == 0 || na > 40 ) return( 0 );
+	for( a=0; a<0x80; a++ ) if( count[a] ) for( k=0; k<0x80; k++ ) if( k != '-' && abs( amino_dis[a][k] ) > maxabs ) maxabs = abs( amino_dis[a][k] );
+	if( maxabs * len > 4.0e15 ) return( 0 );
+	single = ( maxabs * len < 8.0e6 );
+
+	/* per sequence: cnt[k] = residues in columns [0,k); gap stretches as (start,end) pairs */
+	cnt = malloc( sizeof( int * ) * njob );
+	stretch = malloc( sizeof( int * ) * njob );
+	nstretch = malloc( sizeof( int ) * njob );
+	for( i=0; i<njob; i++ )
+	{
+		char *s = seq[i];
+		int n = 0, c = 0;
+		cnt[i] = malloc( sizeof( int ) * ( len + 1 ) );
+		for( k=0; k<len; k++ ) { cnt[i][k] = c; if( s[k] != '-' ) c++; }
+		cnt[i][len] = c;
+		for( k=0; k<len; k++ ) if( s[k] == '-' && ( k == 0 || s[k-1] != '-' ) ) n++;
+		stretch[i] = malloc( sizeof( int ) * ( 2 * n + 1 ) );
+		n = 0;
+		for( k=0; k<len; k++ ) if( s[k] == '-' )
+		{
+			stretch[i][2*n] = k;
+			while( k+1 < len && s[k+1] == '-' ) k++;
+			stretch[i][2*n+1] = k;
+			n++;
+		}
+		nstretch[i] = n;
+	}
+
+	{
+		int cw = (int)( 24.0e6 / ( 8.0 * tile * na ) ); /* columns per chunk: keeps X and Y chunks ~24 MB */
+		int i0, j0, bi, bj, k0, kw;
+		size_t kdim;
+		float *Xf = NULL, *Yf = NULL, *Cf = NULL;
+		double *Xd = NULL, *Yd = NULL, *Cd;
+		if( cw < 16 ) cw = 16;
+		if( cw > len ) cw = len;
+		kdim = (size_t)na * cw;
+		Cd = malloc( sizeof( double ) * tile * tile );
+		if( single ) { Xf = malloc( sizeof( float ) * tile * kdim ); Yf = malloc( sizeof( float ) * tile * kdim ); Cf = malloc( sizeof( float ) * tile * tile ); }
+		else         { Xd = malloc( sizeof( double ) * tile * kdim ); Yd = malloc( sizeof( double ) * tile * kdim ); }
+		for( i0=0; i0<njob; i0+=tile )
+		{
+			bi = MIN( tile, njob - i0 );
+			for( j0=i0; j0<njob; j0+=tile )
+			{
+				bj = MIN( tile, njob - j0 );
+				for( k0=0; k0<len; k0+=cw )
+				{
+					size_t kd;
+					kw = MIN( cw, len - k0 );
+					kd = (size_t)na * kw;
+					/* X[i][(a,k)] = [s_i[k0+k] == letter a];  Y[j][(a,k)] = amino_dis[letter a][s_j[k0+k]] (0 for gaps) */
+					if( single )
+					{
+						memset( Xf, 0, sizeof( float ) * bi * kd );
+						for( i=0; i<bi; i++ ) { unsigned char *s = (unsigned char *)seq[i0+i] + k0; float *x = Xf + (size_t)i*kd; for( k=0; k<kw; k++ ) { a = idx[s[k]]; if( a >= 0 ) x[(size_t)a*kw+k] = 1.0f; } }
+						for( j=0; j<bj; j++ ) { unsigned char *s = (unsigned char *)seq[j0+j] + k0; float *y = Yf + (size_t)j*kd; for( a=0; a<na; a++ ) { int *row = amino_dis[letter[a]]; float *ya = y + (size_t)a*kw; for( k=0; k<kw; k++ ) ya[k] = ( s[k] == '-' ) ? 0.0f : (float)row[s[k]]; } }
+						cblas_sgemm( AP_CblasRowMajor, AP_CblasNoTrans, AP_CblasTrans, bi, bj, (int)kd, 1.0f, Xf, (int)kd, Yf, (int)kd, ( k0 == 0 ) ? 0.0f : 1.0f, Cf, bj );
+					}
+					else
+					{
+						memset( Xd, 0, sizeof( double ) * bi * kd );
+						for( i=0; i<bi; i++ ) { unsigned char *s = (unsigned char *)seq[i0+i] + k0; double *x = Xd + (size_t)i*kd; for( k=0; k<kw; k++ ) { a = idx[s[k]]; if( a >= 0 ) x[(size_t)a*kw+k] = 1.0; } }
+						for( j=0; j<bj; j++ ) { unsigned char *s = (unsigned char *)seq[j0+j] + k0; double *y = Yd + (size_t)j*kd; for( a=0; a<na; a++ ) { int *row = amino_dis[letter[a]]; double *ya = y + (size_t)a*kw; for( k=0; k<kw; k++ ) ya[k] = ( s[k] == '-' ) ? 0.0 : (double)row[s[k]]; } }
+						cblas_dgemm( AP_CblasRowMajor, AP_CblasNoTrans, AP_CblasTrans, bi, bj, (int)kd, 1.0, Xd, (int)kd, Yd, (int)kd, ( k0 == 0 ) ? 0.0 : 1.0, Cd, bj );
+					}
+				}
+				if( single ) for( i=0; i<bi*bj; i++ ) Cd[i] = (double)Cf[i];
+
+				for( i=0; i<bi; i++ )
+				{
+					int gi = i0 + i, r;
+					unsigned char *si = (unsigned char *)seq[gi];
+					double ssi = selfscore[gi];
+					/* rare letters of s_i: add their columns directly */
+					for( k=0; k<len; k++ ) if( idx[si[k]] == -2 )
+					{
+						int *row = amino_dis[si[k]];
+						for( j=0; j<bj; j++ ) { unsigned char c = (unsigned char)seq[j0+j][k]; if( c != '-' ) Cd[i*bj+j] += row[c]; }
+					}
+					for( j=0; j<bj; j++ )
+					{
+						int gj = j0 + j, nruns = 0;
+						double vali, ssj, bunbo, iscoretmp;
+						int *ci, *cj, *st;
+						if( gj <= gi ) continue;
+						ci = cnt[gi]; cj = cnt[gj];
+						st = stretch[gi];
+						for( r=0; r<nstretch[gi]; r++ ) nruns += ( cj[st[2*r+1]+1] > cj[st[2*r]] );
+						st = stretch[gj];
+						for( r=0; r<nstretch[gj]; r++ ) nruns += ( ci[st[2*r+1]+1] > ci[st[2*r]] );
+						vali = Cd[i*bj+j] + (double)penal * (double)nruns;
+						ssj = selfscore[gj];
+						bunbo = MIN( ssi, ssj );
+						if( bunbo == 0.0 )
+							iscoretmp = 2.0; // 2013/Oct/17
+						else
+						{
+							iscoretmp = ( 1.0 - vali / bunbo ) * 2.0; // 2014/Aug/15 fast 
+							if( iscoretmp > 10 ) iscoretmp = 10.0;  // 2015/Mar/17
+						}
+						if( iscoretmp < 0.0 ) 
+						{
+							reporterr( "WARNING: negative distance, iscoretmp = %f\n", iscoretmp );
+							iscoretmp = 0.0;
+						}
+						iscore[gi][gj-gi] = iscoretmp;
+					}
+				}
+			}
+		}
+		free( Xf ); free( Yf ); free( Cf ); free( Xd ); free( Yd ); free( Cd );
+	}
+	for( i=0; i<njob; i++ ) { free( cnt[i] ); free( stretch[i] ); }
+	free( cnt ); free( stretch ); free( nstretch );
+	return( 1 );
+#else
+	return( 0 );
+#endif
+}
+
 #if 1
 static void *msadistmtxthread( void *arg ) // enablemultithread == 0 demo tsukau
 {
@@ -4624,6 +4793,9 @@ int disttbfast( int ngui, int lgui, char **namegui, char **seqgui, int argc, cha
 			reporterr( "Making a distance matrix from msa.. \n" );
 			skiptable = AllocateIntMtx( njob, 0 );
 			makeskiptable( njob, skiptable, bseq ); // allocate suru.
+			if( allpairs_naivescore_dist( njob, bseq, selfscore, penalty_dist, mtx ) )
+				;
+			else
 #ifdef enablemultithread
 			if( nthreadpair > 0 )
 			{

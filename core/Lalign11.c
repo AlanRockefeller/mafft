@@ -1,5 +1,9 @@
 #include "mltaln.h"
 #include "dp.h"
+#include <limits.h>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #define DEBUG 0
 #define DEBUG2 0
@@ -205,6 +209,183 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 }
 
 
+/*
+ * Integer version of the L__align11 fill (trywarp == 0 only).
+ *
+ * When every score and penalty is integral (the default: n_dis * consweight_multi with
+ * consweight_multi == 1.0, integer penalties, scoreoffset == 0), the double DP below only ever
+ * holds integers well inside 2^53, so an int32 DP makes exactly the same comparisons and yields
+ * the same ijp[][], maxwm and end point.  Every candidate for cell (i,j) is derived from row i-1,
+ * so a row is computed in two passes: a scalar prefix scan for the horizontal-gap state, then a
+ * branch-free loop over j that clang vectorizes (4 x int32 on NEON).
+ *
+ * Returns 0 (and does nothing) when the integral/range preconditions do not hold.
+ */
+static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                      char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop,
+                      double *maxwmpt, int *endalipt, int *endaljpt )
+{
+	int i, j, c, k, maxabs = 0, ok = 1;
+	int pen = penalty, ext = penalty_ex;
+	double thr = -offset + scoreoffset * 600;
+	int ithr, *prof[0x100], *profbuf, nprof = 0;
+	int *prev, *cur, *vm, *vmp, *hq, *hk, *wmrow;
+	int maxwm, endali = 0, endalj = 0, rowmax;
+	unsigned char *u1 = (unsigned char *)s1, *u2 = (unsigned char *)s2;
+	unsigned char used[0x100];
+
+	if( lgth1 < 1 || lgth2 < 1 ) return( 0 );
+	if( thr != (double)(int)thr ) return( 0 );
+	ithr = (int)thr;
+	for( i=0; i<nalphabets; i++ ) for( j=0; j<nalphabets; j++ )
+	{
+		double v = n_dynamicmtx[i][j];
+		if( v != (double)(int)v ) return( 0 );
+		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+	}
+	/* Characters outside the alphabet read entries that were never set from n_dynamicmtx. */
+	memset( used, 0, sizeof( used ) );
+	for( i=0; i<lgth1; i++ ) used[u1[i]] = 1;
+	for( j=0; j<lgth2; j++ ) used[u2[j]] = 1;
+	for( c=0; c<0x100; c++ ) if( used[c] )
+	{
+		for( k=0; k<0x100; k++ ) if( used[k] )
+		{
+			double v = amino_dynamicmtx[c][k];
+			if( v != (double)(int)v || fabs( v ) > 1e6 ) return( 0 );
+			if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+		}
+	}
+	/* Keep every intermediate (including prev[k] - k*ext) far from int32 overflow. */
+	{
+		double bound = (double)( maxabs + abs( pen ) + abs( ext ) + abs( ithr ) + 1 ) * ( lgth1 + lgth2 + 4 ) * 2.0;
+		if( bound > 5.0e8 ) return( 0 );
+	}
+
+	for( c=0; c<0x100; c++ ) prof[c] = NULL;
+	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
+	profbuf = malloc( sizeof( int ) * nprof * ( lgth2 + 4 ) );
+	k = 0;
+	for( c=0; c<0x100; c++ ) if( used[c] )
+	{
+		double *row = amino_dynamicmtx[c];
+		prof[c] = profbuf + k * ( lgth2 + 4 );
+		for( j=0; j<lgth2; j++ ) prof[c][j] = (int)row[u2[j]];
+		prof[c][lgth2] = 0;
+		k++;
+	}
+
+	prev  = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	cur   = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	vm    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	vmp   = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	hk    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	wmrow = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+
+	/* row 0: currentw[j] = mtx[s1[0]][s2[j]];  m[j] = currentw[j-1], mp[j] = 0 */
+	for( j=0; j<lgth2; j++ ) cur[j] = prof[u1[0]][j];
+	cur[lgth2] = 0;
+	for( j=1; j<=lgth2; j++ ) { vm[j] = cur[j-1]; vmp[j] = 0; }
+
+	maxwm = INT_MIN;
+	for( i=1; i<=lgth1; i++ )
+	{
+		int *t = prev; prev = cur; cur = t;
+		int *profrow = ( i < lgth1 ) ? prof[u1[i]] : NULL;
+		int *ijrow = ijp[i];
+		int negi1 = i - 1;
+		/* previousw[0] = initverticalw[i-1] = mtx[s2[0]][s1[i-1]] */
+		prev[0] = (int)amino_dynamicmtx[u2[0]][u1[i-1]];
+
+		/* Horizontal state before cell j:  H_j = (j-1)*ext + max_{k<=max(j-2,0)} (prev[k] - k*ext),
+		   mpi_j = first k attaining it (the original updates only on strict '>'). */
+		{
+			int best = prev[0], bestk = 0, q;
+			hq[1] = prev[0]; hk[1] = 0;
+			for( j=2; j<=lgth2; j++ )
+			{
+				q = prev[j-2] - ( j-2 ) * ext;
+				if( q > best ) { best = q; bestk = j-2; }
+				hq[j] = best + ( j-1 ) * ext;
+				hk[j] = bestk;
+			}
+		}
+
+		rowmax = INT_MIN;
+		if( !profrow ) profrow = prof[u1[0]]; /* last row: cur[] is never read again */
+		j = 1;
+#if defined(__ARM_NEON)
+		{
+			int32x4_t vpen = vdupq_n_s32( pen ), vext = vdupq_n_s32( ext ), vthr = vdupq_n_s32( ithr );
+			int32x4_t vstop = vdupq_n_s32( lstop ), vi = vdupq_n_s32( i ), vi1 = vdupq_n_s32( negi1 );
+			int32x4_t vmax = vdupq_n_s32( INT_MIN ), vfour = vdupq_n_s32( 4 );
+			int32x4_t vj = { 1, 2, 3, 4 };
+			for( ; j+3<=lgth2; j+=4 )
+			{
+				int32x4_t p = vld1q_s32( prev + j - 1 );
+				int32x4_t g, wm, ij, m, vmj, vmpj;
+				uint32x4_t c;
+				wm = p;
+				ij = vdupq_n_s32( 0 );
+				g = vaddq_s32( vld1q_s32( hq + j ), vpen );
+				c = vcgtq_s32( g, wm );
+				wm = vmaxq_s32( wm, g );
+				ij = vbslq_s32( c, vsubq_s32( vld1q_s32( hk + j ), vj ), ij );
+				vmj = vld1q_s32( vm + j );
+				vmpj = vld1q_s32( vmp + j );
+				g = vaddq_s32( vmj, vpen );
+				c = vcgtq_s32( g, wm );
+				wm = vmaxq_s32( wm, g );
+				ij = vbslq_s32( c, vsubq_s32( vi, vmpj ), ij );
+				c = vcgtq_s32( p, vmj );
+				m = vmaxq_s32( p, vmj );
+				vst1q_s32( vm + j, vaddq_s32( m, vext ) );
+				vst1q_s32( vmp + j, vbslq_s32( c, vi1, vmpj ) );
+				vst1q_s32( wmrow + j, wm );
+				vmax = vmaxq_s32( vmax, wm );
+				c = vcltq_s32( wm, vthr );
+				ij = vbslq_s32( c, vstop, ij );
+				wm = vmaxq_s32( wm, vthr );
+				vst1q_s32( ijrow + j, ij );
+				vst1q_s32( cur + j, vaddq_s32( wm, vld1q_s32( profrow + j ) ) );
+				vj = vaddq_s32( vj, vfour );
+			}
+			rowmax = vmaxvq_s32( vmax );
+		}
+#endif
+		for( ; j<=lgth2; j++ )
+		{
+			int p = prev[j-1];
+			int wm = p, ij = 0, g;
+			g = hq[j] + pen;
+			if( g > wm ) { wm = g; ij = -( j - hk[j] ); }
+			g = vm[j] + pen;
+			if( g > wm ) { wm = g; ij = i - vmp[j]; }
+			if( p > vm[j] ) { vm[j] = p; vmp[j] = negi1; }
+			vm[j] += ext;
+			wmrow[j] = wm;
+			rowmax = ( wm > rowmax ) ? wm : rowmax;
+			if( wm < ithr ) { ij = lstop; wm = ithr; }
+			ijrow[j] = ij;
+			cur[j] = wm + profrow[j];
+		}
+		if( rowmax > maxwm )
+		{
+			for( j=1; wmrow[j] != rowmax; j++ )
+				;
+			maxwm = rowmax; endali = i; endalj = j;
+		}
+		if( i < lgth1 ) cur[0] = (int)amino_dynamicmtx[u2[0]][u1[i]]; /* currentw[0] = initverticalw[i] */
+	}
+
+	free( profbuf ); free( prev ); free( cur ); free( vm ); free( vmp ); free( hq ); free( hk ); free( wmrow );
+	*maxwmpt = (double)maxwm;
+	*endalipt = endali;
+	*endaljpt = endalj;
+	return( 1 );
+}
+
 double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char **seq2, int alloclen, int *off1pt, int *off2pt )
 /* score no keisan no sai motokaraaru gap no atukai ni mondai ga aru */
 {
@@ -409,6 +590,13 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 		commonAlloc2 = ll2;
 	}
 	ijp = commonIP;
+
+	if( !trywarp )
+	{
+		localstop = lgth1+lgth2+1;
+		if( Lfill_int( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, ijp, localstop, &maxwm, &endali, &endalj ) )
+			goto Lint_done;
+	}
 
 
 #if 0
@@ -705,6 +893,7 @@ fprintf( stderr, "\n" );
 	fprintf( stderr, "endalj = %d\n", endalj );
 #endif
 
+Lint_done:
 	if( ijp[endali][endalj] == localstop )
 	{
 		strcpy( seq1[0], "" );

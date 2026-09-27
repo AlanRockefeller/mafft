@@ -47,6 +47,10 @@ else
 STDF = -std=c99
 endif
 
+ifeq ($(shell uname),Darwin)
+LIBS += -framework Accelerate
+endif
+
 MYCFLAGS = $(MNO_CYGWIN) $(ENABLE_MULTITHREAD) $(ENABLE_ATOMIC) $(STDF) $(CFLAGS)
 
 INSTALL = install
