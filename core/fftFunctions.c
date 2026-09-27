@@ -242,37 +242,59 @@ int alignableReagion( int    clus1, int    clus2,
 
 	totaleff = 0.0;
 	for( i=0; i<clus1; i++ ) for( j=0; j<clus2; j++ ) totaleff += eff1[i] * eff2[j];
-	/* Build every column profile row-wise (contiguous in each sequence) instead of column-major.
-	   Each prf[i][bin] still receives eff[j] in ascending j, so the sums are bit-identical. */
+	/* Build the column profiles row-wise (contiguous in each sequence) instead of column-major,
+	   keeping only the bins that occur: the site score below reads bins 0..25 only, and only the
+	   nonzero ones, in descending order.  Each bin still receives eff[j] in ascending j and the
+	   products are summed in the same order, so stra[] is bit-identical. */
 	{
-		int ok = 1;
-		for( j=0; j<clus1 && ok; j++ ) for( i=0; i<len; i++ ) { int b = amino_n[(unsigned char)seq1[j][i]]; if( b < 0 || b >= nalphabets ) { ok = 0; break; } }
-		for( j=0; j<clus2 && ok; j++ ) for( i=0; i<len; i++ ) { int b = amino_n[(unsigned char)seq2[j][i]]; if( b < 0 || b >= nalphabets ) { ok = 0; break; } }
+		static TLS double *cprf = NULL;
+		static TLS size_t ccap = 0;
+		unsigned char seenc[0x100];
+		int used[26], ub[26], cidx[0x100], nu = 0, ok = 1, c;
+		memset( seenc, 0, sizeof( seenc ) );
+		for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; for( i=0; i<len; i++ ) seenc[s[i]] = 1; }
+		for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; for( i=0; i<len; i++ ) seenc[s[i]] = 1; }
+		for( k=0; k<26; k++ ) used[k] = 0;
+		for( c=0; c<0x100; c++ ) if( seenc[c] )
+		{
+			int bin = amino_n[c];
+			if( bin < 0 || bin >= nalphabets ) { ok = 0; break; }
+			if( bin < 26 ) used[bin] = 1;
+		}
 		if( ok )
 		{
-			double *allprf1 = calloc( (size_t)len * nalphabets, sizeof( double ) );
-			double *allprf2 = calloc( (size_t)len * nalphabets, sizeof( double ) );
-			for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; double e = eff1[j]; for( i=0; i<len; i++ ) allprf1[i*nalphabets+amino_n[s[i]]] += e; }
-			for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; double e = eff2[j]; for( i=0; i<len; i++ ) allprf2[i*nalphabets+amino_n[s[i]]] += e; }
+			double *cp1, *cp2;
+			int bin[26];
+			for( k=25; k>=0; k-- ) if( used[k] ) { bin[k] = nu; ub[nu++] = k; } else bin[k] = -1;
+			for( c=0; c<0x100; c++ ) cidx[c] = ( seenc[c] && amino_n[c] < 26 ) ? bin[(int)amino_n[c]] : -1;
+			if( ccap < (size_t)len * nu * 2 + 1 )
+			{
+				free( cprf );
+				ccap = (size_t)len * nu * 2 + 1;
+				cprf = malloc( sizeof( double ) * ccap );
+			}
+			cp1 = cprf; cp2 = cprf + (size_t)len * nu;
+			memset( cprf, 0, sizeof( double ) * (size_t)len * nu * 2 );
+			for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; double e = eff1[j]; for( i=0; i<len; i++ ) { int ci = cidx[s[i]]; if( ci >= 0 ) cp1[i*nu+ci] += e; } }
+			for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; double e = eff2[j]; for( i=0; i<len; i++ ) { int ci = cidx[s[i]]; if( ci >= 0 ) cp2[i*nu+ci] += e; } }
 			for( i=0; i<len; i++ )
 			{
-				memcpy( prf1, allprf1 + i*nalphabets, sizeof( double ) * nalphabets );
-				memcpy( prf2, allprf2 + i*nalphabets, sizeof( double ) * nalphabets );
-				pre1 = pre2 = nalphabets;
-				for( j=25; j>=0; j-- )
-				{
-					if( prf1[j] ) { hat1[pre1] = j; pre1 = j; }
-					if( prf2[j] ) { hat2[pre2] = j; pre2 = j; }
-				}
-				hat1[pre1] = -1;
-				hat2[pre2] = -1;
+				double *q1 = cp1 + (size_t)i * nu, *q2 = cp2 + (size_t)i * nu;
+				int a, b;
 				stra[i] = 0.0;
-				for( k=hat1[nalphabets]; k!=-1; k=hat1[k] ) 
-					for( j=hat2[nalphabets]; j!=-1; j=hat2[j] ) 
-						stra[i] += n_disFFT[k][j] * prf1[k] * prf2[j];
+				for( a=0; a<nu; a++ )
+				{
+					double p1 = q1[a];
+					if( !p1 ) continue;
+					for( b=0; b<nu; b++ )
+					{
+						double p2 = q2[b];
+						if( !p2 ) continue;
+						stra[i] += n_disFFT[ub[a]][ub[b]] * p1 * p2;
+					}
+				}
 				stra[i] /= totaleff;
 			}
-			free( allprf1 ); free( allprf2 );
 			goto profiles_done;
 		}
 	}

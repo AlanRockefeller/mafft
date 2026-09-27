@@ -409,6 +409,7 @@ static void *athread( void *arg )
 	double ***scoringmatrices;
 	double **eff1s, **eff2s; 
 	int **whichmtx;
+	void *igscache;
 
 
 	locnjob = njob;
@@ -483,6 +484,7 @@ static void *athread( void *arg )
 		effarr_kozo[i] = effarr1_kozo[i] = effarr2_kozo[i] = 0.0;
 
 	memlist = AllocateIntMtx( 2, locnjob );
+	igscache = igs_cache_new( locnjob );
 	pairbuf = AllocateCharVec( locnjob );
 
 
@@ -527,6 +529,7 @@ static void *athread( void *arg )
 			{
 				pthread_cond_broadcast( targ->collection_end );
 				pthread_mutex_unlock( targ->mutex );
+				igs_cache_free( igscache );
 				freelocalarrays
 				( 
 					tscorehistory,
@@ -645,6 +648,7 @@ static void *athread( void *arg )
 		*collectingpt = -1;
 		pthread_cond_broadcast( targ->collection_end );
 		pthread_mutex_unlock( targ->mutex );
+		igs_cache_free( igscache );
 		freelocalarrays
 		( 
 			tscorehistory,
@@ -691,6 +695,7 @@ static void *athread( void *arg )
 			if( *collectingpt == -1 )
 			{
 				pthread_mutex_unlock( targ->mutex );
+				igs_cache_free( igscache );
 				freelocalarrays
 				( 
 					tscorehistory,
@@ -868,7 +873,7 @@ static void *athread( void *arg )
 					if( RNAscoremtx == 'r' )
 						intergroup_score_gapnomi( mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
 					else
-						intergroup_score( mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
+						intergroup_score_cached( igscache, memlist[0], memlist[1], mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
 
 //					shrinklocalhom( pair, int s1, int s2, localhomtable, localhomshrink );
 //					msshrinklocalhom( pair[0], pair[1], s1, s2, localhomtable, localhomshrink );
@@ -943,7 +948,7 @@ static void *athread( void *arg )
 							intergroup_score_dynmtx( smalldistmtx, amino_dis, mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
 #endif
 						else
-							intergroup_score( mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
+							intergroup_score_cached( igscache, memlist[0], memlist[1], mseq1, mseq2, effarr1, effarr2, clus1, clus2, length, &tmpdouble ); // gappick mae denaito dame
 					}
 					oimpmatchdouble = 0.0;
 				}

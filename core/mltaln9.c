@@ -557,7 +557,10 @@ static int igs_prep( char *seq, int len, int *nxt, igs_run *runs, int *nrun )
 	return( 1 );
 }
 
-static int intergroup_score_fast( char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
+/* Per-pair tmpscore of intergroup_score() for every (i,j), into out[i*clus2+j].  With an
+   integer-valued matrix each tmpscore is an exact integer, so how it is summed does not matter.
+   Returns 0 (nothing written) when the matrix is not integral or a row is not plain 7-bit text. */
+static int igs_pairscores( char **seq1, char **seq2, int clus1, int clus2, int len, double *out )
 {
 	static TLS double **tabsrc = NULL;
 	static TLS int integral = -1;
@@ -634,14 +637,12 @@ static int intergroup_score_fast( char **seq1, char **seq2, double *eff1, double
 		}
 	}
 
-	*value = 0.0;
 	for( i=0; i<clus1; i++ ) 
 	{
 		unsigned char *m1 = (unsigned char *)seq1[i];
 		for( j=0; j<clus2; j++ ) 
 		{
 			unsigned char *m2 = (unsigned char *)seq2[j];
-			double efficient = eff1[i] * eff2[j];
 			if( colsum ) tmpscore = colsum[i*clus2+j];
 			else
 			{
@@ -677,12 +678,202 @@ static int intergroup_score_fast( char **seq1, char **seq2, double *eff1, double
 					tmpscore += (double)penalty + s * (double)( 2 + run2[j][r].e - c );
 				}
 			}
-			*value += (double)tmpscore * (double)efficient;
+			out[i*clus2+j] = tmpscore;
 		}
 	}
 
 	free( nxtbuf ); free( runbuf ); free( nxt1 ); free( run1 ); free( nrun1 ); free( nxt2 ); free( run2 ); free( nrun2 ); free( colsum );
 	return( 1 );
+}
+
+/* Sums the pair scores in the original (i,j) order, as intergroup_score() does. */
+static void igs_accumulate( double *pairscore, double *eff1, double *eff2, int clus1, int clus2, double *value )
+{
+	int i, j;
+	double tmpscore, efficient;
+	*value = 0.0;
+	for( i=0; i<clus1; i++ ) 
+	{
+		for( j=0; j<clus2; j++ ) 
+		{
+			efficient = eff1[i] * eff2[j];
+			tmpscore = pairscore[i*clus2+j];
+			*value += (double)tmpscore * (double)efficient;
+		}
+	}
+}
+
+static int intergroup_score_fast( char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
+{
+	double *pairscore = malloc( sizeof( double ) * clus1 * clus2 );
+	if( !pairscore ) return( 0 );
+	if( !igs_pairscores( seq1, seq2, clus1, clus2, len, pairscore ) )
+	{
+		free( pairscore );
+		return( 0 );
+	}
+	igs_accumulate( pairscore, eff1, eff2, clus1, clus2, value );
+	free( pairscore );
+	return( 1 );
+}
+
+/*
+ * Pair-score cache for the iterative refinement.  A pair's tmpscore depends only on the two
+ * rows, and most refinement steps leave the alignment unchanged, so across steps nearly all
+ * pairs are rescored on identical rows.  Rows are identified by their index in the full
+ * alignment; each keeps a snapshot and a version number that changes whenever its text
+ * does, and a cached pair is reused only when it was computed on the current versions of
+ * both rows.  The accumulation itself is redone in the original order every call.
+ */
+struct igs_cache
+{
+	int n;
+	int nextver;
+	int *ver;        /* current version of each row, 0 = never seen */
+	char **snap;     /* text of each row at that version */
+	size_t *snapcap;
+	int *pv1, *pv2;  /* versions of rows (lo,hi) a pair was computed on */
+	double *sc;      /* its tmpscore */
+};
+
+void *igs_cache_new( int n )
+{
+	struct igs_cache *c = calloc( 1, sizeof( struct igs_cache ) );
+	if( !c ) return( NULL );
+	c->n = n;
+	c->nextver = 1;
+	c->ver = calloc( n, sizeof( int ) );
+	c->snap = calloc( n, sizeof( char * ) );
+	c->snapcap = calloc( n, sizeof( size_t ) );
+	if( !c->ver || !c->snap || !c->snapcap )
+	{
+		igs_cache_free( c );
+		return( NULL );
+	}
+	return( c );
+}
+
+void igs_cache_free( void *cv )
+{
+	struct igs_cache *c = cv;
+	int i;
+	if( !c ) return;
+	if( c->snap ) for( i=0; i<c->n; i++ ) free( c->snap[i] );
+	free( c->snap ); free( c->snapcap ); free( c->ver ); free( c->pv1 ); free( c->pv2 ); free( c->sc );
+	free( c );
+}
+
+static void igs_cache_sync( struct igs_cache *c, int id, char *row )
+{
+	size_t l;
+	if( c->ver[id] && !strcmp( c->snap[id], row ) ) return;
+	l = strlen( row ) + 1;
+	if( c->snapcap[id] < l )
+	{
+		free( c->snap[id] );
+		c->snap[id] = malloc( l );
+		c->snapcap[id] = l;
+	}
+	memcpy( c->snap[id], row, l );
+	c->ver[id] = c->nextver++;
+}
+
+/* intergroup_score() for seq1[i] = row id1[i], seq2[j] = row id2[j] of one alignment. */
+void intergroup_score_cached( void *cv, int *id1, int *id2, char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
+{
+	struct igs_cache *c = cv;
+	int i, j, ni, nj, n = c ? c->n : 0;
+	int *missrow = NULL, *misscol = NULL, *rowlist = NULL, *collist = NULL;
+	char **sub1 = NULL, **sub2 = NULL;
+	double *pairscore = NULL, *block = NULL;
+
+	if( !c || c->nextver > INT_MAX - 2 * n ) goto fallback;
+	if( !c->sc ) /* n*n pair table, allocated on first use; not worth it beyond 32 MB */
+	{
+		if( (double)n * n * ( 2 * sizeof( int ) + sizeof( double ) ) > 32.0 * 1024 * 1024 ) goto fallback;
+		c->pv1 = calloc( (size_t)n * n, sizeof( int ) );
+		c->pv2 = calloc( (size_t)n * n, sizeof( int ) );
+		c->sc = malloc( (size_t)n * n * sizeof( double ) );
+		if( !c->pv1 || !c->pv2 || !c->sc )
+		{
+			free( c->pv1 ); free( c->pv2 ); free( c->sc );
+			c->pv1 = c->pv2 = NULL; c->sc = NULL;
+			goto fallback;
+		}
+	}
+	for( i=0; i<clus1; i++ ) if( id1[i] < 0 || id1[i] >= n ) goto fallback;
+	for( j=0; j<clus2; j++ ) if( id2[j] < 0 || id2[j] >= n ) goto fallback;
+	for( i=0; i<clus1; i++ ) igs_cache_sync( c, id1[i], seq1[i] );
+	for( j=0; j<clus2; j++ ) igs_cache_sync( c, id2[j], seq2[j] );
+
+	pairscore = malloc( sizeof( double ) * clus1 * clus2 );
+	missrow = calloc( clus1, sizeof( int ) );
+	misscol = calloc( clus2, sizeof( int ) );
+	rowlist = malloc( sizeof( int ) * clus1 );
+	collist = malloc( sizeof( int ) * clus2 );
+	sub1 = malloc( sizeof( char * ) * clus1 );
+	sub2 = malloc( sizeof( char * ) * clus2 );
+	if( !pairscore || !missrow || !misscol || !rowlist || !collist || !sub1 || !sub2 ) goto fallback;
+
+	/* look up every pair; count misses per row */
+	for( i=0; i<clus1; i++ ) for( j=0; j<clus2; j++ )
+	{
+		int a = id1[i], b = id2[j], lo = MIN( a, b ), hi = MAX( a, b );
+		size_t x = (size_t)lo * n + hi;
+		if( c->pv1[x] == c->ver[lo] && c->pv2[x] == c->ver[hi] && lo != hi )
+			pairscore[i*clus2+j] = c->sc[x];
+		else
+		{
+			pairscore[i*clus2+j] = NAN;
+			missrow[i]++;
+		}
+	}
+
+	/* Rows missing more than half their pairs are rescored against the whole of seq2;
+	   the remaining misses against just the columns they need. */
+	ni = 0;
+	for( i=0; i<clus1; i++ ) if( missrow[i] * 2 > clus2 ) { rowlist[ni] = i; sub1[ni++] = seq1[i]; }
+	if( ni )
+	{
+		block = malloc( sizeof( double ) * ni * clus2 );
+		if( !block || !igs_pairscores( sub1, seq2, ni, clus2, len, block ) ) goto fallback;
+		for( i=0; i<ni; i++ ) for( j=0; j<clus2; j++ ) pairscore[rowlist[i]*clus2+j] = block[i*clus2+j];
+		free( block ); block = NULL;
+	}
+	ni = 0;
+	for( i=0; i<clus1; i++ ) if( missrow[i] && missrow[i] * 2 <= clus2 )
+	{
+		rowlist[ni] = i; sub1[ni++] = seq1[i];
+		for( j=0; j<clus2; j++ ) if( isnan( pairscore[i*clus2+j] ) ) misscol[j] = 1;
+	}
+	if( ni )
+	{
+		nj = 0;
+		for( j=0; j<clus2; j++ ) if( misscol[j] ) { collist[nj] = j; sub2[nj++] = seq2[j]; }
+		block = malloc( sizeof( double ) * ni * nj );
+		if( !block || !igs_pairscores( sub1, sub2, ni, nj, len, block ) ) goto fallback;
+		for( i=0; i<ni; i++ ) for( j=0; j<nj; j++ ) pairscore[rowlist[i]*clus2+collist[j]] = block[i*nj+j];
+		free( block ); block = NULL;
+	}
+
+	/* store what was computed */
+	for( i=0; i<clus1; i++ ) if( missrow[i] ) for( j=0; j<clus2; j++ )
+	{
+		int a = id1[i], b = id2[j], lo = MIN( a, b ), hi = MAX( a, b );
+		size_t x = (size_t)lo * n + hi;
+		if( lo == hi ) continue;
+		c->sc[x] = pairscore[i*clus2+j];
+		c->pv1[x] = c->ver[lo];
+		c->pv2[x] = c->ver[hi];
+	}
+
+	igs_accumulate( pairscore, eff1, eff2, clus1, clus2, value );
+	free( pairscore ); free( missrow ); free( misscol ); free( rowlist ); free( collist ); free( sub1 ); free( sub2 );
+	return;
+
+fallback:
+	free( pairscore ); free( missrow ); free( misscol ); free( rowlist ); free( collist ); free( sub1 ); free( sub2 ); free( block );
+	intergroup_score( seq1, seq2, eff1, eff2, clus1, clus2, len, value );
 }
 
 void intergroup_score( char **seq1, char **seq2, double *eff1, double *eff2, int clus1, int clus2, int len, double *value )
@@ -12834,6 +13025,60 @@ void getkyokaigap( char *g, char **s, int pos, int n )
 //	reporterr(       "bk = %s\n", bk );
 }
 
+/*
+ * Gap runs of s[0..len-1], as [st[r], en[r]) with en exclusive; returns their number.  Used by
+ * the column counts below, which only ever add eff[j] to the columns where a row's gap runs
+ * start, end or lie: visiting just those columns, rows in the same order, gives the same sums
+ * as the column-by-column loops.  NEON finds the run boundaries 16 bytes at a time.
+ */
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+static int gapruns( char *s, int len, int *st, int *en )
+{
+	int i = 0, n = 0, in = 0;
+#if defined(__ARM_NEON)
+	uint8x16_t dash = vdupq_n_u8( '-' ), zero = vdupq_n_u8( 0 ), ones = vdupq_n_u8( 0xff );
+	for( ; i+16<=len; i+=16 )
+	{
+		uint8x16_t g = vceqq_u8( vld1q_u8( (uint8_t *)s + i ), dash );
+		uint8x16_t t = veorq_u8( g, vextq_u8( in ? ones : zero, g, 15 ) ); /* g[k] != g[k-1] */
+		uint64_t bits = vget_lane_u64( vreinterpret_u64_u8( vshrn_n_u16( vreinterpretq_u16_u8( t ), 4 ) ), 0 );
+		while( bits )
+		{
+			int b = __builtin_ctzll( bits ) >> 2;
+			if( in ) en[n++] = i + b; else st[n] = i + b;
+			in = !in;
+			bits &= ~( 0xfULL << ( b * 4 ) );
+		}
+	}
+#endif
+	for( ; i<len; i++ )
+	{
+		int g = ( s[i] == '-' );
+		if( g != in )
+		{
+			if( in ) en[n++] = i; else st[n] = i;
+			in = g;
+		}
+	}
+	if( in ) en[n++] = len;
+	return( n );
+}
+
+static int *gapruns_buf( int len )
+{
+	static TLS int *buf = NULL;
+	static TLS int size = 0;
+	if( size < len + 2 )
+	{
+		free( buf );
+		size = len + 2;
+		buf = malloc( sizeof( int ) * 2 * size );
+	}
+	return( buf );
+}
+
 void new_OpeningGapCount( double *ogcp, int clus, char **seq, double *eff, int len, char *sgappat )
 #if 0
 {
@@ -12856,29 +13101,19 @@ void new_OpeningGapCount( double *ogcp, int clus, char **seq, double *eff, int l
 }
 #else
 {
-	int i, j, gc, gb; 
+	int j, r, n;
 	double feff;
-	double *fpt;
-	char *spt;
-	
-	fpt = ogcp;
-	i = len;
-	while( i-- ) *fpt++ = 0.0;
+	int *st = gapruns_buf( len ), *en = st + len + 2;
+
+	for( r=0; r<len; r++ ) ogcp[r] = 0.0;
 	for( j=0; j<clus; j++ ) 
 	{
 		feff = (double)eff[j];
-		spt = seq[j];
-		fpt = ogcp;
-		gc = ( sgappat[j] == '-' );
-		i = len;
-		while( i-- )
+		n = gapruns( seq[j], len, st, en );
+		for( r=0; r<n; r++ )
 		{
-			gb = gc;
-			gc = ( *spt++ == '-' );
-			{
-				if( !gb *  gc ) *fpt += feff;
-				fpt++;
-			}
+			if( st[r] == 0 && sgappat[j] == '-' ) continue; /* continues a gap from before */
+			ogcp[st[r]] += feff;
 		}
 	}
 }
@@ -13037,37 +13272,21 @@ void new_FinalGapCount( double *fgcp, int clus, char **seq, double *eff, int len
 }
 #else
 {
-	int i, j, gc, gb; 
+	int j, r, n;
 	double feff;
-	double *fpt;
-	char *spt;
-	
-	fpt = fgcp;
-	i = len;
-	while( i-- ) *fpt++ = 0.0;
+	int *st = gapruns_buf( len ), *en = st + len + 2;
+
+	for( r=0; r<len; r++ ) fgcp[r] = 0.0;
 	for( j=0; j<clus; j++ ) 
 	{
 		feff = (double)eff[j];
-		fpt = fgcp;
-		spt = seq[j];
-		gc = ( *spt == '-' );
-		i = len;
-		while( i-- )
+		n = gapruns( seq[j], len, st, en );
+		/* a gap closes at column t when seq[t] == '-' and seq[t+1] != '-'; seq[len] is read as is */
+		for( r=0; r<n; r++ )
 		{
-			gb = gc;
-			gc = ( *++spt == '-' );
-			{
-				if( gb * !gc ) *fpt += feff;
-				fpt++;
-			}
+			if( en[r] < len || seq[j][len] != '-' ) fgcp[en[r]-1] += feff;
 		}
-		{
-			gb = gc;
-			gc = ( egappat[j] == '-' );
-			{
-				if( gb * !gc ) *fpt += feff;
-			}
-		}
+		if( seq[j][len] == '-' && egappat[j] != '-' ) fgcp[len] += feff;
 	}
 }
 #endif
@@ -15418,13 +15637,16 @@ void gapcountf( double *freq, char **seq, int nseq, double *eff, int lgth )
 //	for( i=0; i<lgth; i++ ) freq[i] = 0.0;
 //	return;
 
-	/* row-wise; freq[i] still receives eff[j] in ascending j, so the sums are unchanged */
+	/* row-wise, one gap run at a time; freq[i] still receives eff[j] in ascending j */
 	for( i=0; i<lgth; i++ ) freq[i] = 0.0;
-	for( j=0; j<nseq; j++ )
 	{
-		char *s = seq[j];
-		fr = eff[j];
-		for( i=0; i<lgth; i++ ) if( s[i] == '-' ) freq[i] += fr;
+		int *st = gapruns_buf( lgth ), *en = st + lgth + 2, r, n;
+		for( j=0; j<nseq; j++ )
+		{
+			fr = eff[j];
+			n = gapruns( seq[j], lgth, st, en );
+			for( r=0; r<n; r++ ) for( i=st[r]; i<en[r]; i++ ) freq[i] += fr;
+		}
 	}
 //	reporterr(       "\n" );
 	return;

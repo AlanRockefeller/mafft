@@ -216,8 +216,8 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
  * consweight_multi == 1.0, integer penalties, scoreoffset == 0), the double DP below only ever
  * holds integers well inside 2^53, so an int32 DP makes exactly the same comparisons and yields
  * the same ijp[][], maxwm and end point.  Every candidate for cell (i,j) is derived from row i-1,
- * so a row is computed in two passes: a scalar prefix scan for the horizontal-gap state, then a
- * branch-free loop over j that clang vectorizes (4 x int32 on NEON).
+ * so a whole row, including the prefix scan for the horizontal-gap state, is computed 4 cells at
+ * a time with NEON int32 vectors (scalar code for the last few cells).
  *
  * Returns 0 (and does nothing) when the integral/range preconditions do not hold.
  */
@@ -229,7 +229,8 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	int pen = penalty, ext = penalty_ex;
 	double thr = -offset + scoreoffset * 600;
 	int ithr, *prof[0x100], *profbuf, nprof = 0;
-	int *prev, *cur, *vm, *vmp, *hq, *hk, *wmrow;
+	int *prev, *cur, *vm, *vmp, *hq, *hk, *wmrow, *pbuf1, *pbuf2;
+	int tbest, tbestk, jj;
 	int maxwm, endali = 0, endalj = 0, rowmax;
 	unsigned char *u1 = (unsigned char *)s1, *u2 = (unsigned char *)s2;
 	unsigned char used[0x100];
@@ -275,8 +276,9 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 		k++;
 	}
 
-	prev  = malloc( sizeof( int ) * ( lgth2 + 4 ) );
-	cur   = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	/* one slot in front of prev[]/cur[]: prev[-1] seeds the vector scan */
+	pbuf1 = calloc( lgth2 + 5, sizeof( int ) ); prev = pbuf1 + 1;
+	pbuf2 = calloc( lgth2 + 5, sizeof( int ) ); cur = pbuf2 + 1;
 	vm    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	vmp   = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
@@ -299,18 +301,12 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 		prev[0] = (int)amino_dynamicmtx[u2[0]][u1[i-1]];
 
 		/* Horizontal state before cell j:  H_j = (j-1)*ext + max_{k<=max(j-2,0)} (prev[k] - k*ext),
-		   mpi_j = first k attaining it (the original updates only on strict '>'). */
-		{
-			int best = prev[0], bestk = 0, q;
-			hq[1] = prev[0]; hk[1] = 0;
-			for( j=2; j<=lgth2; j++ )
-			{
-				q = prev[j-2] - ( j-2 ) * ext;
-				if( q > best ) { best = q; bestk = j-2; }
-				hq[j] = best + ( j-1 ) * ext;
-				hk[j] = bestk;
-			}
-		}
+		   mpi_j = first k attaining it (the original updates only on strict '>').  Computed
+		   inside the loop below: the first index attaining a running max is the last strict
+		   record, so both are prefix maxima, taken 4 lanes at a time with a carry.  prev[-1] is
+		   set so that lane k=-1 of the first block stands for the k=0 term of H_1. */
+		prev[-1] = prev[0] - ext;
+		tbest = prev[0]; tbestk = 0;
 
 		rowmax = INT_MIN;
 		if( !profrow ) profrow = prof[u1[0]]; /* last row: cur[] is never read again */
@@ -321,17 +317,41 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 			int32x4_t vstop = vdupq_n_s32( lstop ), vi = vdupq_n_s32( i ), vi1 = vdupq_n_s32( negi1 );
 			int32x4_t vmax = vdupq_n_s32( INT_MIN ), vfour = vdupq_n_s32( 4 );
 			int32x4_t vj = { 1, 2, 3, 4 };
+			int32x4_t ninf = vdupq_n_s32( INT_MIN ), none = vdupq_n_s32( -1 );
+			int32x4_t cv = ninf, ck = vdupq_n_s32( 0 );
+			int32x4_t kv = { -1, 0, 1, 2 };
+			int32x4_t kext = vmulq_s32( kv, vext ), kext1 = vaddq_s32( kext, vext ), ext4 = vmulq_s32( vfour, vext );
 			for( ; j+3<=lgth2; j+=4 )
 			{
 				int32x4_t p = vld1q_s32( prev + j - 1 );
+				int32x4_t hqv, hkv;
+				{
+					int32x4_t v = vsubq_s32( vld1q_s32( prev + j - 2 ), kext );
+					int32x4_t x = vmaxq_s32( v, vextq_s32( ninf, v, 3 ) );
+					int32x4_t e, r, t;
+					x = vmaxq_s32( x, vextq_s32( ninf, x, 2 ) );
+					x = vmaxq_s32( x, cv );
+					e = vextq_s32( cv, x, 3 );
+					r = vbslq_s32( vcgtq_s32( v, e ), kv, none );
+					t = vmaxq_s32( r, vextq_s32( none, r, 3 ) );
+					t = vmaxq_s32( t, vextq_s32( none, t, 2 ) );
+					t = vmaxq_s32( t, ck );
+					hqv = vaddq_s32( x, kext1 );
+					hkv = t;
+					cv = vdupq_laneq_s32( x, 3 );
+					ck = vdupq_laneq_s32( t, 3 );
+					kv = vaddq_s32( kv, vfour );
+					kext = vaddq_s32( kext, ext4 );
+					kext1 = vaddq_s32( kext1, ext4 );
+				}
 				int32x4_t g, wm, ij, m, vmj, vmpj;
 				uint32x4_t c;
 				wm = p;
 				ij = vdupq_n_s32( 0 );
-				g = vaddq_s32( vld1q_s32( hq + j ), vpen );
+				g = vaddq_s32( hqv, vpen );
 				c = vcgtq_s32( g, wm );
 				wm = vmaxq_s32( wm, g );
-				ij = vbslq_s32( c, vsubq_s32( vld1q_s32( hk + j ), vj ), ij );
+				ij = vbslq_s32( c, vsubq_s32( hkv, vj ), ij );
 				vmj = vld1q_s32( vm + j );
 				vmpj = vld1q_s32( vmp + j );
 				g = vaddq_s32( vmj, vpen );
@@ -352,8 +372,20 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 				vj = vaddq_s32( vj, vfour );
 			}
 			rowmax = vmaxvq_s32( vmax );
+			if( j > 1 ) { tbest = vgetq_lane_s32( cv, 0 ); tbestk = vgetq_lane_s32( ck, 0 ); }
 		}
 #endif
+		/* scan for the remaining cells */
+		for( jj=j; jj<=lgth2; jj++ )
+		{
+			if( jj >= 2 )
+			{
+				int q = prev[jj-2] - ( jj-2 ) * ext;
+				if( q > tbest ) { tbest = q; tbestk = jj-2; }
+			}
+			hq[jj] = tbest + ( jj-1 ) * ext;
+			hk[jj] = tbestk;
+		}
 		for( ; j<=lgth2; j++ )
 		{
 			int p = prev[j-1];
@@ -379,7 +411,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 		if( i < lgth1 ) cur[0] = (int)amino_dynamicmtx[u2[0]][u1[i]]; /* currentw[0] = initverticalw[i] */
 	}
 
-	free( profbuf ); free( prev ); free( cur ); free( vm ); free( vmp ); free( hq ); free( hk ); free( wmrow );
+	free( profbuf ); free( pbuf1 ); free( pbuf2 ); free( vm ); free( vmp ); free( hq ); free( hk ); free( wmrow );
 	*maxwmpt = (double)maxwm;
 	*endalipt = endali;
 	*endaljpt = endalj;
