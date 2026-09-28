@@ -1,6 +1,9 @@
 /*
  * Integer L__align11 fill + traceback for many pairs at once (see l11gpu.h / l11gpu.m).
- * One pair per 32-lane SIMD group; CMAX = columns held per lane, instantiated below.
+ * One pair per 32-lane SIMD group, PAIRS_PER_TG SIMD groups per threadgroup.  CMAX bounds the
+ * columns each lane holds; the loops run to the actual count C, so the per-lane arrays live in
+ * thread memory rather than registers.  That lowers register pressure and roughly doubles how
+ * many SIMD groups the GPU keeps in flight, which is what this kernel is limited by.
  * Compiled offline into an embedded .metallib when the Metal compiler is available at build
  * time, otherwise from this source at run time.
  */
@@ -15,8 +18,11 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
                  device const int *mtx [[buffer(2)]], device const PairDesc *pd [[buffer(3)]],
                  constant Params &P [[buffer(4)]], device short *ijpbuf [[buffer(5)]],
                  device char *outbuf [[buffer(6)]], device Result *res [[buffer(7)]],
-                 uint gid [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]] )
+                 uint tgid [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]],
+                 uint sg [[simdgroup_index_in_threadgroup]], uint nsg [[simdgroups_per_threadgroup]] )
 {
+  uint gid = tgid * nsg + sg;   /* one pair per SIMD group, several SIMD groups per threadgroup */
+  if( gid >= (uint)P.npairs ) return;
   PairDesc d = pd[gid];
   const int l1 = d.l1, l2 = d.l2, nc1 = P.ncode + 1;
   const int pen = P.pen, ext = P.ext, thr = P.thr;
@@ -29,7 +35,7 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
   const int j0 = (int)lane * C + 1;
   int Pv[CMAX], VM[CMAX], PK[CMAX];
   int u10 = c1[0];
-  for( int t=0; t<CMAX; t++ )
+  for( int t=0; t<C; t++ )
   {
     int j = j0 + t;
     int cj = ( t < C && j < l2 ) ? (int)c2[j] : P.ncode;
@@ -44,7 +50,7 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
     int prev0 = mtx[ (int)c2[0]*nc1 + (int)c1[i-1] ];
     int c1i = ( i < l1 ) ? (int)c1[i] : (int)c1[0];
     int last = 0, av = INT_MIN, ak = -1, a2v = INT_MIN, a2k = -1;
-    for( int t=0; t<CMAX; t++ )
+    for( int t=0; t<C; t++ )
     {
       int j = j0 + t;
       if( t < C && j <= l2 )
@@ -72,7 +78,7 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
     int Rv = ev, Rk = ek, o1 = pl, o2 = 0;
     int lmax = INT_MIN, lj = INT_MAX;
     device short *ijrow = ijp + i*W + lane;
-    for( int t=0; t<CMAX; t++ )
+    for( int t=0; t<C; t++ )
     {
       int j = j0 + t;
       if( t < C && j <= l2 )
@@ -103,7 +109,7 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
     int rj = simd_min( lmax == rmax ? lj : INT_MAX );
     if( rmax > maxwm ) { maxwm = rmax; endi = i; endj = rj; }
   }
-  threadgroup_barrier( mem_flags::mem_device );
+  simdgroup_barrier( mem_flags::mem_device );
   if( lane != 0 ) return;
   device char *m1 = outbuf + d.outoff;
   device char *m2 = m1 + ( l1 + l2 + 1 );
@@ -139,13 +145,10 @@ kernel void l11( device const uchar *codes [[buffer(0)]], device const char *cha
   res[gid] = r;
 }
 
-template [[host_name("l11_8")]] kernel void l11<8>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_12")]] kernel void l11<12>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_16")]] kernel void l11<16>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_20")]] kernel void l11<20>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_24")]] kernel void l11<24>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_28")]] kernel void l11<28>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_32")]] kernel void l11<32>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_40")]] kernel void l11<40>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_48")]] kernel void l11<48>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
-template [[host_name("l11_64")]] kernel void l11<64>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint );
+template [[host_name("l11_20")]] kernel void l11<20>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_24")]] kernel void l11<24>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_28")]] kernel void l11<28>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_32")]] kernel void l11<32>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_40")]] kernel void l11<40>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_48")]] kernel void l11<48>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );
+template [[host_name("l11_64")]] kernel void l11<64>( device const uchar *, device const char *, device const int *, device const PairDesc *, constant Params &, device short *, device char *, device Result *, uint, uint, uint, uint );

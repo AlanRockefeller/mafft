@@ -1,9 +1,9 @@
 /*
  * Metal implementation of l11gpu_align() (see l11gpu.h).
  *
- * One pair per 32-thread SIMD group.  Row i of the DP depends only on row i-1, so each lane owns
- * a contiguous run of C columns and keeps their state (previous-row value, vertical-gap state,
- * seq2 code) in registers.  The horizontal-gap state H_j = (j-1)*ext + max_{k<=j-2} (prev[k] -
+ * The kernel is in l11gpu.metal.  One pair per 32-thread SIMD group, four per threadgroup.  Row i
+ * of the DP depends only on row i-1, so each lane owns a contiguous run of C columns and keeps
+ * their state (previous-row value, vertical-gap state, seq2 code) in thread memory.  The horizontal-gap state H_j = (j-1)*ext + max_{k<=j-2} (prev[k] -
  * k*ext), with the first k attaining it, is a prefix maximum: each lane scans its own columns and
  * one SIMD-wide scan carries the maximum across lanes.  Traceback (int16 ijp in device memory) is
  * then done by lane 0, writing the two aligned strings back to front as Ltracking() does.
@@ -22,7 +22,7 @@ typedef struct { uint32_t s1off, s2off; int32_t l1, l2; uint32_t ijpoff, outoff;
 typedef struct { int32_t ncode, pen, ext, thr, gapc, npairs; } Params;
 typedef struct { int32_t maxwm, endi, endj, off1, off2, start, status, pad; } Result;
 
-static const int cmaxes[] = { 8, 12, 16, 20, 24, 28, 32, 40, 48, 64 };
+static const int cmaxes[] = { 20, 24, 28, 32, 40, 48, 64 };
 #define NCMAX ( sizeof( cmaxes ) / sizeof( cmaxes[0] ) )
 
 static id<MTLDevice> dev = nil;
@@ -92,6 +92,7 @@ static int init_gpu( void )
 #endif
 #define IJPBUDGET ( (size_t)IJPMB << 20 )   /* bytes of traceback matrix per batch */
 #define MAXBATCH 4096
+#define PAIRS_PER_TG 4   /* SIMD groups (pairs) per threadgroup */
 
 typedef struct
 {
@@ -253,7 +254,11 @@ int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int n
 				[enc setBuffer:cur->ijp offset:0 atIndex:5];
 				[enc setBuffer:cur->out offset:0 atIndex:6];
 				[enc setBuffer:cur->res offset:0 atIndex:7];
-				[enc dispatchThreadgroups:MTLSizeMake( n, 1, 1 ) threadsPerThreadgroup:MTLSizeMake( 32, 1, 1 )];
+				{
+					int ppt = PAIRS_PER_TG;
+					while( ppt > 1 && 32 * ppt > (int)[ps maxTotalThreadsPerThreadgroup] ) ppt >>= 1;
+					[enc dispatchThreadgroups:MTLSizeMake( ( n + ppt - 1 ) / ppt, 1, 1 ) threadsPerThreadgroup:MTLSizeMake( 32 * ppt, 1, 1 )];
+				}
 				[enc endEncoding];
 				[cur->cb commit];
 				next += n;
