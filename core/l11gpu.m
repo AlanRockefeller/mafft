@@ -15,140 +15,8 @@
 #include <limits.h>
 #include "l11gpu.h"
 
-static NSString *kernelsrc = @
-"#include <metal_stdlib>\n"
-"using namespace metal;\n"
-"struct PairDesc { uint s1off; uint s2off; int l1; int l2; uint ijpoff; uint outoff; int pad0; int pad1; };\n"
-"struct Params { int ncode; int pen; int ext; int thr; int gapc; int npairs; };\n"
-"struct Result { int maxwm; int endi; int endj; int off1; int off2; int start; int status; int pad; };\n"
-"static inline void comb( thread int &av, thread int &ak, int bv, int bk ) { if( bv > av ) { av = bv; ak = bk; } }\n"
-"kernel void l11( device const uchar *codes [[buffer(0)]], device const char *chars [[buffer(1)]],\n"
-"                 device const int *mtx [[buffer(2)]], device const PairDesc *pd [[buffer(3)]],\n"
-"                 constant Params &P [[buffer(4)]], device short *ijpbuf [[buffer(5)]],\n"
-"                 device char *outbuf [[buffer(6)]], device Result *res [[buffer(7)]],\n"
-"                 uint gid [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]] )\n"
-"{\n"
-"  PairDesc d = pd[gid];\n"
-"  const int l1 = d.l1, l2 = d.l2, nc1 = P.ncode + 1;\n"
-"  const int pen = P.pen, ext = P.ext, thr = P.thr;\n"
-"  const int lstop = l1 + l2 + 1;\n"
-"  const int C = ( l2 + 31 ) / 32;\n"
-"  device const uchar *c1 = codes + d.s1off;\n"
-"  device const uchar *c2 = codes + d.s2off;\n"
-"  device short *ijp = ijpbuf + d.ijpoff;\n"
-"  const int W = 32 * C;\n"
-"  const int j0 = (int)lane * C + 1;\n"
-"  int Pv[CMAX], VM[CMAX], PK[CMAX];\n"
-"  int u10 = c1[0];\n"
-"  for( int t=0; t<CMAX; t++ )\n"
-"  {\n"
-"    int j = j0 + t;\n"
-"    int cj = ( t < C && j < l2 ) ? (int)c2[j] : P.ncode;\n"
-"    int cjm = ( t < C && j <= l2 ) ? (int)c2[j-1] : P.ncode;\n"
-"    Pv[t] = mtx[u10*nc1 + cj];\n"
-"    VM[t] = mtx[u10*nc1 + cjm];\n"
-"    PK[t] = cj;\n"
-"  }\n"
-"  int maxwm = INT_MIN, endi = 0, endj = 0;\n"
-"  for( int i=1; i<=l1; i++ )\n"
-"  {\n"
-"    int prev0 = mtx[ (int)c2[0]*nc1 + (int)c1[i-1] ];\n"
-"    int c1i = ( i < l1 ) ? (int)c1[i] : (int)c1[0];\n"
-"    int last = 0, av = INT_MIN, ak = -1, a2v = INT_MIN, a2k = -1;\n"
-"    for( int t=0; t<CMAX; t++ )\n"
-"    {\n"
-"      int j = j0 + t;\n"
-"      if( t < C && j <= l2 )\n"
-"      {\n"
-"        comb( av, ak, Pv[t] - j*ext, j );\n"
-"        if( t <= C-2 ) { a2v = av; a2k = ak; }\n"
-"      }\n"
-"      if( t == C-1 ) last = Pv[t];\n"
-"    }\n"
-"    /* inclusive scan of lane aggregates (earlier lanes first) */\n"
-"    int sv = av, sk = ak;\n"
-"    for( uint dd=1; dd<32; dd<<=1 )\n"
-"    {\n"
-"      int ov = simd_shuffle_up( sv, dd ), ok = simd_shuffle_up( sk, dd );\n"
-"      if( lane >= dd ) { int nv = ov, nk = ok; comb( nv, nk, sv, sk ); sv = nv; sk = nk; }\n"
-"    }\n"
-"    int ev = simd_shuffle_up( sv, 1 ), ek = simd_shuffle_up( sk, 1 );\n"
-"    { int tv = prev0, tk = 0; if( lane > 0 ) comb( tv, tk, ev, ek ); ev = tv; ek = tk; }\n"
-"    /* incl up to this lane's second-to-last column, passed to the next lane */\n"
-"    int s2v = ev, s2k = ek; comb( s2v, s2k, a2v, a2k );\n"
-"    int Sv = simd_shuffle_up( s2v, 1 ), Sk = simd_shuffle_up( s2k, 1 );\n"
-"    if( lane == 0 ) { Sv = prev0; Sk = 0; }\n"
-"    int pl = simd_shuffle_up( last, 1 );\n"
-"    if( lane == 0 ) pl = prev0;\n"
-"    int Rv = ev, Rk = ek, o1 = pl, o2 = 0;\n"
-"    int lmax = INT_MIN, lj = INT_MAX;\n"
-"    device short *ijrow = ijp + i*W + lane;\n"
-"    for( int t=0; t<CMAX; t++ )\n"
-"    {\n"
-"      int j = j0 + t;\n"
-"      if( t < C && j <= l2 )\n"
-"      {\n"
-"        int hv, hk;\n"
-"        if( t == 0 ) { hv = Sv; hk = Sk; }\n"
-"        else if( t == 1 ) { hv = Rv; hk = Rk; }\n"
-"        else { comb( Rv, Rk, o2 - ( j-2 )*ext, j-2 ); hv = Rv; hk = Rk; }\n"
-"        int p = o1;\n"
-"        int wm = p, ij = 0, g;\n"
-"        g = hv + ( j-1 )*ext + pen;\n"
-"        if( g > wm ) { wm = g; ij = -( j - hk ); }\n"
-"        int vm = VM[t], vmp = PK[t] >> 8;\n"
-"        g = vm + pen;\n"
-"        if( g > wm ) { wm = g; ij = i - vmp; }\n"
-"        if( p > vm ) { vm = p; vmp = i-1; }\n"
-"        VM[t] = vm + ext;\n"
-"        PK[t] = ( vmp << 8 ) | ( PK[t] & 255 );\n"
-"        if( wm > lmax ) { lmax = wm; lj = j; }\n"
-"        if( wm < thr ) { ij = lstop; wm = thr; }\n"
-"        ijrow[t*32] = (short)ij;\n"
-"        int old = Pv[t];\n"
-"        Pv[t] = wm + mtx[ c1i*nc1 + ( PK[t] & 255 ) ];\n"
-"        o2 = o1; o1 = old;\n"
-"      }\n"
-"    }\n"
-"    int rmax = simd_max( lmax );\n"
-"    int rj = simd_min( lmax == rmax ? lj : INT_MAX );\n"
-"    if( rmax > maxwm ) { maxwm = rmax; endi = i; endj = rj; }\n"
-"  }\n"
-"  threadgroup_barrier( mem_flags::mem_device );\n"
-"  if( lane != 0 ) return;\n"
-"  device char *m1 = outbuf + d.outoff;\n"
-"  device char *m2 = m1 + ( l1 + l2 + 1 );\n"
-"  device const char *s1 = chars + d.s1off;\n"
-"  device const char *s2 = chars + d.s2off;\n"
-"  char gap = (char)P.gapc;\n"
-"  int pos = l1 + l2;\n"
-"  m1[pos] = 0; m2[pos] = 0;\n"
-"  Result r; r.maxwm = maxwm; r.endi = endi; r.endj = endj; r.off1 = 0; r.off2 = 0; r.pad = 0;\n"
-"  if( ijp[endi*W + ((endj-1)%C)*32 + (endj-1)/C] == lstop ) { r.status = 1; r.start = pos; res[gid] = r; return; }\n"
-"  int iin = endi, jin = endj, ifi = 0, jfi = 0, limk = l1 + l2, status = 0;\n"
-"  for( int k=0; k<=limk; k++ )\n"
-"  {\n"
-"    int v = ( iin <= 0 || jin <= 0 ) ? lstop : (int)ijp[iin*W + ((jin-1)%C)*32 + (jin-1)/C];\n"
-"    if( v >= l1 + l2 ) { status = 2; break; }\n"
-"    else if( v < 0 ) { ifi = iin-1; jfi = jin+v; }\n"
-"    else if( v > 0 ) { ifi = iin-v; jfi = jin-1; }\n"
-"    else { ifi = iin-1; jfi = jin-1; }\n"
-"    int l = iin - ifi;\n"
-"    while( --l > 0 ) { --pos; m1[pos] = s1[ifi+l]; m2[pos] = gap; k++; }\n"
-"    l = jin - jfi;\n"
-"    while( --l > 0 ) { --pos; m1[pos] = gap; m2[pos] = s2[jfi+l]; k++; }\n"
-"    if( iin <= 0 || jin <= 0 ) break;\n"
-"    --pos; m1[pos] = s1[ifi]; m2[pos] = s2[jfi];\n"
-"    int nv = ( ifi <= 0 || jfi <= 0 ) ? lstop : (int)ijp[ifi*W + ((jfi-1)%C)*32 + (jfi-1)/C];\n"
-"    if( nv == lstop ) break;\n"
-"    k++;\n"
-"    iin = ifi; jin = jfi;\n"
-"  }\n"
-"  r.off1 = ( ifi == -1 ) ? 0 : ifi;\n"
-"  r.off2 = ( jfi == -1 ) ? 0 : jfi;\n"
-"  r.start = pos; r.status = status;\n"
-"  res[gid] = r;\n"
-"}\n";
+#include "l11gpu_src.h"   /* l11gpu_source[]: l11gpu.metal as text */
+#include "l11gpu_lib.h"   /* l11gpu_metallib[]: the same, compiled offline (if a Metal compiler was found) */
 
 typedef struct { uint32_t s1off, s2off; int32_t l1, l2; uint32_t ijpoff, outoff; int32_t pad0, pad1; } PairDesc;
 typedef struct { int32_t ncode, pen, ext, thr, gapc, npairs; } Params;
@@ -162,21 +30,47 @@ static id<MTLCommandQueue> queue = nil;
 static id<MTLComputePipelineState> pipes[NCMAX];
 static int gpu_failed = 0;
 
+static id<MTLLibrary> lib = nil;
+
+/* The embedded .metallib when there is one and it loads; otherwise the embedded source,
+   compiled now.  MAFFT_GPU_SOURCE=1 forces the source path. */
+static id<MTLLibrary> getlib( void )
+{
+	NSError *err = nil;
+	if( lib ) return( lib );
+#ifdef L11GPU_HAVE_METALLIB
+	if( !getenv( "MAFFT_GPU_SOURCE" ) )
+	{
+		dispatch_data_t dd = dispatch_data_create( l11gpu_metallib, sizeof( l11gpu_metallib ), NULL, DISPATCH_DATA_DESTRUCTOR_DEFAULT );
+		lib = [dev newLibraryWithData:dd error:&err];
+		if( lib ) { if( getenv( "L11GPU_VERBOSE" ) ) fprintf( stderr, "l11gpu: using the embedded metallib\n" ); return( lib ); }
+		fprintf( stderr, "l11gpu: embedded metallib did not load (%s); compiling the source\n", [[err description] UTF8String] );
+	}
+#endif
+	{
+		NSString *src = [[NSString alloc] initWithBytes:l11gpu_source length:sizeof( l11gpu_source ) encoding:NSUTF8StringEncoding];
+		lib = [dev newLibraryWithSource:src options:[MTLCompileOptions new] error:&err];
+		if( !lib ) fprintf( stderr, "l11gpu: compile failed: %s\n", [[err description] UTF8String] );
+		else if( getenv( "L11GPU_VERBOSE" ) ) fprintf( stderr, "l11gpu: compiled the shader source at run time\n" );
+	}
+	return( lib );
+}
+
 static id<MTLComputePipelineState> getpipe( int v )
 {
 	if( pipes[v] ) return( pipes[v] );
 	@autoreleasepool
 	{
 		NSError *err = nil;
-		NSString *src = [NSString stringWithFormat:@"#define CMAX %d\n%@", cmaxes[v], kernelsrc];
-		MTLCompileOptions *opt = [MTLCompileOptions new];
-		id<MTLLibrary> lib = [dev newLibraryWithSource:src options:opt error:&err];
-		if( !lib ) { fprintf( stderr, "l11gpu: compile failed: %s\n", [[err description] UTF8String] ); return( nil ); }
-		id<MTLFunction> fn = [lib newFunctionWithName:@"l11"];
+		id<MTLLibrary> l = getlib();
+		id<MTLFunction> fn;
+		if( !l ) return( nil );
+		fn = [l newFunctionWithName:[NSString stringWithFormat:@"l11_%d", cmaxes[v]]];
+		if( !fn ) { fprintf( stderr, "l11gpu: no function l11_%d\n", cmaxes[v] ); return( nil ); }
 		pipes[v] = [dev newComputePipelineStateWithFunction:fn error:&err];
 		if( !pipes[v] ) fprintf( stderr, "l11gpu: pipeline failed: %s\n", [[err description] UTF8String] );
-		else if( getenv( "L11GPU_VERBOSE" ) ) fprintf( stderr, "l11gpu: CMAX=%d maxthreads/tg=%d\n", cmaxes[v], (int)[pipes[v] maxTotalThreadsPerThreadgroup] );
 		else if( [pipes[v] threadExecutionWidth] != 32 ) { fprintf( stderr, "l11gpu: simd width %d\n", (int)[pipes[v] threadExecutionWidth] ); pipes[v] = nil; }
+		else if( getenv( "L11GPU_VERBOSE" ) ) fprintf( stderr, "l11gpu: CMAX=%d maxthreads/tg=%d\n", cmaxes[v], (int)[pipes[v] maxTotalThreadsPerThreadgroup] );
 	}
 	return( pipes[v] );
 }

@@ -471,8 +471,14 @@ mccaskillwrap.o : mccaskillwrap.c $(HEADER)
 contrafoldwrap.o : contrafoldwrap.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c contrafoldwrap.c
 
-l11gpu.o : l11gpu.m l11gpu.h
+l11gpu.o : l11gpu.m l11gpu.h l11gpu_src.h l11gpu_lib.h
 	$(CC) -O2 -fobjc-arc -c l11gpu.m
+
+l11gpu_src.h : l11gpu.metal
+	{ echo "static const unsigned char l11gpu_source[] = {"; xxd -i < l11gpu.metal; echo "};"; } > $@
+
+l11gpu_lib.h : l11gpu.metal mkmetallib.sh
+	sh ./mkmetallib.sh l11gpu.metal $@
 
 pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER)
 	$(CC) $(MYCFLAGS) -c pairlocalalign.c
@@ -532,6 +538,7 @@ score.o : score.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c score.c
 
 clean :
+	rm -f l11gpu_src.h l11gpu_lib.h
 	rm -f *.o *.a *.exe *~ $(PERLPROGS) $(PROGS) $(SCRIPTS) $(SOS) $(DYLIBS) $(DLLS) *.gcda *.gcno $(DASH_CLIENT)
 #	rm -f ../binaries/* ../scripts/*
 
