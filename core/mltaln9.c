@@ -11086,11 +11086,36 @@ void commongappick_record( int nseq, char **seq, int *map )
 		for( i=0; i<len; i++ ) keep[i] |= ( s[i] != '-' );
 	}
 	for( i=0, count=0; i<=len; i++ ) if( keep[i] ) map[count++] = i;
+#if defined(__x86_64__)
+	/* s[i] = s[map[i]] for ascending i, one run of kept columns at a time: map[] is increasing and
+	   map[i] >= i, so each run is a forward in-place move; nothing moves when no column is dropped. */
+	if( count < len + 1 )
+	{
+		int *rs = malloc( sizeof( int ) * ( count + 1 ) ), *rl = malloc( sizeof( int ) * ( count + 1 ) ), nr = 0, r;
+		for( i=0; i<count; i++ )
+		{
+			if( nr && map[i] == rs[nr-1] + rl[nr-1] ) rl[nr-1]++;
+			else { rs[nr] = map[i]; rl[nr] = 1; nr++; }
+		}
+		for( j=0; j<nseq; j++ )
+		{
+			char *s = seq[j];
+			int out = 0;
+			for( r=0; r<nr; r++ )
+			{
+				if( rs[r] != out ) memmove( s + out, s + rs[r], rl[r] );
+				out += rl[r];
+			}
+		}
+		free( rs ); free( rl );
+	}
+#else
 	for( j=0; j<nseq; j++ )
 	{
 		char *s = seq[j];
 		for( i=0; i<count; i++ ) s[i] = s[map[i]];
 	}
+#endif
 	free( keep );
 }
 
