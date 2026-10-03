@@ -1111,7 +1111,38 @@ static void A_row( int i, int lgth2, double *prev, double *cur, double *m, int *
 	double best = mi0, g;
 
 	MI[1] = mi0; MPI[1] = 0;
-	for( j=1; j<lgth2; j++ )
+	j = 1;
+#if defined(__AVX512F__) && defined(__AVX512VL__)
+	/* The running best as a prefix scan over (value, position) pairs, 8 at a time: a later pair
+	   replaces an earlier one only if its value is greater or equal (ties take the later, as '>='), which is
+	   associative, so three shift+compare+blend steps (and the carry from the previous block)
+	   give each lane exactly the scalar loop's best and bi.  Blends, not max, so ties between
+	   -0 and +0 resolve as in the scalar loop. */
+	{
+		__m512d cv = _mm512_set1_pd( best ), vpre = _mm512_set1_pd( gf1vapre ), vext = _mm512_set1_pd( ext );
+		__m256i ck = _mm256_set1_epi32( bi ), vk = _mm256_setr_epi32( 0, 1, 2, 3, 4, 5, 6, 7 ), veight = _mm256_set1_epi32( 8 );
+		for( ; j+8<=lgth2; j+=8 )
+		{
+			__m512d x = VMULADD( _mm512_loadu_pd( ogcp2 + j ), vpre, _mm512_loadu_pd( prev + j - 1 ) ), e;
+			__m256i t = vk, f;
+			__mmask8 c;
+			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 7 ) ); f = _mm256_alignr_epi32( t, ck, 7 );
+			c = _mm512_cmp_pd_mask( x, e, _CMP_GE_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
+			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 6 ) ); f = _mm256_alignr_epi32( t, ck, 6 );
+			c = _mm512_cmp_pd_mask( x, e, _CMP_GE_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
+			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 4 ) ); f = _mm256_alignr_epi32( t, ck, 4 );
+			c = _mm512_cmp_pd_mask( x, e, _CMP_GE_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
+			c = _mm512_cmp_pd_mask( x, cv, _CMP_GE_OQ ); x = _mm512_mask_blend_pd( c, cv, x ); t = _mm256_mask_blend_epi32( c, ck, t );
+			_mm512_storeu_pd( MI + j + 1, _mm512_add_pd( x, vext ) );
+			_mm256_storeu_si256( (__m256i *)( MPI + j + 1 ), t );
+			cv = _mm512_permutexvar_pd( _mm512_set1_epi64( 7 ), x );
+			ck = _mm256_permutexvar_epi32( _mm256_set1_epi32( 7 ), t );
+			vk = _mm256_add_epi32( vk, veight );
+		}
+		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
+	}
+#endif
+	for( ; j<lgth2; j++ )
 	{
 		g = MULADD( ogcp2[j], gf1vapre, prev[j-1] );
 		if( g >= best ) { best = g; bi = j-1; }

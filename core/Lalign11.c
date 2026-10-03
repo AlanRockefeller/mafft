@@ -541,7 +541,28 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 		}
 		if( rowmax > maxwm )
 		{
-			for( j=1; wmrow[j] != rowmax; j++ )
+			j = 1;
+#if defined(__AVX512F__)
+			/* first cell holding rowmax, 16 at a time (it is always present) */
+			{
+				__m512i vr = _mm512_set1_epi32( rowmax );
+				for( ; j+15<=lgth2; j+=16 )
+				{
+					__mmask16 k = _mm512_cmpeq_epi32_mask( _mm512_loadu_si512( wmrow + j ), vr );
+					if( k ) { j += __builtin_ctz( (unsigned)k ); break; }
+				}
+			}
+#elif defined(__SSE4_1__) && !defined(__ARM_NEON)
+			{
+				__m128i vr = _mm_set1_epi32( rowmax );
+				for( ; j+3<=lgth2; j+=4 )
+				{
+					int k = _mm_movemask_ps( _mm_castsi128_ps( _mm_cmpeq_epi32( _mm_loadu_si128( (__m128i *)( wmrow + j ) ), vr ) ) );
+					if( k ) { j += __builtin_ctz( (unsigned)k ); break; }
+				}
+			}
+#endif
+			for( ; wmrow[j] != rowmax; j++ )
 				;
 			maxwm = rowmax; endali = i; endalj = j;
 		}
