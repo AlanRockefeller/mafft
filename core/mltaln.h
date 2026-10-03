@@ -39,6 +39,23 @@
 #define VERSION "7.526-opt4"
 #define SHOWVERSION reporterr( "%s (%s) Version " VERSION "\nalg=%c, model=%s, amax=%3.1f\n%d thread(s)\n\n", progName( argv[0] ), (dorp=='d')?"nuc":((nblosum==-2)?"text":"aa"), alg, modelname, specificityconsideration, nthread )
 
+/* a*b+c rounded the way the stock build rounds it, for rewritten code that must stay
+   bit-identical.  clang on arm64 contracts a*b+c into one fused (singly rounded) multiply-add;
+   gcc with -std=c99 (the Makefile default) never contracts, and the x86-64 baseline has no FMA
+   at all.  Override with -DMAFFT_STOCK_FMA=0/1 for a reference built differently. */
+#ifndef MAFFT_STOCK_FMA
+#if defined(__aarch64__) && defined(__clang__)
+#define MAFFT_STOCK_FMA 1
+#else
+#define MAFFT_STOCK_FMA 0
+#endif
+#endif
+#if MAFFT_STOCK_FMA
+#define MULADD(a,b,c) fma( (a), (b), (c) )
+#else
+#define MULADD(a,b,c) ( (a)*(b) + (c) )
+#endif
+
 #define FFT_THRESHOLD  80
 #define FFT_WINSIZE_P   20
 #define FFT_WINSIZE_D   100

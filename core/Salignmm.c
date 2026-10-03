@@ -1106,13 +1106,13 @@ static void A_row( int i, int lgth2, double *prev, double *cur, double *m, int *
 	MI[1] = mi0; MPI[1] = 0;
 	for( j=1; j<lgth2; j++ )
 	{
-		g = fma( ogcp2[j], gf1vapre, prev[j-1] );
+		g = MULADD( ogcp2[j], gf1vapre, prev[j-1] );
 		if( g >= best ) { best = g; bi = j-1; }
 		MI[j+1] = best + ext; MPI[j+1] = bi;
 	}
 
 	j = 1;
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) && MAFFT_STOCK_FMA /* vfmaq: fused, like the stock arm64 build */
 	{
 		float64x2_t vgf1va = vdupq_n_f64( gf1va ), vfgcp1va = vdupq_n_f64( fgcp1va ), vogcp1va = vdupq_n_f64( ogcp1va ), vext = vdupq_n_f64( ext );
 		int32x2_t vi = vdup_n_s32( i ), vi1 = vdup_n_s32( i-1 ), vzero = vdup_n_s32( 0 ), vtwo = vdup_n_s32( 2 );
@@ -1151,11 +1151,11 @@ static void A_row( int i, int lgth2, double *prev, double *cur, double *m, int *
 	{
 		double p = prev[j-1], wm = p;
 		int ij = 0;
-		g = fma( fgcp2[j-1], gf1va, MI[j] );
+		g = MULADD( fgcp2[j-1], gf1va, MI[j] );
 		if( g > wm ) { wm = g; ij = -( j - MPI[j] ); }
-		g = fma( fgcp1va, gf2[j], m[j] );
+		g = MULADD( fgcp1va, gf2[j], m[j] );
 		if( g > wm ) { wm = g; ij = +( i - mp[j] ); }
-		g = fma( ogcp1va, gf2[j-1], p );
+		g = MULADD( ogcp1va, gf2[j-1], p );
 		if( g >= m[j] ) { m[j] = g; mp[j] = i-1; }
 		m[j] += ext;
 		cur[j] += wm;

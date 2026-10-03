@@ -16124,7 +16124,7 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 					{
 						if( *pt1 != '-' && *pt2 != '-' )
 						{
-							impmtx[k1][k2] = fma( segimp, w, impmtx[k1][k2] );
+							impmtx[k1][k2] = MULADD( segimp, w, impmtx[k1][k2] );
 							if( rowlo ) { if( k2 < rowlo[k1] ) rowlo[k1] = k2; if( k2 > rowhi[k1] ) rowhi[k1] = k2; }
 							k1++; k2++; pt1++; pt2++;
 						}
@@ -16142,7 +16142,7 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 					for( n=0; n<=nlim; n++ )
 					{
 						int k1 = pos1[s1+n], k2 = pos2[s2+n];
-						impmtx[k1][k2] = fma( segimp, w, impmtx[k1][k2] );
+						impmtx[k1][k2] = MULADD( segimp, w, impmtx[k1][k2] );
 						if( k2 < rowlo[k1] ) rowlo[k1] = k2;
 						if( k2 > rowhi[k1] ) rowhi[k1] = k2;
 					}
@@ -16152,7 +16152,7 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 					for( n=0; n<=nlim; n++ )
 					{
 						double *cell = &impmtx[pos1[s1+n]][pos2[s2+n]];
-						*cell = fma( segimp, w, *cell );
+						*cell = MULADD( segimp, w, *cell );
 					}
 				}
 			}

@@ -286,7 +286,7 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 	{
 		double s = 0.0;
 		for( j=0; j<nalphabets; j++ )
-			s = fma( n_dis_consweight_multi[j][l], cpmx1[j][i1], s );
+			s = MULADD( n_dis_consweight_multi[j][l], cpmx1[j][i1], s );
 		scarr[l] = s;
 	}
 	for( g=0; g<mc_ngrp; g++ )
@@ -298,19 +298,19 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 		if( cnt == 1 )
 		{
 			double s0 = scarr[let[0]];
-			for( n=0; n<gsize; n++ ) match[perm[n]] = fma( s0, v[n], 0.0 );
+			for( n=0; n<gsize; n++ ) match[perm[n]] = MULADD( s0, v[n], 0.0 );
 		}
 		else if( cnt == 2 )
 		{
 			double s0 = scarr[let[0]], s1 = scarr[let[1]], *v1 = v + gsize;
-			for( n=0; n<gsize; n++ ) match[perm[n]] = fma( s1, v1[n], fma( s0, v[n], 0.0 ) );
+			for( n=0; n<gsize; n++ ) match[perm[n]] = MULADD( s1, v1[n], MULADD( s0, v[n], 0.0 ) );
 		}
 		else
 		{
 			for( n=0; n<gsize; n++ )
 			{
 				double acc = 0.0;
-				for( k=0; k<cnt; k++ ) acc = fma( scarr[let[k]], v[(size_t)k*gsize+n], acc );
+				for( k=0; k<cnt; k++ ) acc = MULADD( scarr[let[k]], v[(size_t)k*gsize+n], acc );
 				match[perm[n]] = acc;
 			}
 		}
@@ -874,13 +874,13 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 	MI[1] = mi0; MPI[1] = 0;
 	for( j=1; j<lgth2; j++ )
 	{
-		g = fma( ogcp2[j], gf1vapre, prev[j-1] );
+		g = MULADD( ogcp2[j], gf1vapre, prev[j-1] );
 		if( g > best ) { best = g; bi = j-1; }
 		MI[j+1] = best; MPI[j+1] = bi;
 	}
 
 	j = 1;
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) && MAFFT_STOCK_FMA /* vfmaq: fused, like the stock arm64 build */
 	{
 		float64x2_t vgf1va = vdupq_n_f64( gf1va ), vfgcp1va = vdupq_n_f64( fgcp1va ), vogcp1va = vdupq_n_f64( ogcp1va );
 		int32x2_t vi = vdup_n_s32( i ), vi1 = vdup_n_s32( i-1 ), vzero = vdup_n_s32( 0 ), vtwo = vdup_n_s32( 2 );
@@ -919,11 +919,11 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 	{
 		double p = prev[j-1], wm = p;
 		int ij = 0;
-		g = fma( fgcp2[j-1], gf1va, MI[j] );
+		g = MULADD( fgcp2[j-1], gf1va, MI[j] );
 		if( g > wm ) { wm = g; ij = -( j - MPI[j] ); }
-		g = fma( fgcp1va, gapfreq2[j], m[j] );
+		g = MULADD( fgcp1va, gapfreq2[j], m[j] );
 		if( g > wm ) { wm = g; ij = +( i - mp[j] ); }
-		g = fma( ogcp1va, gapfreq2[j-1], p );
+		g = MULADD( ogcp1va, gapfreq2[j-1], p );
 		if( g > m[j] ) { m[j] = g; mp[j] = i-1; }
 		cur[j] += wm;
 		ijrow[j] = ij;
