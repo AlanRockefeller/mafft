@@ -2,6 +2,12 @@
 #include "dp.h"
 #if defined(__AVX512F__) && !defined(__ARM_NEON)
 #include <immintrin.h>
+/* vector a*b+c rounded like MULADD */
+#if MAFFT_STOCK_FMA
+#define VMULADD(a,b,c) _mm512_fmadd_pd( (a), (b), (c) )
+#else
+#define VMULADD(a,b,c) _mm512_add_pd( _mm512_mul_pd( (a), (b) ), (c) )
+#endif
 #endif
 
 #define MACHIGAI 0
@@ -295,7 +301,18 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 	static TLS int scalloc = 0;
 	if( scalloc < nalphabets ) { free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc ); }
 	scarr = mc_scarr;
-	for( l=0; l<nalphabets; l++ )
+	l = 0;
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+	/* 8 letters at a time; each letter's sum still runs over j in order */
+	for( ; l+8<=nalphabets; l+=8 )
+	{
+		__m512d s = _mm512_setzero_pd();
+		for( j=0; j<nalphabets; j++ )
+			s = VMULADD( _mm512_loadu_pd( n_dis_consweight_multi[j] + l ), _mm512_set1_pd( cpmx1[j][i1] ), s );
+		_mm512_storeu_pd( scarr + l, s );
+	}
+#endif
+	for( ; l<nalphabets; l++ )
 	{
 		double s = 0.0;
 		for( j=0; j<nalphabets; j++ )
@@ -308,19 +325,39 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 		int *let = mc_glet + mc_goff[g], *perm = mc_perm + gs;
 		double *v = mc_val + mc_vstart[g];
 		if( cnt == 0 ) { for( n=0; n<gsize; n++ ) match[perm[n]] = 0.0; continue; }
+		n = 0;
 		if( cnt == 1 )
 		{
 			double s0 = scarr[let[0]];
-			for( n=0; n<gsize; n++ ) match[perm[n]] = MULADD( s0, v[n], 0.0 );
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+			__m512d vs0 = _mm512_set1_pd( s0 ), zero = _mm512_setzero_pd();
+			for( ; n+8<=gsize; n+=8 )
+				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ), VMULADD( vs0, _mm512_loadu_pd( v + n ), zero ), 8 );
+#endif
+			for( ; n<gsize; n++ ) match[perm[n]] = MULADD( s0, v[n], 0.0 );
 		}
 		else if( cnt == 2 )
 		{
 			double s0 = scarr[let[0]], s1 = scarr[let[1]], *v1 = v + gsize;
-			for( n=0; n<gsize; n++ ) match[perm[n]] = MULADD( s1, v1[n], MULADD( s0, v[n], 0.0 ) );
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+			__m512d vs0 = _mm512_set1_pd( s0 ), vs1 = _mm512_set1_pd( s1 ), zero = _mm512_setzero_pd();
+			for( ; n+8<=gsize; n+=8 )
+				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ),
+				                      VMULADD( vs1, _mm512_loadu_pd( v1 + n ), VMULADD( vs0, _mm512_loadu_pd( v + n ), zero ) ), 8 );
+#endif
+			for( ; n<gsize; n++ ) match[perm[n]] = MULADD( s1, v1[n], MULADD( s0, v[n], 0.0 ) );
 		}
 		else
 		{
-			for( n=0; n<gsize; n++ )
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+			for( ; n+8<=gsize; n+=8 )
+			{
+				__m512d acc = _mm512_setzero_pd();
+				for( k=0; k<cnt; k++ ) acc = VMULADD( _mm512_set1_pd( scarr[let[k]] ), _mm512_loadu_pd( v + (size_t)k*gsize + n ), acc );
+				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ), acc, 8 );
+			}
+#endif
+			for( ; n<gsize; n++ )
 			{
 				double acc = 0.0;
 				for( k=0; k<cnt; k++ ) acc = MULADD( scarr[let[k]], v[(size_t)k*gsize+n], acc );
@@ -867,13 +904,6 @@ static double Atracking( double *lasthorizontalw, double *lastverticalw,
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
-#elif defined(__AVX512F__) && defined(__AVX512VL__)
-#include <immintrin.h>
-#if MAFFT_STOCK_FMA
-#define VMULADD(a,b,c) _mm512_fmadd_pd( (a), (b), (c) )
-#else
-#define VMULADD(a,b,c) _mm512_add_pd( _mm512_mul_pd( (a), (b) ), (c) )
-#endif
 #endif
 /*
  * One row of the partA__align fill (trywarp == 0, USE_PENALTY_EX == 0), equivalent to the scalar
