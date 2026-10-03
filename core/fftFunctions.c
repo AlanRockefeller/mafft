@@ -1,4 +1,7 @@
 #include "mltaln.h"
+#if defined(__AVX512BW__) && !defined(__ARM_NEON)
+#include <immintrin.h>
+#endif
 
 #define SEGMENTSIZE 150
 #define TMPTMPTMP 0
@@ -252,8 +255,34 @@ int alignableReagion( int    clus1, int    clus2,
 		unsigned char seenc[0x100];
 		int used[26], ub[26], cidx[0x100], nu = 0, ok = 1, c;
 		memset( seenc, 0, sizeof( seenc ) );
+#if defined(__AVX512BW__)
+		/* Mark a few characters whose bins are valid as present up front and visit only the other
+		   bytes.  An extra valid character only adds a bin whose profile is all zero, which the
+		   site score below skips, so stra[] and the ok test come out the same. */
+		{
+			static const unsigned char common[] = "-acgtACGT";
+			__m512i cv[9];
+			int nc = 0, q;
+			for( q=0; common[q]; q++ )
+				if( amino_n[common[q]] >= 0 && amino_n[common[q]] < nalphabets ) { seenc[common[q]] = 1; cv[nc++] = _mm512_set1_epi8( (char)common[q] ); }
+			for( j=0; j<clus1+clus2; j++ )
+			{
+				unsigned char *s = (unsigned char *)( j < clus1 ? seq1[j] : seq2[j-clus1] );
+				for( i=0; i+64<=len; i+=64 )
+				{
+					__m512i x = _mm512_loadu_si512( s + i );
+					unsigned long long m = 0;
+					for( q=0; q<nc; q++ ) m |= _mm512_cmpeq_epi8_mask( x, cv[q] );
+					m = ~m;
+					while( m ) { seenc[s[i+__builtin_ctzll( m )]] = 1; m &= m - 1; }
+				}
+				for( ; i<len; i++ ) seenc[s[i]] = 1;
+			}
+		}
+#else
 		for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; for( i=0; i<len; i++ ) seenc[s[i]] = 1; }
 		for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; for( i=0; i<len; i++ ) seenc[s[i]] = 1; }
+#endif
 		for( k=0; k<26; k++ ) used[k] = 0;
 		for( c=0; c<0x100; c++ ) if( seenc[c] )
 		{
@@ -275,8 +304,31 @@ int alignableReagion( int    clus1, int    clus2,
 			}
 			cp1 = cprf; cp2 = cprf + (size_t)len * nu;
 			memset( cprf, 0, sizeof( double ) * (size_t)len * nu * 2 );
+#if defined(__AVX512BW__)
+			/* the same adds in the same order, visiting only the non-gap bytes (when '-' has no bin) */
+			for( j=0; j<clus1+clus2 && cidx['-'] < 0; j++ )
+			{
+				unsigned char *s = (unsigned char *)( j < clus1 ? seq1[j] : seq2[j-clus1] );
+				double e = ( j < clus1 ) ? eff1[j] : eff2[j-clus1], *cp = ( j < clus1 ) ? cp1 : cp2;
+				__m512i dash = _mm512_set1_epi8( '-' );
+				for( i=0; i+64<=len; i+=64 )
+				{
+					unsigned long long m = ~_mm512_cmpeq_epi8_mask( _mm512_loadu_si512( s + i ), dash );
+					while( m )
+					{
+						int ii = i + __builtin_ctzll( m ), ci = cidx[s[ii]];
+						if( ci >= 0 ) cp[ii*nu+ci] += e;
+						m &= m - 1;
+					}
+				}
+				for( ; i<len; i++ ) { int ci = cidx[s[i]]; if( ci >= 0 ) cp[i*nu+ci] += e; }
+			}
+			if( cidx['-'] >= 0 )
+#endif
+			{
 			for( j=0; j<clus1; j++ ) { unsigned char *s = (unsigned char *)seq1[j]; double e = eff1[j]; for( i=0; i<len; i++ ) { int ci = cidx[s[i]]; if( ci >= 0 ) cp1[i*nu+ci] += e; } }
 			for( j=0; j<clus2; j++ ) { unsigned char *s = (unsigned char *)seq2[j]; double e = eff2[j]; for( i=0; i<len; i++ ) { int ci = cidx[s[i]]; if( ci >= 0 ) cp2[i*nu+ci] += e; } }
+			}
 			for( i=0; i<len; i++ )
 			{
 				double *q1 = cp1 + (size_t)i * nu, *q2 = cp2 + (size_t)i * nu;

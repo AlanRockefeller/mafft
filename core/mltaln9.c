@@ -13033,6 +13033,8 @@ void getkyokaigap( char *g, char **s, int pos, int n )
  */
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
+#elif defined(__AVX512BW__)
+#include <immintrin.h>
 #endif
 static int gapruns( char *s, int len, int *st, int *en )
 {
@@ -13050,6 +13052,22 @@ static int gapruns( char *s, int len, int *st, int *en )
 			if( in ) en[n++] = i + b; else st[n] = i + b;
 			in = !in;
 			bits &= ~( 0xfULL << ( b * 4 ) );
+		}
+	}
+#elif defined(__AVX512BW__)
+	{
+		__m512i dash = _mm512_set1_epi8( '-' );
+		for( ; i+64<=len; i+=64 )
+		{
+			unsigned long long g = _mm512_cmpeq_epi8_mask( _mm512_loadu_si512( s + i ), dash );
+			unsigned long long t = g ^ ( ( g << 1 ) | (unsigned long long)in ); /* g[k] != g[k-1] */
+			while( t )
+			{
+				int b = __builtin_ctzll( t );
+				if( in ) en[n++] = i + b; else st[n] = i + b;
+				in = !in;
+				t &= t - 1;
+			}
 		}
 	}
 #endif
