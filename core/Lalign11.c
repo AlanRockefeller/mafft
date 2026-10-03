@@ -3,6 +3,8 @@
 #include <limits.h>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
+#elif defined(__AVX512F__) || defined(__SSE4_1__)
+#include <immintrin.h>
 #endif
 
 #define DEBUG 0
@@ -65,7 +67,7 @@ static void match_calc_bk( double *match, double **cpmx1, double **cpmx2, int i1
 		for( k=0; k<nalphabets; k++ )
 			scarr[l] += n_dis[k][l] * cpmx1[k][i1];
 	}
-#if 0 /* ¤³¤ì¤ò»È¤¦¤È¤­¤Ïdoublework¤Î¥¢¥í¥±¡¼¥È¤òµÕ¤Ë¤¹¤ë */
+#if 0 /* ï¿½ï¿½ï¿½ï¿½ï¿½È¤ï¿½ï¿½È¤ï¿½ï¿½ï¿½doubleworkï¿½Î¥ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¤ï¿½Õ¤Ë¤ï¿½ï¿½ï¿½ */
 	{
 		double *fpt, **fptpt, *fpt2;
 		int *ipt, **iptpt;
@@ -373,6 +375,141 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 			}
 			rowmax = vmaxvq_s32( vmax );
 			if( j > 1 ) { tbest = vgetq_lane_s32( cv, 0 ); tbestk = vgetq_lane_s32( ck, 0 ); }
+		}
+#elif defined(__AVX512F__)
+		/* The NEON block above, 16 cells at a time: valignd shifts lanes in from a fill vector,
+		   so each prefix max takes four shift+max steps instead of two. */
+		{
+			__m512i vpen = _mm512_set1_epi32( pen ), vext = _mm512_set1_epi32( ext ), vthr = _mm512_set1_epi32( ithr );
+			__m512i vstop = _mm512_set1_epi32( lstop ), vi = _mm512_set1_epi32( i ), vi1 = _mm512_set1_epi32( negi1 );
+			__m512i vmax = _mm512_set1_epi32( INT_MIN ), vsixteen = _mm512_set1_epi32( 16 );
+			__m512i lane = _mm512_setr_epi32( 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 );
+			__m512i vj = _mm512_add_epi32( lane, _mm512_set1_epi32( 1 ) );
+			__m512i ninf = _mm512_set1_epi32( INT_MIN ), none = _mm512_set1_epi32( -1 ), last = _mm512_set1_epi32( 15 );
+			__m512i cv = ninf, ck = _mm512_setzero_si512();
+			__m512i kv = _mm512_sub_epi32( lane, _mm512_set1_epi32( 1 ) );
+			__m512i kext = _mm512_mullo_epi32( kv, vext ), kext1 = _mm512_add_epi32( kext, vext ), ext16 = _mm512_mullo_epi32( vsixteen, vext );
+			for( ; j+15<=lgth2; j+=16 )
+			{
+				__m512i p = _mm512_loadu_si512( prev + j - 1 );
+				__m512i hqv, hkv;
+				{
+					__m512i v = _mm512_sub_epi32( _mm512_loadu_si512( prev + j - 2 ), kext );
+					__m512i x, e, r, t;
+					x = _mm512_max_epi32( v, _mm512_alignr_epi32( v, ninf, 15 ) );
+					x = _mm512_max_epi32( x, _mm512_alignr_epi32( x, ninf, 14 ) );
+					x = _mm512_max_epi32( x, _mm512_alignr_epi32( x, ninf, 12 ) );
+					x = _mm512_max_epi32( x, _mm512_alignr_epi32( x, ninf, 8 ) );
+					x = _mm512_max_epi32( x, cv );
+					e = _mm512_alignr_epi32( x, cv, 15 );
+					r = _mm512_mask_blend_epi32( _mm512_cmpgt_epi32_mask( v, e ), none, kv );
+					t = _mm512_max_epi32( r, _mm512_alignr_epi32( r, none, 15 ) );
+					t = _mm512_max_epi32( t, _mm512_alignr_epi32( t, none, 14 ) );
+					t = _mm512_max_epi32( t, _mm512_alignr_epi32( t, none, 12 ) );
+					t = _mm512_max_epi32( t, _mm512_alignr_epi32( t, none, 8 ) );
+					t = _mm512_max_epi32( t, ck );
+					hqv = _mm512_add_epi32( x, kext1 );
+					hkv = t;
+					cv = _mm512_permutexvar_epi32( last, x );
+					ck = _mm512_permutexvar_epi32( last, t );
+					kv = _mm512_add_epi32( kv, vsixteen );
+					kext = _mm512_add_epi32( kext, ext16 );
+					kext1 = _mm512_add_epi32( kext1, ext16 );
+				}
+				__m512i g, wm, ij, m, vmj, vmpj;
+				__mmask16 c;
+				wm = p;
+				ij = _mm512_setzero_si512();
+				g = _mm512_add_epi32( hqv, vpen );
+				c = _mm512_cmpgt_epi32_mask( g, wm );
+				wm = _mm512_max_epi32( wm, g );
+				ij = _mm512_mask_blend_epi32( c, ij, _mm512_sub_epi32( hkv, vj ) );
+				vmj = _mm512_loadu_si512( vm + j );
+				vmpj = _mm512_loadu_si512( vmp + j );
+				g = _mm512_add_epi32( vmj, vpen );
+				c = _mm512_cmpgt_epi32_mask( g, wm );
+				wm = _mm512_max_epi32( wm, g );
+				ij = _mm512_mask_blend_epi32( c, ij, _mm512_sub_epi32( vi, vmpj ) );
+				c = _mm512_cmpgt_epi32_mask( p, vmj );
+				m = _mm512_max_epi32( p, vmj );
+				_mm512_storeu_si512( vm + j, _mm512_add_epi32( m, vext ) );
+				_mm512_storeu_si512( vmp + j, _mm512_mask_blend_epi32( c, vmpj, vi1 ) );
+				_mm512_storeu_si512( wmrow + j, wm );
+				vmax = _mm512_max_epi32( vmax, wm );
+				c = _mm512_cmpgt_epi32_mask( vthr, wm );
+				ij = _mm512_mask_blend_epi32( c, ij, vstop );
+				wm = _mm512_max_epi32( wm, vthr );
+				_mm512_storeu_si512( ijrow + j, ij );
+				_mm512_storeu_si512( cur + j, _mm512_add_epi32( wm, _mm512_loadu_si512( profrow + j ) ) );
+				vj = _mm512_add_epi32( vj, vsixteen );
+			}
+			rowmax = _mm512_reduce_max_epi32( vmax );
+			if( j > 1 ) { tbest = _mm_cvtsi128_si32( _mm512_castsi512_si128( cv ) ); tbestk = _mm_cvtsi128_si32( _mm512_castsi512_si128( ck ) ); }
+		}
+#elif defined(__SSE4_1__)
+		/* The NEON block above, lane for lane: palignr for vextq, pblendvb for vbslq. */
+		{
+			__m128i vpen = _mm_set1_epi32( pen ), vext = _mm_set1_epi32( ext ), vthr = _mm_set1_epi32( ithr );
+			__m128i vstop = _mm_set1_epi32( lstop ), vi = _mm_set1_epi32( i ), vi1 = _mm_set1_epi32( negi1 );
+			__m128i vmax = _mm_set1_epi32( INT_MIN ), vfour = _mm_set1_epi32( 4 );
+			__m128i vj = _mm_setr_epi32( 1, 2, 3, 4 );
+			__m128i ninf = _mm_set1_epi32( INT_MIN ), none = _mm_set1_epi32( -1 );
+			__m128i cv = ninf, ck = _mm_setzero_si128();
+			__m128i kv = _mm_setr_epi32( -1, 0, 1, 2 );
+			__m128i kext = _mm_mullo_epi32( kv, vext ), kext1 = _mm_add_epi32( kext, vext ), ext4 = _mm_mullo_epi32( vfour, vext );
+			for( ; j+3<=lgth2; j+=4 )
+			{
+				__m128i p = _mm_loadu_si128( (__m128i *)( prev + j - 1 ) );
+				__m128i hqv, hkv;
+				{
+					__m128i v = _mm_sub_epi32( _mm_loadu_si128( (__m128i *)( prev + j - 2 ) ), kext );
+					__m128i x = _mm_max_epi32( v, _mm_alignr_epi8( v, ninf, 12 ) );
+					__m128i e, r, t;
+					x = _mm_max_epi32( x, _mm_alignr_epi8( x, ninf, 8 ) );
+					x = _mm_max_epi32( x, cv );
+					e = _mm_alignr_epi8( x, cv, 12 );
+					r = _mm_blendv_epi8( none, kv, _mm_cmpgt_epi32( v, e ) );
+					t = _mm_max_epi32( r, _mm_alignr_epi8( r, none, 12 ) );
+					t = _mm_max_epi32( t, _mm_alignr_epi8( t, none, 8 ) );
+					t = _mm_max_epi32( t, ck );
+					hqv = _mm_add_epi32( x, kext1 );
+					hkv = t;
+					cv = _mm_shuffle_epi32( x, 0xff );
+					ck = _mm_shuffle_epi32( t, 0xff );
+					kv = _mm_add_epi32( kv, vfour );
+					kext = _mm_add_epi32( kext, ext4 );
+					kext1 = _mm_add_epi32( kext1, ext4 );
+				}
+				__m128i g, wm, ij, m, vmj, vmpj, c;
+				wm = p;
+				ij = _mm_setzero_si128();
+				g = _mm_add_epi32( hqv, vpen );
+				c = _mm_cmpgt_epi32( g, wm );
+				wm = _mm_max_epi32( wm, g );
+				ij = _mm_blendv_epi8( ij, _mm_sub_epi32( hkv, vj ), c );
+				vmj = _mm_loadu_si128( (__m128i *)( vm + j ) );
+				vmpj = _mm_loadu_si128( (__m128i *)( vmp + j ) );
+				g = _mm_add_epi32( vmj, vpen );
+				c = _mm_cmpgt_epi32( g, wm );
+				wm = _mm_max_epi32( wm, g );
+				ij = _mm_blendv_epi8( ij, _mm_sub_epi32( vi, vmpj ), c );
+				c = _mm_cmpgt_epi32( p, vmj );
+				m = _mm_max_epi32( p, vmj );
+				_mm_storeu_si128( (__m128i *)( vm + j ), _mm_add_epi32( m, vext ) );
+				_mm_storeu_si128( (__m128i *)( vmp + j ), _mm_blendv_epi8( vmpj, vi1, c ) );
+				_mm_storeu_si128( (__m128i *)( wmrow + j ), wm );
+				vmax = _mm_max_epi32( vmax, wm );
+				c = _mm_cmpgt_epi32( vthr, wm );
+				ij = _mm_blendv_epi8( ij, vstop, c );
+				wm = _mm_max_epi32( wm, vthr );
+				_mm_storeu_si128( (__m128i *)( ijrow + j ), ij );
+				_mm_storeu_si128( (__m128i *)( cur + j ), _mm_add_epi32( wm, _mm_loadu_si128( (__m128i *)( profrow + j ) ) ) );
+				vj = _mm_add_epi32( vj, vfour );
+			}
+			vmax = _mm_max_epi32( vmax, _mm_shuffle_epi32( vmax, 0x4e ) );
+			vmax = _mm_max_epi32( vmax, _mm_shuffle_epi32( vmax, 0xb1 ) );
+			rowmax = _mm_cvtsi128_si32( vmax );
+			if( j > 1 ) { tbest = _mm_cvtsi128_si32( cv ); tbestk = _mm_cvtsi128_si32( ck ); }
 		}
 #endif
 		/* scan for the remaining cells */
