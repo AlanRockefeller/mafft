@@ -1,4 +1,7 @@
 #include "mltaln.h"
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+#include <immintrin.h>
+#endif
 
 #define DEBUG 0
 #define CANONICALTREEFORMAT 1
@@ -624,7 +627,21 @@ static int igs_pairscores( char **seq1, char **seq2, int clus1, int clus2, int l
 			{
 				unsigned char *m2 = (unsigned char *)seq2[j];
 				int s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-				for( k=0; k+3<len; k+=4 )
+				k = 0;
+#if defined(__AVX512F__) && !defined(__ARM_NEON)
+				/* integer sums (every partial below dzmax*len < 1e9): exact in any order */
+				{
+					__m512i acc = _mm512_setzero_si512();
+					for( ; k+16<=len; k+=16 )
+					{
+						__m512i a = _mm512_cvtepu8_epi32( _mm_loadu_si128( (__m128i *)( m1 + k ) ) );
+						__m512i b = _mm512_cvtepu8_epi32( _mm_loadu_si128( (__m128i *)( m2 + k ) ) );
+						acc = _mm512_add_epi32( acc, _mm512_i32gather_epi32( _mm512_or_si512( _mm512_slli_epi32( a, 7 ), b ), dzi, 4 ) );
+					}
+					s0 = _mm512_reduce_add_epi32( acc );
+				}
+#endif
+				for( ; k+3<len; k+=4 )
 				{
 					s0 += dzi[(m1[k  ]<<7)|m2[k  ]];
 					s1 += dzi[(m1[k+1]<<7)|m2[k+1]];
