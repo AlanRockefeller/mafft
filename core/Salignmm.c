@@ -1086,6 +1086,13 @@ static double Atracking( double *lasthorizontalw, double *lastverticalw,
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
+#elif defined(__AVX512F__) && defined(__AVX512VL__)
+#include <immintrin.h>
+#if MAFFT_STOCK_FMA
+#define VMULADD(a,b,c) _mm512_fmadd_pd( (a), (b), (c) )
+#else
+#define VMULADD(a,b,c) _mm512_add_pd( _mm512_mul_pd( (a), (b) ), (c) )
+#endif
 #endif
 /*
  * One row of the A__align fill for trywarp == 0 and fpenalty_ex == 0.0 (the default), equivalent
@@ -1144,6 +1151,41 @@ static void A_row( int i, int lgth2, double *prev, double *cur, double *m, int *
 			vst1q_f64( cur + j, vaddq_f64( vld1q_f64( cur + j ), wm ) );
 			vst1_s32( ijrow + j, ij );
 			vj = vadd_s32( vj, vtwo );
+		}
+	}
+#elif defined(__AVX512F__) && defined(__AVX512VL__)
+	/* The same, 8 cells at a time; VMULADD rounds like MULADD. */
+	{
+		__m512d vgf1va = _mm512_set1_pd( gf1va ), vfgcp1va = _mm512_set1_pd( fgcp1va ), vogcp1va = _mm512_set1_pd( ogcp1va ), vext = _mm512_set1_pd( ext );
+		__m256i vi = _mm256_set1_epi32( i ), vi1 = _mm256_set1_epi32( i-1 ), veight = _mm256_set1_epi32( 8 );
+		__m256i vj = _mm256_setr_epi32( 1, 2, 3, 4, 5, 6, 7, 8 );
+		for( ; j+7<=lgth2; j+=8 )
+		{
+			__m512d p = _mm512_loadu_pd( prev + j - 1 );
+			__m512d wm, g1, g3, g4, mv;
+			__mmask8 c;
+			__m256i ij, mpv;
+
+			g1 = VMULADD( _mm512_loadu_pd( fgcp2 + j - 1 ), vgf1va, _mm512_loadu_pd( MI + j ) );
+			c = _mm512_cmp_pd_mask( g1, p, _CMP_GT_OQ );
+			wm = _mm512_mask_blend_pd( c, p, g1 );
+			ij = _mm256_maskz_sub_epi32( c, _mm256_loadu_si256( (__m256i *)( MPI + j ) ), vj );
+
+			mv = _mm512_loadu_pd( m + j );
+			mpv = _mm256_loadu_si256( (__m256i *)( mp + j ) );
+			g3 = VMULADD( vfgcp1va, _mm512_loadu_pd( gf2 + j ), mv );
+			c = _mm512_cmp_pd_mask( g3, wm, _CMP_GT_OQ );
+			wm = _mm512_mask_blend_pd( c, wm, g3 );
+			ij = _mm256_mask_blend_epi32( c, ij, _mm256_sub_epi32( vi, mpv ) );
+
+			g4 = VMULADD( vogcp1va, _mm512_loadu_pd( gf2 + j - 1 ), p );
+			c = _mm512_cmp_pd_mask( g4, mv, _CMP_GE_OQ );
+			_mm512_storeu_pd( m + j, _mm512_add_pd( _mm512_mask_blend_pd( c, mv, g4 ), vext ) );
+			_mm256_storeu_si256( (__m256i *)( mp + j ), _mm256_mask_blend_epi32( c, mpv, vi1 ) );
+
+			_mm512_storeu_pd( cur + j, _mm512_add_pd( _mm512_loadu_pd( cur + j ), wm ) );
+			_mm256_storeu_si256( (__m256i *)( ijrow + j ), ij );
+			vj = _mm256_add_epi32( vj, veight );
 		}
 	}
 #endif
