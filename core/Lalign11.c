@@ -99,8 +99,13 @@ static void match_calc_bk( double *match, double **cpmx1, double **cpmx2, int i1
 }
 #endif
 
-#if defined(__AVX2__) && !defined(__AVX512F__) && !defined(__ARM_NEON)
+#if defined(__AVX2__) && !defined(__ARM_NEON)
 /*
+ * Used by every AVX2 build, AVX-512 builds included: on Zen 4 (c7a) this fill made L-INS-i
+ * about 7% faster than the AVX-512 prefix-scan fill further down, which AVX-512 builds used
+ * before.  The integer DP is the same under every rounding class, so MAFFT_STOCK_FMA does not
+ * matter here.
+ *
  * The AVX2 integer fill (Lfill_int below) does not compute the traceback offsets themselves.  A
  * cell whose best move is a horizontal gap stores LMARK_H, a vertical gap LMARK_V, and every DP
  * row is kept (lr_*) instead of two alternating ones.  Ltracking only reads ijp along the one
