@@ -36,7 +36,7 @@
 
 
 
-#define VERSION "7.526-opt5"
+#define VERSION "7.526-opt5-dikarya1"
 #define SHOWVERSION reporterr( "%s (%s) Version " VERSION "\nalg=%c, model=%s, amax=%3.1f\n%d thread(s)\n\n", progName( argv[0] ), (dorp=='d')?"nuc":((nblosum==-2)?"text":"aa"), alg, modelname, specificityconsideration, nthread )
 
 /* a*b+c rounded the way the stock build rounds it, for rewritten code that must stay
@@ -54,6 +54,12 @@
 #define MULADD(a,b,c) fma( (a), (b), (c) )
 #else
 #define MULADD(a,b,c) ( (a)*(b) + (c) )
+#endif
+
+/* scarr[l] = sum over j of mtx[j][l] * cpmx1[j][i1], added in ascending j from +0 (see mltaln9.c) */
+#if defined(__AVX2__) && !defined(__ARM_NEON) && !MAFFT_STOCK_FMA
+#define HAVE_SCARR_FILL 1
+extern void scarr_fill( double *scarr, double **mtx, double **cpmx1, int i1 );
 #endif
 
 #define FFT_THRESHOLD  80

@@ -1,6 +1,7 @@
 #include "mltaln.h"
 #include "dp.h"
 #include <limits.h>
+#include <stdint.h>
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
 #elif defined(__AVX512F__) || defined(__SSE4_1__)
@@ -61,12 +62,16 @@ static void match_calc_bk( double *match, double **cpmx1, double **cpmx2, int i1
 		}
 	}
 
+#ifdef HAVE_SCARR_FILL
+	scarr_fill( scarr, n_dis, cpmx1, i1 );
+#else
 	for( l=0; l<nalphabets; l++ )
 	{
 		scarr[l] = 0.0;
 		for( k=0; k<nalphabets; k++ )
 			scarr[l] += n_dis[k][l] * cpmx1[k][i1];
 	}
+#endif
 #if 0 /* �����Ȥ��Ȥ���doublework�Υ��������Ȥ�դˤ��� */
 	{
 		double *fpt, **fptpt, *fpt2;
@@ -91,6 +96,50 @@ static void match_calc_bk( double *match, double **cpmx1, double **cpmx2, int i1
 			match[j] += scarr[cpmxpdn[k][j]] * cpmxpd[k][j];
 	} 
 #endif
+}
+#endif
+
+#if defined(__AVX2__) && !defined(__AVX512F__) && !defined(__ARM_NEON)
+/*
+ * The AVX2 integer fill (Lfill_int below) does not compute the traceback offsets themselves.  A
+ * cell whose best move is a horizontal gap stores LMARK_H, a vertical gap LMARK_V, and every DP
+ * row is kept (lr_*) instead of two alternating ones.  Ltracking only reads ijp along the one
+ * path it follows, and for a marked cell asks lres_hk()/lres_vmp() for the offset, which replay
+ * the original scalar rules over the stored rows -- integer arithmetic, so the offset is exactly
+ * the one the full fill would have stored.  The markers lie below every real value (offsets are
+ * at least -lgth2, localstop and warpbase are positive).
+ */
+#define LFILL_MARKS 1
+#define LMARK_H INT_MIN
+#define LMARK_V ( INT_MIN + 1 )
+static TLS int *lr_raw = NULL;
+static TLS size_t lr_cap = 0;
+static TLS int *lr_base, lr_stride, lr_ext, lr_v0;
+#define LROW( r ) ( lr_base + (size_t)( r ) * lr_stride )
+
+/* hk[j] of row i: first k in [0, j-2] maximising prev[k] - k*ext (the first k of a tie), k = 0 for j < 2 */
+static int lres_hk( int i, int j )
+{
+	int *prev = LROW( i-1 ), jj, tbest = prev[0], tbestk = 0;
+	for( jj=2; jj<=j; jj++ )
+	{
+		int q = prev[jj-2] - ( jj-2 ) * lr_ext;
+		if( q > tbest ) { tbest = q; tbestk = jj-2; }
+	}
+	return( tbestk );
+}
+
+/* vmp[j] as row i reads it: the vertical state started from row 0 and updated by rows 1 .. i-1 */
+static int lres_vmp( int i, int j )
+{
+	int r, vm = ( j == 1 ) ? lr_v0 : LROW( 0 )[j-1], vmp = 0;
+	for( r=1; r<i; r++ )
+	{
+		int p = LROW( r-1 )[j-1];
+		if( p > vm ) { vm = p; vmp = r-1; }
+		vm += lr_ext;
+	}
+	return( vmp );
 }
 #endif
 
@@ -132,19 +181,24 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 	limk = lgth1+lgth2;
 	for( k=0; k<=limk; k++ ) 
 	{
-		if( ijp[iin][jin] >= warpbase )
+		int ijv = ijp[iin][jin];
+#ifdef LFILL_MARKS
+		if( ijv == LMARK_H ) ijv = -( jin - lres_hk( iin, jin ) );
+		else if( ijv == LMARK_V ) ijv = iin - lres_vmp( iin, jin );
+#endif
+		if( ijv >= warpbase )
 		{
 //			fprintf( stderr, "WARP!\n" );
-			ifi = warpis[ijp[iin][jin]-warpbase];
-			jfi = warpjs[ijp[iin][jin]-warpbase];
+			ifi = warpis[ijv-warpbase];
+			jfi = warpjs[ijv-warpbase];
 		}
-		else if( ijp[iin][jin] < 0 ) 
+		else if( ijv < 0 ) 
 		{
-			ifi = iin-1; jfi = jin+ijp[iin][jin];
+			ifi = iin-1; jfi = jin+ijv;
 		}
-		else if( ijp[iin][jin] > 0 )
+		else if( ijv > 0 )
 		{
-			ifi = iin-ijp[iin][jin]; jfi = jin-1;
+			ifi = iin-ijv; jfi = jin-1;
 		}
 		else
 		{
@@ -223,6 +277,224 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
  *
  * Returns 0 (and does nothing) when the integral/range preconditions do not hold.
  */
+#ifdef LFILL_MARKS
+/*
+ * Lfill_int for AVX2 (see LFILL_MARKS above): the same integer fill, 8 cells at a time, storing
+ * LMARK_H / LMARK_V instead of gap offsets, so neither the first-index scan for the horizontal
+ * state nor the vmp[] rows are needed.  Values, wm, the threshold clamp, ijp's 0 / lstop cells,
+ * maxwm and the end point are computed exactly as in the original.
+ */
+static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                      char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop,
+                      double *maxwmpt, int *endalipt, int *endaljpt )
+{
+	int i, j, c, k, maxabs = 0;
+	int pen = penalty, ext = penalty_ex;
+	double thr = -offset + scoreoffset * 600;
+	int ithr, *prof[0x100], *profbuf, nprof = 0;
+	int *prev, *cur, *vm, *hq, *wmrow, *vmraw;
+	int tbest, jj;
+	int maxwm, endali = 0, endalj = 0, rowmax;
+	unsigned char *u1 = (unsigned char *)s1, *u2 = (unsigned char *)s2;
+	unsigned char used[0x100];
+	size_t need;
+
+	if( lgth1 < 1 || lgth2 < 1 ) return( 0 );
+	if( thr != (double)(int)thr ) return( 0 );
+	ithr = (int)thr;
+	for( i=0; i<nalphabets; i++ ) for( j=0; j<nalphabets; j++ )
+	{
+		double v = n_dynamicmtx[i][j];
+		if( v != (double)(int)v ) return( 0 );
+		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+	}
+	/* Characters outside the alphabet read entries that were never set from n_dynamicmtx. */
+	memset( used, 0, sizeof( used ) );
+	for( i=0; i<lgth1; i++ ) used[u1[i]] = 1;
+	for( j=0; j<lgth2; j++ ) used[u2[j]] = 1;
+	for( c=0; c<0x100; c++ ) if( used[c] )
+	{
+		for( k=0; k<0x100; k++ ) if( used[k] )
+		{
+			double v = amino_dynamicmtx[c][k];
+			if( v != (double)(int)v || fabs( v ) > 1e6 ) return( 0 );
+			if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+		}
+	}
+	/* Keep every intermediate (including prev[k] - k*ext) far from int32 overflow. */
+	{
+		double bound = (double)( maxabs + abs( pen ) + abs( ext ) + abs( ithr ) + 1 ) * ( lgth1 + lgth2 + 4 ) * 2.0;
+		if( bound > 5.0e8 ) return( 0 );
+	}
+
+	for( c=0; c<0x100; c++ ) prof[c] = NULL;
+	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
+	profbuf = malloc( sizeof( int ) * nprof * ( lgth2 + 4 ) );
+	k = 0;
+	for( c=0; c<0x100; c++ ) if( used[c] )
+	{
+		double *row = amino_dynamicmtx[c];
+		prof[c] = profbuf + k * ( lgth2 + 4 );
+		for( j=0; j<lgth2; j++ ) prof[c][j] = (int)row[u2[j]];
+		prof[c][lgth2] = 0;
+		k++;
+	}
+
+	/* All rows, each with one slot in front (prev[-1] seeds the vector scan); rows start so that
+	   cell 1 of every row is 32-byte aligned.  Kept between calls: a fresh 3 MB mapping per pair
+	   costs more in page faults than the fill. */
+	lr_stride = ( ( lgth2 + 9 ) + 7 ) & ~7;
+	need = (size_t)( lgth1 + 1 ) * lr_stride + 16;
+	/* The rows double the memory of ijp[][]; past 256 MB leave it to the double-precision fill. */
+	if( need > ( (size_t)1 << 26 ) ) { free( profbuf ); return( 0 ); }
+	if( need > lr_cap )
+	{
+		free( lr_raw );
+		lr_raw = malloc( sizeof( int ) * need );
+		if( lr_raw == NULL ) ErrorExit( "Cannot allocate the local alignment rows." );
+		lr_cap = need;
+	}
+#ifdef MAFFT_POISON_TEST
+	memset( lr_raw, 0xa5, sizeof( int ) * need );
+#endif
+	lr_base = (int *)( ( (uintptr_t)( lr_raw + 8 ) & ~(uintptr_t)31 ) ) + 7; /* lr_base + 1 is 32-byte aligned */
+	lr_ext = ext;
+	vmraw = malloc( sizeof( int ) * ( lgth2 + 16 ) );
+	vm    = (int *)( ( (uintptr_t)( vmraw + 8 ) & ~(uintptr_t)31 ) ) + 7;
+	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	wmrow = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+#ifdef MAFFT_POISON_TEST
+	memset( vmraw, 0xa5, sizeof( int ) * ( lgth2 + 16 ) ); memset( hq, 0xa5, sizeof( int ) * ( lgth2 + 4 ) ); memset( wmrow, 0xa5, sizeof( int ) * ( lgth2 + 4 ) );
+#endif
+
+	/* row 0: currentw[j] = mtx[s1[0]][s2[j]];  m[j] = currentw[j-1] */
+	cur = LROW( 0 );
+	for( j=0; j<lgth2; j++ ) cur[j] = prof[u1[0]][j];
+	cur[lgth2] = 0;
+	for( j=1; j<=lgth2; j++ ) vm[j] = cur[j-1];
+	lr_v0 = cur[0]; /* m[1] before row 1 overwrites cur[0] */
+
+	maxwm = INT_MIN;
+	for( i=1; i<=lgth1; i++ )
+	{
+		int *profrow = ( i < lgth1 ) ? prof[u1[i]] : NULL;
+		int *ijrow = ijp[i];
+		prev = LROW( i-1 ); cur = LROW( i );
+		/* previousw[0] = initverticalw[i-1] = mtx[s2[0]][s1[i-1]] */
+		prev[0] = (int)amino_dynamicmtx[u2[0]][u1[i-1]];
+		/* H_j = (j-1)*ext + max_{k<=max(j-2,0)} (prev[k] - k*ext); prev[-1] stands for the k=0 term of H_1 */
+		prev[-1] = prev[0] - ext;
+		tbest = prev[0];
+
+		rowmax = INT_MIN;
+		if( !profrow ) profrow = prof[u1[0]]; /* last row: cur[] is never read again */
+		j = 1;
+		{
+			/* prefix max with in-lane byte shifts (vpslldq) and the fill OR-ed in, one vpermd for the
+			   half carry; blends are and/xor (vpblendvb is two port-5 uops on Haswell/Broadwell). */
+#define AVX2_BLEND( a, b, m ) _mm256_xor_si256( (a), _mm256_and_si256( _mm256_xor_si256( (a), (b) ), (m) ) )
+			const __m256i vpen = _mm256_set1_epi32( pen ), vext = _mm256_set1_epi32( ext ), vthr = _mm256_set1_epi32( ithr );
+			const __m256i vstop = _mm256_set1_epi32( lstop ), vmarkh = _mm256_set1_epi32( LMARK_H ), vmarkv = _mm256_set1_epi32( LMARK_V );
+			const __m256i ninf = _mm256_set1_epi32( INT_MIN );
+			const __m256i fill1 = _mm256_setr_epi32( INT_MIN, 0, 0, 0, INT_MIN, 0, 0, 0 );
+			const __m256i fill2 = _mm256_setr_epi32( INT_MIN, INT_MIN, 0, 0, INT_MIN, INT_MIN, 0, 0 );
+			const __m256i idx3 = _mm256_set1_epi32( 3 ), last = _mm256_set1_epi32( 7 );
+			const __m256i ext8 = _mm256_set1_epi32( 8 * ext );
+			__m256i vmax = ninf, cv = ninf;
+			/* lane l of the block at j stands for k = j-2+l */
+			__m256i kext = _mm256_mullo_epi32( _mm256_setr_epi32( -1, 0, 1, 2, 3, 4, 5, 6 ), vext );
+			__m256i kext1pen = _mm256_add_epi32( kext, _mm256_set1_epi32( ext + pen ) );
+			for( ; j+7<=lgth2; j+=8 )
+			{
+				__m256i p = _mm256_loadu_si256( (__m256i *)( prev + j - 1 ) );
+				__m256i v = _mm256_sub_epi32( _mm256_loadu_si256( (__m256i *)( prev + j - 2 ) ), kext );
+				__m256i x, g, wm, ch, cvt, clamp, ij, vmj;
+				x = _mm256_max_epi32( v, _mm256_or_si256( _mm256_bslli_epi128( v, 4 ), fill1 ) );
+				x = _mm256_max_epi32( x, _mm256_or_si256( _mm256_bslli_epi128( x, 8 ), fill2 ) );
+				x = _mm256_max_epi32( x, _mm256_blend_epi32( ninf, _mm256_permutevar8x32_epi32( x, idx3 ), 0xf0 ) );
+				x = _mm256_max_epi32( x, cv );
+				cv = _mm256_permutevar8x32_epi32( x, last );
+
+				wm = p;
+				g = _mm256_add_epi32( x, kext1pen );   /* hq + pen */
+				ch = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				vmj = _mm256_load_si256( (__m256i *)( vm + j ) );
+				g = _mm256_add_epi32( vmj, vpen );
+				cvt = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				_mm256_store_si256( (__m256i *)( vm + j ), _mm256_add_epi32( _mm256_max_epi32( p, vmj ), vext ) );
+				_mm256_storeu_si256( (__m256i *)( wmrow + j ), wm );
+				vmax = _mm256_max_epi32( vmax, wm );
+				clamp = _mm256_cmpgt_epi32( vthr, wm );
+				ij = _mm256_and_si256( ch, vmarkh );
+				ij = AVX2_BLEND( ij, vmarkv, cvt );
+				ij = AVX2_BLEND( ij, vstop, clamp );
+				wm = _mm256_max_epi32( wm, vthr );
+				_mm256_storeu_si256( (__m256i *)( ijrow + j ), ij );
+				_mm256_store_si256( (__m256i *)( cur + j ), _mm256_add_epi32( wm, _mm256_loadu_si256( (__m256i *)( profrow + j ) ) ) );
+				kext = _mm256_add_epi32( kext, ext8 );
+				kext1pen = _mm256_add_epi32( kext1pen, ext8 );
+			}
+#undef AVX2_BLEND
+			{
+				__m128i h = _mm_max_epi32( _mm256_castsi256_si128( vmax ), _mm256_extracti128_si256( vmax, 1 ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0x4e ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0xb1 ) );
+				rowmax = _mm_cvtsi128_si32( h );
+			}
+			if( j > 1 ) tbest = _mm256_cvtsi256_si32( cv );
+		}
+		/* the remaining cells */
+		for( jj=j; jj<=lgth2; jj++ )
+		{
+			if( jj >= 2 )
+			{
+				int q = prev[jj-2] - ( jj-2 ) * ext;
+				if( q > tbest ) tbest = q;
+			}
+			hq[jj] = tbest + ( jj-1 ) * ext;
+		}
+		for( ; j<=lgth2; j++ )
+		{
+			int p = prev[j-1];
+			int wm = p, ij = 0, g;
+			g = hq[j] + pen;
+			if( g > wm ) { wm = g; ij = LMARK_H; }
+			g = vm[j] + pen;
+			if( g > wm ) { wm = g; ij = LMARK_V; }
+			if( p > vm[j] ) vm[j] = p;
+			vm[j] += ext;
+			wmrow[j] = wm;
+			rowmax = ( wm > rowmax ) ? wm : rowmax;
+			if( wm < ithr ) { ij = lstop; wm = ithr; }
+			ijrow[j] = ij;
+			cur[j] = wm + profrow[j];
+		}
+		if( rowmax > maxwm )
+		{
+			/* first cell holding rowmax, 8 at a time (it is always present) */
+			__m256i vr = _mm256_set1_epi32( rowmax );
+			j = 1;
+			for( ; j+7<=lgth2; j+=8 )
+			{
+				int km = _mm256_movemask_ps( _mm256_castsi256_ps( _mm256_cmpeq_epi32( _mm256_loadu_si256( (__m256i *)( wmrow + j ) ), vr ) ) );
+				if( km ) { j += __builtin_ctz( (unsigned)km ); break; }
+			}
+			for( ; wmrow[j] != rowmax; j++ )
+				;
+			maxwm = rowmax; endali = i; endalj = j;
+		}
+		if( i < lgth1 ) cur[0] = (int)amino_dynamicmtx[u2[0]][u1[i]]; /* currentw[0] = initverticalw[i] */
+	}
+
+	free( profbuf ); free( vmraw ); free( hq ); free( wmrow );
+	*maxwmpt = (double)maxwm;
+	*endalipt = endali;
+	*endaljpt = endalj;
+	return( 1 );
+}
+#else
 static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
                       char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop,
                       double *maxwmpt, int *endalipt, int *endaljpt )
@@ -446,6 +718,87 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 			rowmax = _mm512_reduce_max_epi32( vmax );
 			if( j > 1 ) { tbest = _mm_cvtsi128_si32( _mm512_castsi512_si128( cv ) ); tbestk = _mm_cvtsi128_si32( _mm512_castsi512_si128( ck ) ); }
 		}
+#elif defined(__AVX2__)
+		/* The NEON block above, 8 cells at a time.  On Haswell/Broadwell every cross-lane shuffle
+		   and every vpblendvb issues on port 5 only, so the prefix maxima use in-lane byte shifts
+		   (vpslldq) with the fill OR-ed into the vacated lanes, one vpermd to carry the low half
+		   into the high half, and blends are and/xor.  Same comparisons, cell for cell. */
+#define AVX2_BLEND( a, b, m ) _mm256_xor_si256( (a), _mm256_and_si256( _mm256_xor_si256( (a), (b) ), (m) ) )
+		{
+			const __m256i vpen = _mm256_set1_epi32( pen ), vext = _mm256_set1_epi32( ext ), vthr = _mm256_set1_epi32( ithr );
+			const __m256i vstop = _mm256_set1_epi32( lstop ), vi = _mm256_set1_epi32( i ), vi1 = _mm256_set1_epi32( negi1 );
+			const __m256i veight = _mm256_set1_epi32( 8 ), ninf = _mm256_set1_epi32( INT_MIN ), none = _mm256_set1_epi32( -1 );
+			const __m256i fill1 = _mm256_setr_epi32( INT_MIN, 0, 0, 0, INT_MIN, 0, 0, 0 );
+			const __m256i fill2 = _mm256_setr_epi32( INT_MIN, INT_MIN, 0, 0, INT_MIN, INT_MIN, 0, 0 );
+			const __m256i none1 = _mm256_setr_epi32( -1, 0, 0, 0, -1, 0, 0, 0 );
+			const __m256i none2 = _mm256_setr_epi32( -1, -1, 0, 0, -1, -1, 0, 0 );
+			const __m256i idx3 = _mm256_set1_epi32( 3 ), last = _mm256_set1_epi32( 7 );
+			const __m256i idxe = _mm256_setr_epi32( 0, 0, 1, 2, 3, 4, 5, 6 );
+			const __m256i ext8 = _mm256_mullo_epi32( veight, vext );
+			__m256i vmax = ninf, vj = _mm256_setr_epi32( 1, 2, 3, 4, 5, 6, 7, 8 );
+			__m256i cv = ninf, ck = _mm256_setzero_si256();
+			__m256i kv = _mm256_setr_epi32( -1, 0, 1, 2, 3, 4, 5, 6 );
+			__m256i kext = _mm256_mullo_epi32( kv, vext ), kext1 = _mm256_add_epi32( kext, vext );
+			for( ; j+7<=lgth2; j+=8 )
+			{
+				__m256i p = _mm256_loadu_si256( (__m256i *)( prev + j - 1 ) );
+				__m256i hqv, hkv;
+				{
+					__m256i v = _mm256_sub_epi32( _mm256_loadu_si256( (__m256i *)( prev + j - 2 ) ), kext );
+					__m256i x, e, r, t;
+					x = _mm256_max_epi32( v, _mm256_or_si256( _mm256_bslli_epi128( v, 4 ), fill1 ) );
+					x = _mm256_max_epi32( x, _mm256_or_si256( _mm256_bslli_epi128( x, 8 ), fill2 ) );
+					x = _mm256_max_epi32( x, _mm256_blend_epi32( ninf, _mm256_permutevar8x32_epi32( x, idx3 ), 0xf0 ) );
+					x = _mm256_max_epi32( x, cv );
+					e = _mm256_blend_epi32( _mm256_permutevar8x32_epi32( x, idxe ), cv, 0x01 );
+					/* kv where v > e, else -1 */
+					r = _mm256_or_si256( kv, _mm256_andnot_si256( _mm256_cmpgt_epi32( v, e ), none ) );
+					t = _mm256_max_epi32( r, _mm256_or_si256( _mm256_bslli_epi128( r, 4 ), none1 ) );
+					t = _mm256_max_epi32( t, _mm256_or_si256( _mm256_bslli_epi128( t, 8 ), none2 ) );
+					t = _mm256_max_epi32( t, _mm256_blend_epi32( none, _mm256_permutevar8x32_epi32( t, idx3 ), 0xf0 ) );
+					t = _mm256_max_epi32( t, ck );
+					hqv = _mm256_add_epi32( x, kext1 );
+					hkv = t;
+					cv = _mm256_permutevar8x32_epi32( x, last );
+					ck = _mm256_permutevar8x32_epi32( t, last );
+					kv = _mm256_add_epi32( kv, veight );
+					kext = _mm256_add_epi32( kext, ext8 );
+					kext1 = _mm256_add_epi32( kext1, ext8 );
+				}
+				__m256i g, wm, ij, m, vmj, vmpj, c;
+				wm = p;
+				g = _mm256_add_epi32( hqv, vpen );
+				c = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				ij = _mm256_and_si256( c, _mm256_sub_epi32( hkv, vj ) );
+				vmj = _mm256_loadu_si256( (__m256i *)( vm + j ) );
+				vmpj = _mm256_loadu_si256( (__m256i *)( vmp + j ) );
+				g = _mm256_add_epi32( vmj, vpen );
+				c = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				ij = AVX2_BLEND( ij, _mm256_sub_epi32( vi, vmpj ), c );
+				c = _mm256_cmpgt_epi32( p, vmj );
+				m = _mm256_max_epi32( p, vmj );
+				_mm256_storeu_si256( (__m256i *)( vm + j ), _mm256_add_epi32( m, vext ) );
+				_mm256_storeu_si256( (__m256i *)( vmp + j ), AVX2_BLEND( vmpj, vi1, c ) );
+				_mm256_storeu_si256( (__m256i *)( wmrow + j ), wm );
+				vmax = _mm256_max_epi32( vmax, wm );
+				c = _mm256_cmpgt_epi32( vthr, wm );
+				ij = AVX2_BLEND( ij, vstop, c );
+				wm = _mm256_max_epi32( wm, vthr );
+				_mm256_storeu_si256( (__m256i *)( ijrow + j ), ij );
+				_mm256_storeu_si256( (__m256i *)( cur + j ), _mm256_add_epi32( wm, _mm256_loadu_si256( (__m256i *)( profrow + j ) ) ) );
+				vj = _mm256_add_epi32( vj, veight );
+			}
+			{
+				__m128i h = _mm_max_epi32( _mm256_castsi256_si128( vmax ), _mm256_extracti128_si256( vmax, 1 ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0x4e ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0xb1 ) );
+				rowmax = _mm_cvtsi128_si32( h );
+			}
+			if( j > 1 ) { tbest = _mm256_cvtsi256_si32( cv ); tbestk = _mm256_cvtsi256_si32( ck ); }
+		}
+#undef AVX2_BLEND
 #elif defined(__SSE4_1__)
 		/* The NEON block above, lane for lane: palignr for vextq, pblendvb for vbslq. */
 		{
@@ -552,6 +905,16 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 					if( k ) { j += __builtin_ctz( (unsigned)k ); break; }
 				}
 			}
+#elif defined(__AVX2__) && !defined(__ARM_NEON)
+			/* first cell holding rowmax, 8 at a time (it is always present) */
+			{
+				__m256i vr = _mm256_set1_epi32( rowmax );
+				for( ; j+7<=lgth2; j+=8 )
+				{
+					int k = _mm256_movemask_ps( _mm256_castsi256_ps( _mm256_cmpeq_epi32( _mm256_loadu_si256( (__m256i *)( wmrow + j ) ), vr ) ) );
+					if( k ) { j += __builtin_ctz( (unsigned)k ); break; }
+				}
+			}
 #elif defined(__SSE4_1__) && !defined(__ARM_NEON)
 			{
 				__m128i vr = _mm_set1_epi32( rowmax );
@@ -575,6 +938,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	*endaljpt = endalj;
 	return( 1 );
 }
+#endif
 
 double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char **seq2, int alloclen, int *off1pt, int *off2pt )
 /* score no keisan no sai motokaraaru gap no atukai ni mondai ga aru */

@@ -91,6 +91,41 @@ void ReallocateCharMtx( char **mtx, int l1, int l2 )
 } 
 #endif
 
+/* AllocateCharMtx without zero-filling the rows (the row-pointer array is still cleared).  For
+   buffers that are only ever used as C strings written before they are read: Falign allocates
+   several njob x alloclen of these per call, and clearing them was a quarter of an FFT-NS-i run.
+   Freed with FreeCharMtx as usual.  -DMAFFT_POISON_TEST fills the rows with junk instead, to show
+   that nothing reads a byte it did not write. */
+char **AllocateCharMtxNoZero( int l1, int l2 )
+{
+	int i;
+	char **cmtx;
+
+	cmtx = (char **)calloc( l1+1, sizeof( char * ) );
+	if( cmtx == NULL )
+	{
+		fprintf( stderr, "Cannot allocate %d x %d character matrix.\n", l1, l2 );
+		exit( 1 );
+	}
+	if( l2 )
+	{
+		for( i=0; i<l1; i++ )
+		{
+			cmtx[i] = (char *)malloc( l2 );
+			if( cmtx[i] == NULL )
+			{
+				fprintf( stderr, "Cannot allocate %d character vector.\n", l2 );
+				exit( 1 );
+			}
+#ifdef MAFFT_POISON_TEST
+			memset( cmtx[i], 0xa5, l2 );
+#endif
+		}
+	}
+	cmtx[l1] = NULL;
+	return( cmtx );
+}
+
 char **AllocateCharMtx( int l1, int l2 )
 {
 	int i;

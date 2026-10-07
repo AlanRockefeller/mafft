@@ -1,12 +1,17 @@
 #include "mltaln.h"
 #include "dp.h"
-#if defined(__AVX512F__) && !defined(__ARM_NEON)
+#if ( defined(__AVX512F__) || defined(__AVX2__) ) && !defined(__ARM_NEON)
 #include <immintrin.h>
 /* vector a*b+c rounded like MULADD */
 #if MAFFT_STOCK_FMA
 #define VMULADD(a,b,c) _mm512_fmadd_pd( (a), (b), (c) )
 #else
 #define VMULADD(a,b,c) _mm512_add_pd( _mm512_mul_pd( (a), (b) ), (c) )
+#endif
+#if defined(__AVX2__) && !MAFFT_STOCK_FMA
+#define VMULADD4(a,b,c) _mm256_add_pd( _mm256_mul_pd( (a), (b) ), (c) )
+/* 4 x 64-bit compare mask -> 4 x 32-bit mask */
+#define PACKMASK4(c) _mm256_castsi256_si128( _mm256_permutevar8x32_epi32( _mm256_castpd_si256( c ), _mm256_setr_epi32( 0, 2, 4, 6, 0, 2, 4, 6 ) ) )
 #endif
 #endif
 
@@ -311,6 +316,32 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 			s = VMULADD( _mm512_loadu_pd( n_dis_consweight_multi[j] + l ), _mm512_set1_pd( cpmx1[j][i1] ), s );
 		_mm512_storeu_pd( scarr + l, s );
 	}
+#elif defined(__AVX2__) && !defined(__ARM_NEON) && !MAFFT_STOCK_FMA
+	/* Only the letters present in column i1 contribute: s + (+-0) == s for every s the sum can
+	   hold (it starts at +0 and a sum is never -0 under round-to-nearest), so skipping the zero
+	   terms is exact.  The remaining terms are added in ascending j, 4 letters at a time, with a
+	   separate multiply and add -- the rounding of MULADD in a build that does not contract. */
+	{
+		static TLS int *nzj = NULL, nzalloc = 0;
+		static TLS double *nzc = NULL;
+		int nz = 0;
+		if( nzalloc < nalphabets ) { free( nzj ); free( nzc ); nzalloc = nalphabets; nzj = malloc( sizeof( int ) * nzalloc ); nzc = malloc( sizeof( double ) * nzalloc ); }
+		for( j=0; j<nalphabets; j++ ) if( cpmx1[j][i1] != 0.0 ) { nzj[nz] = j; nzc[nz] = cpmx1[j][i1]; nz++; }
+		for( ; l+4<=nalphabets; l+=4 )
+		{
+			__m256d s = _mm256_setzero_pd();
+			for( k=0; k<nz; k++ )
+				s = _mm256_add_pd( _mm256_mul_pd( _mm256_loadu_pd( n_dis_consweight_multi[nzj[k]] + l ), _mm256_set1_pd( nzc[k] ) ), s );
+			_mm256_storeu_pd( scarr + l, s );
+		}
+		for( ; l<nalphabets; l++ )
+		{
+			double s = 0.0;
+			for( k=0; k<nz; k++ )
+				s = MULADD( n_dis_consweight_multi[nzj[k]][l], nzc[k], s );
+			scarr[l] = s;
+		}
+	}
 #endif
 	for( ; l<nalphabets; l++ )
 	{
@@ -542,6 +573,9 @@ static void match_calc_add( double **scoreingmtx, double *match, double **cpmx1,
 	}
 
 	{
+#ifdef HAVE_SCARR_FILL
+		scarr_fill( scarr, scoreingmtx, cpmx1, i1 );
+#else
 		for( l=0; l<nalphabets; l++ )
 		{
 			scarr[l] = 0.0;
@@ -550,6 +584,7 @@ static void match_calc_add( double **scoreingmtx, double *match, double **cpmx1,
 //				scarr[l] += n_dis_consweight_multi[j][l] * cpmx1[j][i1];
 				scarr[l] += scoreingmtx[j][l] * cpmx1[j][i1];
 		}
+#endif
 		matchpt = match;
 		cpmxpdnptpt = cpmxpdn;
 		cpmxpdptpt = cpmxpd;
@@ -591,6 +626,9 @@ static void match_calc_add( double **scoreingmtx, double *match, double **cpmx1,
 			cpmxpdn[count][j] = -1;
 		}
 	}
+#ifdef HAVE_SCARR_FILL
+	scarr_fill( scarr, scoreingmtx, cpmx1, i1 );
+#else
 	for( l=0; l<nalphabets; l++ )
 	{
 		scarr[l] = 0.0;
@@ -599,6 +637,7 @@ static void match_calc_add( double **scoreingmtx, double *match, double **cpmx1,
 //			scarr[l] += n_dis_consweight_multi[k][l] * cpmx1[k][i1];
 			scarr[l] += scoreingmtx[k][l] * cpmx1[k][i1];
 	}
+#endif
 	for( j=0; j<lgth2; j++ )
 	{
 		match[j] = 0.0;
@@ -952,6 +991,28 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 		}
 		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
 	}
+#elif defined(__AVX2__) && !defined(__ARM_NEON) && !MAFFT_STOCK_FMA
+	/* The AVX-512 scan above, 4 at a time. */
+	{
+		__m256d cv = _mm256_set1_pd( best ), vpre = _mm256_set1_pd( gf1vapre );
+		__m128i ck = _mm_set1_epi32( bi ), vk = _mm_setr_epi32( 0, 1, 2, 3 ), vfour = _mm_set1_epi32( 4 );
+		for( ; j+4<=lgth2; j+=4 )
+		{
+			__m256d x = VMULADD4( _mm256_loadu_pd( ogcp2 + j ), vpre, _mm256_loadu_pd( prev + j - 1 ) ), e, c;
+			__m128i t = vk, f, c32;
+			e = _mm256_blend_pd( _mm256_permute4x64_pd( x, 0x90 ), cv, 0x1 ); f = _mm_alignr_epi8( t, ck, 12 );
+			c = _mm256_cmp_pd( x, e, _CMP_GT_OQ ); c32 = PACKMASK4( c ); x = _mm256_blendv_pd( e, x, c ); t = _mm_blendv_epi8( f, t, c32 );
+			e = _mm256_permute2f128_pd( cv, x, 0x21 ); f = _mm_alignr_epi8( t, ck, 8 );
+			c = _mm256_cmp_pd( x, e, _CMP_GT_OQ ); c32 = PACKMASK4( c ); x = _mm256_blendv_pd( e, x, c ); t = _mm_blendv_epi8( f, t, c32 );
+			c = _mm256_cmp_pd( x, cv, _CMP_GT_OQ ); c32 = PACKMASK4( c ); x = _mm256_blendv_pd( cv, x, c ); t = _mm_blendv_epi8( ck, t, c32 );
+			_mm256_storeu_pd( MI + j + 1, x );
+			_mm_storeu_si128( (__m128i *)( MPI + j + 1 ), t );
+			cv = _mm256_permute4x64_pd( x, 0xff );
+			ck = _mm_shuffle_epi32( t, 0xff );
+			vk = _mm_add_epi32( vk, vfour );
+		}
+		best = _mm256_cvtsd_f64( cv ); bi = _mm_cvtsi128_si32( ck );
+	}
 #endif
 	for( ; j<lgth2; j++ )
 	{
@@ -1028,6 +1089,40 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 			_mm512_storeu_pd( cur + j, _mm512_add_pd( _mm512_loadu_pd( cur + j ), wm ) );
 			_mm256_storeu_si256( (__m256i *)( ijrow + j ), ij );
 			vj = _mm256_add_epi32( vj, veight );
+		}
+	}
+#elif defined(__AVX2__) && !MAFFT_STOCK_FMA
+	/* The AVX-512 block above, 4 cells at a time. */
+	{
+		__m256d vgf1va = _mm256_set1_pd( gf1va ), vfgcp1va = _mm256_set1_pd( fgcp1va ), vogcp1va = _mm256_set1_pd( ogcp1va );
+		__m128i vi = _mm_set1_epi32( i ), vi1 = _mm_set1_epi32( i-1 ), vfour = _mm_set1_epi32( 4 );
+		__m128i vj = _mm_setr_epi32( 1, 2, 3, 4 );
+		for( ; j+3<=lgth2; j+=4 )
+		{
+			__m256d p = _mm256_loadu_pd( prev + j - 1 );
+			__m256d wm, g1, g3, g4, mv, c;
+			__m128i ij, mpv;
+
+			g1 = VMULADD4( _mm256_loadu_pd( fgcp2 + j - 1 ), vgf1va, _mm256_loadu_pd( MI + j ) );
+			c = _mm256_cmp_pd( g1, p, _CMP_GT_OQ );
+			wm = _mm256_blendv_pd( p, g1, c );
+			ij = _mm_and_si128( PACKMASK4( c ), _mm_sub_epi32( _mm_loadu_si128( (__m128i *)( MPI + j ) ), vj ) );
+
+			mv = _mm256_loadu_pd( m + j );
+			mpv = _mm_loadu_si128( (__m128i *)( mp + j ) );
+			g3 = VMULADD4( vfgcp1va, _mm256_loadu_pd( gapfreq2 + j ), mv );
+			c = _mm256_cmp_pd( g3, wm, _CMP_GT_OQ );
+			wm = _mm256_blendv_pd( wm, g3, c );
+			ij = _mm_blendv_epi8( ij, _mm_sub_epi32( vi, mpv ), PACKMASK4( c ) );
+
+			g4 = VMULADD4( vogcp1va, _mm256_loadu_pd( gapfreq2 + j - 1 ), p );
+			c = _mm256_cmp_pd( g4, mv, _CMP_GT_OQ );
+			_mm256_storeu_pd( m + j, _mm256_blendv_pd( mv, g4, c ) );
+			_mm_storeu_si128( (__m128i *)( mp + j ), _mm_blendv_epi8( mpv, vi1, PACKMASK4( c ) ) );
+
+			_mm256_storeu_pd( cur + j, _mm256_add_pd( _mm256_loadu_pd( cur + j ), wm ) );
+			_mm_storeu_si128( (__m128i *)( ijrow + j ), ij );
+			vj = _mm_add_epi32( vj, vfour );
 		}
 	}
 #endif

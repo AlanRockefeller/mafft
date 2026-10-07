@@ -5,6 +5,7 @@ char *AllocateCharVec( int );
 void FreeCharVec( char * );
 
 char **AllocateCharMtx( int, int);
+char **AllocateCharMtxNoZero( int, int);
 void ReallocateCharMtx( char **, int, int);
 void FreeCharMtx( char ** );
 

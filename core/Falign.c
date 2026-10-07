@@ -884,21 +884,23 @@ double Falign( int **whichmtx, double ***scoringmatrices, double **n_dynamicmtx,
 #endif
 
 
-	result1 = AllocateCharMtx( clus1, alloclen );
-	result2 = AllocateCharMtx( clus2, alloclen );
-	tmpres1 = AllocateCharMtx( clus1, alloclen );
-	tmpres2 = AllocateCharMtx( clus2, alloclen );
+	/* Only ever used as strings written before they are read (rndseq is filled whole), so the
+	   rows need no clearing -- see AllocateCharMtxNoZero. */
+	result1 = AllocateCharMtxNoZero( clus1, alloclen );
+	result2 = AllocateCharMtxNoZero( clus2, alloclen );
+	tmpres1 = AllocateCharMtxNoZero( clus1, alloclen );
+	tmpres2 = AllocateCharMtxNoZero( clus2, alloclen );
 	sgap1 = AllocateCharVec( clus1 );
 	egap1 = AllocateCharVec( clus1 );
 	sgap2 = AllocateCharVec( clus2 );
 	egap2 = AllocateCharVec( clus2 );
 	tmpptr1 = calloc( clus1, sizeof( char * ) );
 	tmpptr2 = calloc( clus2, sizeof( char * ) );
-	tmpseq1 = AllocateCharMtx( clus1, nlen );
-	tmpseq2 = AllocateCharMtx( clus2, nlen );
+	tmpseq1 = AllocateCharMtxNoZero( clus1, nlen );
+	tmpseq2 = AllocateCharMtxNoZero( clus2, nlen );
 #if RND
-	rndseq1 = AllocateCharMtx( clus1, nlen );
-	rndseq2 = AllocateCharMtx( clus2, nlen );
+	rndseq1 = AllocateCharMtxNoZero( clus1, nlen );
+	rndseq2 = AllocateCharMtxNoZero( clus2, nlen );
 	for( i=0; i<clus1; i++ )
 		generateRndSeq( rndseq1[i], nlen );
 	for( i=0; i<clus2; i++ )

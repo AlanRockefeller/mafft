@@ -16818,3 +16818,43 @@ void fillimp_file( double **impmtx, double *imp, int clus1, int clus2, int lgth1
 	}
 #endif
 }
+
+
+#if defined(HAVE_SCARR_FILL)
+#include <immintrin.h>
+/*
+ * The profile-score vector every match_calc builds:  for each l, scarr[l] = 0.0 and then
+ * scarr[l] += mtx[j][l] * cpmx1[j][i1] for j = 0 .. nalphabets-1, in a build that does not
+ * contract a*b+c.  Only the letters present in column i1 contribute: s + (+-0) == s for every
+ * value the sum can hold (it starts at +0 and a sum is never -0 under round-to-nearest), so the
+ * zero terms are skipped exactly.  The rest are added in the same ascending j, 4 letters at a
+ * time, each lane with its own multiply then add -- bit-identical to the scalar loop.
+ */
+void scarr_fill( double *scarr, double **mtx, double **cpmx1, int i1 )
+{
+	static TLS int *nzj = NULL, nzalloc = 0;
+	static TLS double *nzc = NULL;
+	int j, k, l, nz = 0;
+	if( nzalloc < nalphabets )
+	{
+		free( nzj ); free( nzc );
+		nzalloc = nalphabets;
+		nzj = malloc( sizeof( int ) * nzalloc );
+		nzc = malloc( sizeof( double ) * nzalloc );
+	}
+	for( j=0; j<nalphabets; j++ ) if( cpmx1[j][i1] != 0.0 ) { nzj[nz] = j; nzc[nz] = cpmx1[j][i1]; nz++; }
+	for( l=0; l+4<=nalphabets; l+=4 )
+	{
+		__m256d s = _mm256_setzero_pd();
+		for( k=0; k<nz; k++ )
+			s = _mm256_add_pd( s, _mm256_mul_pd( _mm256_loadu_pd( mtx[nzj[k]] + l ), _mm256_set1_pd( nzc[k] ) ) );
+		_mm256_storeu_pd( scarr + l, s );
+	}
+	for( ; l<nalphabets; l++ )
+	{
+		double s = 0.0;
+		for( k=0; k<nz; k++ ) s += mtx[nzj[k]][l] * nzc[k];
+		scarr[l] = s;
+	}
+}
+#endif
