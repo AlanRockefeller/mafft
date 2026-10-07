@@ -10,6 +10,87 @@
 > For general use, install the official release. Please don't report problems with this
 > fork to the MAFFT developers. Open an issue here instead.
 
+## AVX2 additions (`v7.526-opt5-dikarya1`)
+
+The opt5 x86 kernels need AVX-512 (`-march=x86-64-v4`). On x86 CPUs without it (every
+Intel server part before Skylake-SP, and many cloud and desktop machines today), opt5 falls
+back to its SSE4.1 and scalar paths, which leaves most of the run time where it was in stock MAFFT.
+`v7.526-opt5-dikarya1` adds AVX2 paths for that class of machine, under the same rule as
+the rest of this fork: **output byte-identical to stock MAFFT built the same way and run
+with `--thread 1`.**
+
+They were written for, and measured on, the server that runs
+[Dikarya](https://dikarya.us), a phylogenetics web service for fungal ITS barcodes:
+
+- Intel Xeon E5-2690 v4 (Broadwell-EP), 2 vCPUs of a VM, AVX2 + FMA, no AVX-512
+- Ubuntu 24.04, gcc 13.3, `make CC=gcc CFLAGS="-O3 -march=native"` (gcc with the Makefile's
+  `-std=c99` never contracts `a*b+c`, so `MAFFT_STOCK_FMA` is 0 and every vector multiply-add
+  below is a separate multiply and add)
+
+All new code is guarded by `__AVX2__ && !MAFFT_STOCK_FMA` (and `!__AVX512F__` where opt5
+already has an AVX-512 path), so builds for other targets compile exactly the code they did
+before.
+
+### What changed
+
+| where | change | effect on this machine |
+|---|---|---|
+| `Lalign11.c`: `Lfill_int`, `Ltracking` | An AVX2 integer fill, 8 cells per step. A cell whose best move is a gap stores a marker instead of the gap's start offset; every DP row is kept instead of two alternating ones; `Ltracking`, which reads `ijp` only along its one path, recomputes the offset for a marked cell by replaying the original scalar rule over the stored rows. The arithmetic is integer, so the offsets are exactly the ones the full fill would store. This removes the first-index prefix scan and the `vmp[]` state from the inner loop. | 1.68 to 0.82 ns per DP cell (the all-pairs local alignments are ~60% of L-INS-i) |
+| `mltaln9.c`: `scarr_fill()`; `Salignmm.c`, `partSalignmm.c`, `Dalignmm.c`, `SAalignmm.c`; `mc_match` | The 26x26 profile-score loop at the top of every `match_calc` (`scarr[l] += mtx[j][l] * cpmx1[j][i1]`): gcc vectorised it as gathers plus a serial add chain. It now skips the letters absent from the column (exact: the sum starts at +0, and under round-to-nearest a sum of nonzero terms is never -0, so adding +0 or -0 never changes it) and does 4 letters at a time, each lane with the same multiply-then-add sequence in the same order. | most of `A__align`, i.e. of FFT-NS-i |
+| `Falign.c`, `mtxutl.c`: `AllocateCharMtxNoZero()` | `Falign` allocated eight `njob x alloclen` character matrices per call with `calloc`, i.e. cleared ~6 MB per call. They are only ever used as C strings written before they are read (`rndseq` is filled whole), so the rows are now `malloc`ed. `-DMAFFT_POISON_TEST` fills them with junk instead, which is how that claim was checked. | ~25% of an FFT-NS-i run |
+| `Salignmm.c` `A_row`, `partSalignmm.c` `partA_row` | AVX2 (4 doubles) versions of opt5's AVX-512-only row fills. | small |
+| `Lalign11.c` | 8-wide search for the first cell holding a row maximum. | small |
+
+Tried and dropped: a straight AVX2 port of the opt5 `Lfill_int` prefix scans (only 1.17x
+over SSE4.1: the loop is bound by the number of vector uops per cell, not by width); a
+variant that computed the gap offsets only for blocks that needed them (slower: on related
+ITS sequences gaps win across large areas, and the branch mispredicts); restructuring the
+scan to shorten the loop-carried chain (no change).
+
+### Results on the machine above
+
+14 real inputs from the service (49-444 ITS/LSU sequences), `--adjustdirection --auto`,
+so `--auto` chose L-INS-i-style local pairs for 10 of them and FFT-NS-i for 4. Seconds,
+single runs:
+
+| | stock 7.526 | `opt5` | `opt5-dikarya1` | vs. stock | vs. opt5 |
+|---|---|---|---|---|---|
+| `--auto` chose local-pair (10 inputs), `--thread 1` | 361 | 97 | 56 | 6.4x | 1.7x |
+| `--auto` chose FFT-NS-i (4 inputs), `--thread 1` | 242 | 207 | 107 | 2.3x | 1.9x |
+| all 14, `--thread 2` | not run | 199 | 99 | n/a | 2.0x |
+| full L-INS-i, 176 seqs, `--thread 1` | 93.2 | 23.9 | 13.9 | 6.7x | 1.7x |
+
+### How it was verified
+
+- Byte-identical alignments to stock MAFFT (Ubuntu's 7.505 package and a gcc build of
+  7.526) at `--thread 1` on 52 real inputs, both as built and with `-DMAFFT_POISON_TEST`.
+- `harness/avx2/compare-builds.sh` runs six option sets (`--auto`, L-INS-i, G-INS-i,
+  FFT-NS-i, FFT-NS-2 with `--retree 2`, `--adjustdirection`) against a reference build.
+  The ones run were a synthetic DNA family, `test/sample` (protein) and three real inputs:
+  all identical to stock 7.526.
+- Multi-threaded runs are not reproducible in any MAFFT build, so `--thread 2` was checked
+  for completion, not identity.
+
+### For the MAFFT maintainers
+
+This branch is upstream `main` (`0a2319b`, the newest official source as of 2026-10-07)
+plus the opt1-opt5 series plus one commit for the AVX2 work, so
+`git diff 0a2319b v7.526-opt5-dikarya1 -- core/` is the whole change against upstream, and
+`git diff v7.526-opt5 v7.526-opt5-dikarya1 -- core/` is the AVX2 part on its own. Each part keeps the
+original code as the fallback for every other target.
+
+### Credits
+
+- **opt1-opt5** (everything up to `v7.526-opt5`): designed, implemented, verified and
+  benchmarked by Claude Code (Claude Opus 5.5, Anthropic), with Josh Walker advising and
+  setting the research direction. See the section below and `paper/`.
+- **dikarya1** (the AVX2 additions above): designed, implemented, verified and benchmarked
+  by Claude Code (Claude Opus 5.5, Anthropic), with Alan Rockefeller directing the work for
+  Dikarya.
+- MAFFT itself is by Kazutaka Katoh and colleagues; please cite MAFFT as its authors ask.
+
+---
+
 This fork adds performance changes to MAFFT 7.526 under one constraint: for the same input
 and options, the **output must be byte-identical to unmodified MAFFT** built for the same
 platform and run with `--thread 1`. Downstream analyses calibrated on stock MAFFT output
@@ -22,6 +103,7 @@ DNA, typically about 180 sequences per alignment. Results on that workload:
 |---|---|---|
 | Apple M1 (macOS) | `v7.526-opt4` / `opt5` | 6.5× single run, 4.6× at 8 concurrent runs |
 | AWS c7i / c7a (Sapphire Rapids, Zen 4) | `v7.526-opt5` | 5.7–7.0× single run, 5.1–5.9× at 4 concurrent runs |
+| Intel Xeon E5-2690 v4 (Broadwell, AVX2, no AVX-512), gcc | `v7.526-opt5-dikarya1` | 6.4x single run on `--auto` L-INS-i jobs, 5.5-6.9x on full L-INS-i (see [below](#avx2-additions-v7526-opt5-dikarya1)) |
 
 The speedups depend on the workload and the hardware: sequence count and length, the
 alignment strategy, cache sizes and vector units. Other inputs may gain much less. The
@@ -84,6 +166,7 @@ upstream `main` (7.526 plus commits from December 2025). Each build is tagged:
 | `v7.526-opt3` | `v7.526-opt3` | all-pairs local alignment on the GPU (Metal) |
 | `v7.526-opt4` | `v7.526-opt4` | shader compiled at build time, occupancy tuning |
 | `v7.526-opt5` | `v7.526-opt5` | AVX-512 kernels for x86-64, multiply-add rounding matched per platform |
+| `v7.526-opt5-dikarya1` | `v7.526-opt5-dikarya1` | AVX2 paths for x86-64 without AVX-512: marker-based `Lfill_int`, sparse `scarr_fill`, uncleared `Falign` work rows ([details](#avx2-additions-v7526-opt5-dikarya1)) |
 
 `v7.526-opt1` reports plain `v7.526`, so it can't be told apart from stock by version.
 Prefer a later tag.
