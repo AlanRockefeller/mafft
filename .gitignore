@@ -6,6 +6,7 @@ core/*.o
 core/[!.]*
 !core/l11_avx2.h
 !core/paircache.h
+!core/dense_kmer.h
 
 scripts/
 

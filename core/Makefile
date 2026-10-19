@@ -400,7 +400,7 @@ Lalignmm.o : Lalignmm.c $(HEADER)
 rna.o : rna.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c rna.c 
 
-disttbfast.o : disttbfast.c $(HEADER) $(FFTHEADER)
+disttbfast.o : disttbfast.c dense_kmer.h $(HEADER) $(FFTHEADER)
 	$(CC) $(MYCFLAGS) -c disttbfast.c
 
 splitfromaln.o : splitfromaln.c $(HEADER) $(FFTHEADER) 

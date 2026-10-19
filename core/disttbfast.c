@@ -1,4 +1,24 @@
 #include "mltaln.h"
+#include "dense_kmer.h"
+
+/* Immutable six-mer histograms are shared only across this matrix stage. */
+static inline int matrixsextet( int *table, int *points, const unsigned char *dense, int i, int j )
+{
+#if MAFFT_DENSE_KMER && defined(__AVX2__)
+    if( dense )
+    {
+        int exact = kd_intersection( dense+(size_t)i*KD_WIDTH, dense+(size_t)j*KD_WIDTH );
+#ifdef MAFFT_DENSE_KMER_CHECK
+        if( exact != commonsextet_p( table, points ) )
+        { fprintf( stderr, "DENSE_KMER_CHECK failed %d %d\n", i, j ); abort(); }
+#endif
+        return exact;
+    }
+#else
+    (void)dense; (void)i; (void)j;
+#endif
+    return commonsextet_p( table, points );
+}
 
 
 #define REPORTCOSTS 0
@@ -139,6 +159,7 @@ typedef struct _distancematrixthread_arg
 	int njob;
 	int *jobpospt;
 	int **pointt;
+	const unsigned char *dense_kmers;
 	double **mtx;
 	pthread_mutex_t *mutex;
 } distancematrixthread_arg_t;
@@ -1532,7 +1553,7 @@ static void *distancematrixthread( void *arg )
 
 		for( j=i; j<njob; j++ ) 
 		{
-			mtx[i][j-i] = (double)commonsextet_p( table1, pointt[j] );
+			mtx[i][j-i] = (double)matrixsextet( table1, pointt[j], targ->dense_kmers, i, j );
 		} 
 		free( table1 );
 	}
@@ -3950,6 +3971,7 @@ int disttbfast( int ngui, int lgui, char **namegui, char **seqgui, int argc, cha
 		}
 		else
 		{
+			struct kd_dense densectx = kd_prepare( pointt, njob, tsize, tuplesize, dorp=='d' );
 #ifdef enablemultithread
 			if( nthreadpair > 0 )
 			{
@@ -3969,6 +3991,7 @@ int disttbfast( int ngui, int lgui, char **namegui, char **seqgui, int argc, cha
 					targ[i].njob = njob;
 					targ[i].jobpospt = &jobpos;
 					targ[i].pointt = pointt;
+					targ[i].dense_kmers = densectx.rows;
 					targ[i].mtx = mtx;
 					targ[i].mutex = &mutex;
 	
@@ -3993,17 +4016,18 @@ int disttbfast( int ngui, int lgui, char **namegui, char **seqgui, int argc, cha
 					if( i % 100 == 0 )
 					{
 						reporterr(       "\r% 5d / %d", i+1, njob );
-						if( callback && callback( 0, i*25/njob, "Distance matrix" ) ) goto chudan;
+						if( callback && callback( 0, i*25/njob, "Distance matrix" ) ) { kd_destroy(&densectx);goto chudan; }
 					}
 					makecompositiontable_p( table1, pointt[i] );
 			
 					for( j=i; j<njob; j++ ) 
 					{
-						mtx[i][j-i] = (double)commonsextet_p( table1, pointt[j] );
+						mtx[i][j-i] = (double)matrixsextet( table1, pointt[j], densectx.rows, i, j );
 					} 
 					free( table1 ); table1 = NULL;
 				}
 			}
+			kd_destroy( &densectx );
 			reporterr(       "\ndone.\n\n" );
 			ien = njob-1;
 	
