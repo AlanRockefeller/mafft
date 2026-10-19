@@ -261,6 +261,113 @@ static TLS double *mc_val = NULL;    /* value of the k-th letter of the column a
 static TLS int *mc_vstart = NULL;
 static TLS double *mc_scarr = NULL;
 
+/* Optional reuse of raw match rows for bit-identical first-profile columns.
+ * Scope is one partA__align call: the other profile, matrix and arithmetic order
+ * are fixed.  The cache precedes importance additions and all DP/gap processing.
+ * Hashing only locates candidates; every double's bits must compare equal.
+ */
+#ifndef MAFFT_MATCH_ROWCACHE
+#define MAFFT_MATCH_ROWCACHE 0
+#endif
+#ifndef MAFFT_MATCH_ROWCACHE_BYTES
+#define MAFFT_MATCH_ROWCACHE_BYTES 8388608
+#endif
+#if MAFFT_MATCH_ROWCACHE
+static TLS double **mcr_source = NULL, **mcr_matrix = NULL;
+static TLS double *mcr_rows = NULL;
+static TLS unsigned char *mcr_valid = NULL;
+static TLS int *mcr_ids = NULL;
+static TLS int mcr_nrow = 0, mcr_width = 0, mcr_slots = 0, mcr_generation, mcr_alphabet;
+static TLS unsigned long long mcr_hits = 0, mcr_misses = 0, mcr_calls = 0;
+
+static void mc_rowcache_clear( void )
+{
+#ifdef MAFFT_MATCH_ROWCACHE_STATS
+	if( mcr_ids ) fprintf( stderr, "MATCH_ROWCACHE: %d x %d, %d slots, %zu bytes, %llu hits, %llu misses, %llu rows\n",
+	                      mcr_nrow, mcr_width, mcr_slots,
+	                      sizeof(double)*(size_t)mcr_slots*mcr_width + (size_t)mcr_slots + sizeof(int)*(size_t)mcr_nrow,
+	                      mcr_hits, mcr_misses, mcr_calls );
+#endif
+	free( mcr_ids ); free( mcr_rows ); free( mcr_valid );
+	mcr_ids = NULL; mcr_rows = NULL; mcr_valid = NULL;
+	mcr_source = mcr_matrix = NULL; mcr_nrow = mcr_width = mcr_slots = 0;
+	mcr_hits = mcr_misses = mcr_calls = 0;
+}
+
+static void mc_rowcache_prepare( double **profile, int nrow, int width )
+{
+	int *ids = NULL, *representative = NULL, *counts = NULL, *slots = NULL, *table = NULL;
+	uint64_t *hashes = NULL;
+	int row, letter, group, ngroup = 0, nslot = 0, ntab = 1, maxslots;
+	mc_rowcache_clear();
+	/* Also bound temporary indexing storage.  No cache is needed for row zero
+	 * (the initialization path) or the terminal boundary row nrow; both retain
+	 * their original paths.  A failed allocation simply recomputes every row. */
+	if( nrow < 3 || width < 1 || nalphabets < 1 ||
+	    (size_t)nrow > (size_t)MAFFT_MATCH_ROWCACHE_BYTES / (12*sizeof(int)) ||
+	    (size_t)width > (size_t)MAFFT_MATCH_ROWCACHE_BYTES / sizeof(double) ) return;
+	maxslots = (int)( (size_t)MAFFT_MATCH_ROWCACHE_BYTES / sizeof(double) / (size_t)width );
+	while( ntab < 2*nrow ) ntab *= 2;
+	ids = malloc( sizeof(int)*(size_t)nrow );
+	representative = malloc( sizeof(int)*(size_t)nrow );
+	counts = calloc( nrow, sizeof(int) );
+	slots = malloc( sizeof(int)*(size_t)nrow );
+	table = malloc( sizeof(int)*(size_t)ntab );
+	hashes = malloc( sizeof(uint64_t)*(size_t)nrow );
+	if( !ids || !representative || !counts || !slots || !table || !hashes ) goto done;
+	for( row=0; row<ntab; row++ ) table[row] = -1;
+	ids[0] = -1;
+	for( row=1; row<nrow; row++ )
+	{
+		uint64_t h = UINT64_C(14695981039346656037);
+		int at;
+		for( letter=0; letter<nalphabets; letter++ )
+		{
+			uint64_t bits;
+			memcpy( &bits, &profile[letter][row], sizeof(bits) );
+			h = ( h ^ bits ) * UINT64_C(1099511628211);
+		}
+		/* Binary profile weights often have zero low mantissa bits.  Mix the
+		 * high bits before indexing a power-of-two table. */
+		h ^= h >> 33; h *= UINT64_C(0xff51afd7ed558ccd);
+		h ^= h >> 33; h *= UINT64_C(0xc4ceb9fe1a85ec53);
+		h ^= h >> 33;
+		at = (int)( h & (uint64_t)(ntab-1) );
+		for( ;; at=(at+1)&(ntab-1) )
+		{
+			group = table[at];
+			if( group < 0 )
+			{
+				group = ngroup++;
+				table[at] = group; representative[group] = row; hashes[group] = h;
+				break;
+			}
+			if( hashes[group] != h ) continue;
+			for( letter=0; letter<nalphabets; letter++ )
+				if( memcmp( &profile[letter][row], &profile[letter][representative[group]], sizeof(double) ) ) break;
+			if( letter == nalphabets ) break;
+		}
+		ids[row] = group; counts[group]++;
+	}
+	for( group=0; group<ngroup; group++ )
+		slots[group] = counts[group] > 1 && nslot < maxslots ? nslot++ : -1;
+#ifdef MAFFT_MATCH_ROWCACHE_STATS
+	fprintf( stderr, "MATCH_ROWCACHE_PREPARE: %d x %d, %d distinct profile columns, %d slots\n", nrow, width, ngroup, nslot );
+#endif
+	if( !nslot ) goto done;
+	mcr_rows = malloc( sizeof(double)*(size_t)nslot*width );
+	mcr_valid = calloc( nslot, 1 );
+	if( !mcr_rows || !mcr_valid ) { mc_rowcache_clear(); goto done; }
+	for( row=1; row<nrow; row++ ) ids[row] = slots[ids[row]];
+	mcr_ids = ids; ids = NULL;
+	mcr_source = profile; mcr_matrix = n_dis_consweight_multi;
+	mcr_nrow = nrow; mcr_width = width; mcr_slots = nslot;
+	mcr_generation = constants_generation; mcr_alphabet = nalphabets;
+done:
+	free( ids ); free( representative ); free( counts ); free( slots ); free( table ); free( hashes );
+}
+#endif
+
 #if defined(MAFFT_AVX512)
 /*
  * match_calc by blocks of 8 consecutive columns, without the scatter of the grouped version.
@@ -574,11 +681,44 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 	}
 }
 
+#if MAFFT_MATCH_ROWCACHE
+static void mc_match_cached( double *match, double **cpmx1, int i1, int lgth2 )
+{
+	int slot = -1;
+	if( mcr_ids && cpmx1 == mcr_source && lgth2 == mcr_width &&
+	    n_dis_consweight_multi == mcr_matrix && constants_generation == mcr_generation &&
+	    nalphabets == mcr_alphabet && i1 > 0 && i1 < mcr_nrow )
+	{
+		mcr_calls++;
+		slot = mcr_ids[i1];
+		if( slot >= 0 && mcr_valid[slot] )
+		{
+			memcpy( match, mcr_rows+(size_t)slot*lgth2, sizeof(double)*(size_t)lgth2 );
+			mcr_hits++;
+			return;
+		}
+	}
+	mc_match( match, cpmx1, i1, lgth2 );
+	if( slot >= 0 )
+	{
+		memcpy( mcr_rows+(size_t)slot*lgth2, match, sizeof(double)*(size_t)lgth2 );
+		mcr_valid[slot] = 1; mcr_misses++;
+	}
+}
+#endif
+
 static void match_calc( double *match, double **cpmx1, double **cpmx2, int i1, int lgth2, double **doublework, int **intwork, int initialize )
 {
+#if MAFFT_MATCH_ROWCACHE
+	if( initialize ) mc_rowcache_clear();
+#endif
 	if( !initialize && mc_ready && mc_len == lgth2 )
 	{
+#if MAFFT_MATCH_ROWCACHE
+		mc_match_cached( match, cpmx1, i1, lgth2 );
+#else
 		mc_match( match, cpmx1, i1, lgth2 );
+#endif
 		return;
 	}
 #if FASTMATCHCALC
@@ -1514,6 +1654,9 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 
 	if( seq1 == NULL )
 	{
+#if MAFFT_MATCH_ROWCACHE
+		mc_rowcache_clear();
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );
@@ -1815,6 +1958,9 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 
 
 	match_calc( currentw, cpmx1, cpmx2, 0, lgth2, doublework, intwork, 1 );
+#if MAFFT_MATCH_ROWCACHE
+	mc_rowcache_prepare( cpmx1, lgth1, lgth2 );
+#endif
 	if( constraint )
 		part_imp_match_out_vead_gapmap( currentw, gapmap1[0]+start1, lgth2, start2, gapmap2 );
 #if 0 // -> tbfast.c
