@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Turn Lalign11.c into a per-call check of Lfill_kb and its traceback (opt8; MAFFT_AVX512 builds).
+"""Per-call check of Lfill_kb, every DP value, every offset, and traceback.
+
+Supports opt8 AVX-512 and MAFFT_AVX2_STRIPED=4/8, including embedded-score traceback.
 
 Every call of Lfill_kb first runs a reference fill: the opt5 integer Lfill_int that stores the
 original offsets in ijp (the version for builds without the marker fill), with all its vector
@@ -20,6 +22,16 @@ p = sys.argv[1]
 if os.path.isdir(p): p = os.path.join(p, 'Lalign11.c')
 s = open(p, encoding='latin-1').read()
 
+# The AVX2 backend is included textually in the same place as the AVX-512 fill.
+# For an AVX2 test tree flatten that backend so the wrapper below tests the actual
+# function, rather than the inactive AVX-512 branch. The reference remains scalar.
+if '#include "l11_avx2.h"' in s:
+    start = s.index('#if defined(MAFFT_LSTRIPED)\n#if defined(MAFFT_AVX512)\n')
+    first = start + len('#if defined(MAFFT_LSTRIPED)\n')
+    last = s.index('#include "l11_avx2.h"\n#endif', first) + len('#include "l11_avx2.h"\n#endif')
+    backend = open(os.path.join(os.path.dirname(p), 'l11_avx2.h'), encoding='latin-1').read()
+    s = s[:first] + backend + s[last:]
+
 # 1. the reference: the opt5 offset fill (the #else branch of LFILL_MARKS), scalar only
 head = 'static int Lfill_int( double **amino_dynamicmtx,'
 i0 = s.index('#else\n' + head) + len('#else\n')
@@ -30,10 +42,14 @@ for pat in ('for( ; j+15<=lgth2; j+=16 )', 'for( ; j+7<=lgth2; j+=8 )', 'for( ; 
     n += ref.count(pat)
     ref = ref.replace(pat, pat.replace('for( ; ', 'for( ; 0 && '))
 assert n >= 1, n
+capture = '\t\t\tcur[j] = wm + profrow[j];'
+assert ref.count(capture) == 1
+ref = ref.replace(capture, capture + '\n\t\t\tkbchk_dp[(size_t)i * (lgth2+1) + j] = cur[j];')
 
 # 2. rename the bit fill and add a checking wrapper after Ltracking_kb
 s = s.replace('static int Lfill_kb( double **amino_dynamicmtx,', 'static int Lfill_ref( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset, char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop, double *maxwmpt, int *endalipt, int *endaljpt );\nstatic int Lfill_kb_impl( double **amino_dynamicmtx,', 1)
 wrapper = r'''
+static int *kbchk_dp = NULL;
 static long kbchk_calls = 0, kbchk_cells = 0, kbchk_tracks = 0;
 static int **kbchk_ijp = NULL, kbchk_rows = 0;
 static void kbchk_report( void ) { fprintf( stderr, "\nKB_CHECK: %ld calls, %ld cells, %ld tracks, all identical\n", kbchk_calls, kbchk_cells, kbchk_tracks ); }
@@ -49,11 +65,27 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 	kbchk_rows = lgth1 + 1;
 	kbchk_ijp = malloc( sizeof( int * ) * kbchk_rows );
 	for( i=0; i<kbchk_rows; i++ ) kbchk_ijp[i] = calloc( lgth2 + 1, sizeof( int ) );
+	free(kbchk_dp);
+	kbchk_dp = malloc(sizeof(int) * (size_t)(lgth1+1) * (lgth2+1));
 	r0 = Lfill_ref( amino_dynamicmtx, n_dynamicmtx, scoreoffset, s1, s2, lgth1, lgth2, kbchk_ijp, lstop, &m0, &ei0, &ej0 );
 	r1 = Lfill_kb_impl( amino_dynamicmtx, n_dynamicmtx, scoreoffset, s1, s2, lgth1, lgth2, &m1, &ei1, &ej1 );
 	if( r0 != r1 ) { fprintf( stderr, "KB_CHECK: return %d vs %d (lgth %d,%d)\n", r0, r1, lgth1, lgth2 ); abort(); }
 	if( r1 )
 	{
+		/* The shifted row slots are never overwritten by the next row's boundary fixup. */
+#ifndef KB_LANES
+#define KB_LANES 16
+#endif
+		for( i=1; i<=lgth1; i++ ) for( j=1; j<=lgth2; j++ )
+		{
+			int got = kb_rows[(size_t)i * KB_RSTRIDE + (size_t)((j-1)%kb_S+1)*KB_LANES + (j-1)/kb_S];
+#if MAFFT_KB_EMBED
+			got >>= 2; /* optional scratch-only embedded-kind experiment */
+#endif
+			int want = kbchk_dp[(size_t)i * (lgth2+1) + j];
+			if( got != want )
+			{ fprintf(stderr,"KB_CHECK: score[%d][%d] %d vs %d (lgth %d,%d)\n",i,j,got,want,lgth1,lgth2); abort(); }
+		}
 		if( memcmp( &m0, &m1, sizeof( double ) ) || ei0 != ei1 || ej0 != ej1 )
 		{ fprintf( stderr, "KB_CHECK: max %f/%f end %d,%d vs %d,%d\n", m0, m1, ei0, ej0, ei1, ej1 ); abort(); }
 		/* every cell: the kind byte, with the markers resolved by the rules of lres_hk() and
@@ -83,7 +115,8 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 }
 '''
 k = s.index('static int kb_isstop( int i, int j ) {')
-k = s.index('\n#endif\n', k)
+# Insert at file scope, before the definition. Searching for the next #endif is
+# not sufficient: workspace cleanup below can itself contain nested target guards.
 s = s[:k] + '\n' + wrapper + s[k:]
 # the reference function goes right before L__align11
 k = s.index('double L__align11( double **n_dynamicmtx, double scoreoffset,')

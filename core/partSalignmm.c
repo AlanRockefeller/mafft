@@ -455,6 +455,30 @@ static void mc_build( double **cpmx2, int lgth2 )
 	mc_ready = 1;
 }
 
+#ifndef MAFFT_AVX2_MCMATCH
+#if defined(MAFFT_AVX2_PATHS) && !defined(MAFFT_AVX512)
+#define MAFFT_AVX2_MCMATCH 1
+#else
+#define MAFFT_AVX2_MCMATCH 0
+#endif
+#endif
+#ifndef MAFFT_AVX2_SHORT_SCAN
+#if defined(MAFFT_AVX2_PATHS) && !defined(MAFFT_AVX512)
+#define MAFFT_AVX2_SHORT_SCAN 1
+#else
+#define MAFFT_AVX2_SHORT_SCAN 0
+#endif
+#endif
+#if defined(MAFFT_AVX2_PATHS) && MAFFT_AVX2_MCMATCH
+/* AVX2 has no scatter; four ordinary stores retain the grouped column layout. */
+static inline void mc_store4(double *match, int *perm, __m256d value)
+{
+	__m128d lo=_mm256_castpd256_pd128(value), hi=_mm256_extractf128_pd(value,1);
+	_mm_store_sd(match+perm[0],lo); _mm_storeh_pd(match+perm[1],lo);
+	_mm_store_sd(match+perm[2],hi); _mm_storeh_pd(match+perm[3],hi);
+}
+#endif
+
 static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 {
 	int g, k, n;
@@ -480,6 +504,10 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 			__m512d vs0 = _mm512_set1_pd( s0 ), zero = _mm512_setzero_pd();
 			for( ; n+8<=gsize; n+=8 )
 				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ), VMULADD( vs0, _mm512_loadu_pd( v + n ), zero ), 8 );
+#elif defined(MAFFT_AVX2_PATHS) && MAFFT_AVX2_MCMATCH
+			__m256d vs0=_mm256_set1_pd(s0), zero=_mm256_setzero_pd();
+			for( ; n+4<=gsize; n+=4 )
+				mc_store4(match,perm+n,VMULADD4(vs0,_mm256_loadu_pd(v+n),zero));
 #elif defined(MAFFT_A64)
 			float64x2_t vs0 = vdupq_n_f64( s0 ), zero = vdupq_n_f64( 0.0 );
 			for( ; n+2<=gsize; n+=2 )
@@ -498,6 +526,10 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 			for( ; n+8<=gsize; n+=8 )
 				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ),
 				                      VMULADD( vs1, _mm512_loadu_pd( v1 + n ), VMULADD( vs0, _mm512_loadu_pd( v + n ), zero ) ), 8 );
+#elif defined(MAFFT_AVX2_PATHS) && MAFFT_AVX2_MCMATCH
+			__m256d vs0=_mm256_set1_pd(s0), vs1=_mm256_set1_pd(s1), zero=_mm256_setzero_pd();
+			for( ; n+4<=gsize; n+=4 )
+				mc_store4(match,perm+n,VMULADD4(vs1,_mm256_loadu_pd(v1+n),VMULADD4(vs0,_mm256_loadu_pd(v+n),zero)));
 #elif defined(MAFFT_A64)
 			float64x2_t vs0 = vdupq_n_f64( s0 ), vs1 = vdupq_n_f64( s1 ), zero = vdupq_n_f64( 0.0 );
 			for( ; n+2<=gsize; n+=2 )
@@ -516,6 +548,13 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 				__m512d acc = _mm512_setzero_pd();
 				for( k=0; k<cnt; k++ ) acc = VMULADD( _mm512_set1_pd( scarr[let[k]] ), _mm512_loadu_pd( v + (size_t)k*gsize + n ), acc );
 				_mm512_i32scatter_pd( match, _mm256_loadu_si256( (__m256i *)( perm + n ) ), acc, 8 );
+			}
+#elif defined(MAFFT_AVX2_PATHS) && MAFFT_AVX2_MCMATCH
+			for( ; n+4<=gsize; n+=4 )
+			{
+				__m256d acc=_mm256_setzero_pd();
+				for(k=0;k<cnt;k++) acc=VMULADD4(_mm256_set1_pd(scarr[let[k]]),_mm256_loadu_pd(v+(size_t)k*gsize+n),acc);
+				mc_store4(match,perm+n,acc);
 			}
 #elif defined(MAFFT_A64)
 			for( ; n+2<=gsize; n+=2 )
@@ -1237,6 +1276,27 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 		{
 			__m256d x = VMULADD4( _mm256_loadu_pd( ogcp2 + j ), vpre, _mm256_loadu_pd( prev + j - 1 ) ), e, c;
 			__m128i t = vk, f, c32;
+#if MAFFT_AVX2_SHORT_SCAN
+			/* Scan the block independently, then merge the carry. Only one compare
+			   and blend remains on the dependency between successive blocks. */
+			const __m256d ninf=_mm256_set1_pd(-INFINITY);
+			__m256d total;
+			__m128i totalpos;
+			e=_mm256_blend_pd(_mm256_permute4x64_pd(x,0x90),ninf,1); f=_mm_alignr_epi8(t,vk,12);
+			c=_mm256_cmp_pd(x,e,_CMP_GT_OQ);
+			c=_mm256_or_pd(c,_mm256_castsi256_pd(_mm256_setr_epi64x(-1,0,0,0)));
+			x=_mm256_blendv_pd(e,x,c); t=_mm_blendv_epi8(f,t,PACKMASK4(c));
+			e=_mm256_permute2f128_pd(ninf,x,0x21); f=_mm_alignr_epi8(t,vk,8);
+			c=_mm256_cmp_pd(x,e,_CMP_GT_OQ);
+			c=_mm256_or_pd(c,_mm256_castsi256_pd(_mm256_setr_epi64x(-1,-1,0,0)));
+			x=_mm256_blendv_pd(e,x,c); t=_mm_blendv_epi8(f,t,PACKMASK4(c));
+			total=_mm256_permute4x64_pd(x,0xff); totalpos=_mm_shuffle_epi32(t,0xff);
+			c=_mm256_cmp_pd(x,cv,_CMP_GT_OQ); c32=PACKMASK4(c);
+			x=_mm256_blendv_pd(cv,x,c); t=_mm_blendv_epi8(ck,t,c32);
+			_mm256_storeu_pd(MI+j+1,x); _mm_storeu_si128((__m128i *)(MPI+j+1),t);
+			c=_mm256_cmp_pd(total,cv,_CMP_GT_OQ); c32=PACKMASK4(c);
+			cv=_mm256_blendv_pd(cv,total,c); ck=_mm_blendv_epi8(ck,totalpos,c32);
+#else
 			e = _mm256_blend_pd( _mm256_permute4x64_pd( x, 0x90 ), cv, 0x1 ); f = _mm_alignr_epi8( t, ck, 12 );
 			c = _mm256_cmp_pd( x, e, _CMP_GT_OQ ); c32 = PACKMASK4( c ); x = _mm256_blendv_pd( e, x, c ); t = _mm_blendv_epi8( f, t, c32 );
 			e = _mm256_permute2f128_pd( cv, x, 0x21 ); f = _mm_alignr_epi8( t, ck, 8 );
@@ -1246,6 +1306,7 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 			_mm_storeu_si128( (__m128i *)( MPI + j + 1 ), t );
 			cv = _mm256_permute4x64_pd( x, 0xff );
 			ck = _mm_shuffle_epi32( t, 0xff );
+#endif
 			vk = _mm_add_epi32( vk, vfour );
 		}
 		best = _mm256_cvtsd_f64( cv ); bi = _mm_cvtsi128_si32( ck );

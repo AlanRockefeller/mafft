@@ -26,12 +26,37 @@ It was built for two projects that align fungal ITS sequences in production:
 One source tree builds for Apple silicon, Linux arm64, x86-64 with AVX-512 or AVX2, and NVIDIA
 GPUs. The vector code is chosen at compile time; everything else is shared.
 
-## Results
+## Dikarya VM follow-up (unreleased)
+
+The current working-tree candidate reports `7.526-opt8-dikarya2`. It adds eight-lane AVX2
+striped local DP with deferred end-cell search, exact ordered duplicate-pair reuse, AVX2
+profile improvements, cache-size-aware importance filling, and faster accurate-direction
+scoring. It targets the actual two-vCPU VMware guest, whose CPUID/GCC tuning is Haswell
+despite its Xeon E5-2690 v4 brand string. No production installation is changed.
+
+The [Dikarya VM report](paper/broadwell-dikarya2.md) records the frozen installed opt8
+reference, real production options, the 100-input corpus, differential checks, rejected
+experiments and paired measurements. This follow-up compares against **already optimized
+opt8**, not stock, and its exactness/performance scope is explicitly single-threaded.
+See [the reproduction harness](harness/broadwell/README.md). Other architectures have not
+received new runtime validation in this follow-up.
+
+On all 100 supplied production inputs, keeping the recorded strategy/direction flags and
+explicitly using `--thread 1`, the selected build is **1.34x faster than installed opt8**
+(865 to 647 seconds, 25.2% less wall time), with **100/100 byte-identical outputs**. The
+separate 78-input holdout improves 1.30x. This is not a new stock-MAFFT comparison or a
+guarantee for nondeterministic threaded refinement. One FFT-NS-2 case regresses about 5%;
+see the report for path-specific results, repeated experiments and limitations.
+In a supplemental check of all 46 recorded two-thread jobs, 20 outputs differed between
+builds, and repeats of the frozen reference itself produced different alignments. Do not
+read the single-thread result as a byte-identity guarantee for threaded refinement.
+
+## Historical results (opt8 and earlier)
 
 Speedup over stock MAFFT 7.526 built the same way on the same machine, wall time, `--thread 1`
 per run. "Pipeline L-INS-i" is the pipeline's test set of real ITS alignments (about 180
 sequences each): a batch of 16 run four at a time on a 4-vCPU instance (eight at a time on the
-M1), and single runs. Where the current version (`v7.526-opt8`) was not measured on a machine, the
+M1), and single runs. Where that report's version (`v7.526-opt8`) was not measured on a machine, the
 row gives the most recent version that was.
 
 | machine | workload | version | several runs at once | single run |
@@ -123,7 +148,8 @@ are provably integral. The main pieces, by stage of an L-INS-i run:
 - **All-pairs local alignment** (`Lalign11.c`, about 60% of stock L-INS-i). An integer fill
   that stores a marker instead of the gap-start offset in cells where a gap wins, and
   recomputes those offsets along the one traceback path by replaying the original rule;
-  vectorized for NEON, SVE, AVX2 and AVX-512, plus a striped (Farrar-layout) fill on AVX-512.
+  vectorized for NEON, SVE, AVX2 and AVX-512, plus a striped (Farrar-layout) fill on AVX-512
+  and now AVX2. The Dikarya follow-up also reuses exact duplicate ordered pairs.
   On Apple silicon and NVIDIA GPUs the same integer recurrence, tie rules and traceback run
   on the GPU (Metal, CUDA).
 - **Refinement** (`dvtditr`, `partSalignmm.c`, `tddis.c`). A cache of per-pair scores that
@@ -164,9 +190,11 @@ State of `v7.526-opt8`:
 | AWS g6 (L4, Zen 3 host) | clang+FMA `x86-64-v3` + CUDA | 183/183 = Mac reference; canary 25/25 with and without the GPU; 733,956 GPU alignments = CPU |
 | AWS g6 host (Zen 3, AVX2 only) | gcc `-march=broadwell` (the Dikarya host's build class) | 183/183 = `v7.526-opt5-dikarya1`; 13/13 canary windows = stock gcc; FFT-NS-i 16/16 = dikarya1 |
 
-`v7.526-opt8` has not yet been run on the Dikarya host itself. In its build class on the Zen 3
-host it was 1.2× faster than dikarya1 (L-INS-i and FFT-NS-i) with identical output; if it is
-slower on Broadwell, `v7.526-opt5-dikarya1` builds the earlier code. Some harness runs were on
+The original opt8 report did not include a run on the Dikarya host itself. The
+[VM follow-up](paper/broadwell-dikarya2.md) now uses installed opt8 as its directly measured
+reference. In its build class on the earlier Zen 3 host, opt8 was 1.2× faster than dikarya1
+(L-INS-i and FFT-NS-i) with identical output. `v7.526-opt5-dikarya1` retains that earlier code.
+Some historical harness runs were on
 an opt8 commit before the final tuning commit; `harness/opt8/README.md` lists which harness
 scripts apply to which version.
 

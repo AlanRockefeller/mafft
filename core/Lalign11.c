@@ -144,7 +144,7 @@ static int lres_vmp( int i, int j )
 }
 #endif
 
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 static int kb_ijv( int i, int j, int lstop );
 static int kb_isstop( int i, int j );
 #endif
@@ -170,11 +170,17 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 	}
 #endif
  
-    for( i=0; i<lgth1+1; i++ ) 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	if( !kb )
+#endif
+    for( i=0; i<lgth1+1; i++ )
     {
         ijp[i][0] = localstop;
     }
-    for( j=0; j<lgth2+1; j++ ) 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	if( !kb )
+#endif
+    for( j=0; j<lgth2+1; j++ )
     {
         ijp[0][j] = localstop;
     }
@@ -187,8 +193,13 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 	limk = lgth1+lgth2;
 	for( k=0; k<=limk; k++ ) 
 	{
-		int ijv = ijp[iin][jin];
-#if defined(MAFFT_AVX512)
+		int ijv;
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+		if( !kb ) ijv = ijp[iin][jin];
+#else
+		ijv = ijp[iin][jin];
+#endif
+#if defined(MAFFT_LSTRIPED)
 		if( kb ) ijv = kb_ijv( iin, jin, localstop );
 		else
 #endif
@@ -259,7 +270,7 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 		if( iin <= 0 || jin <= 0 ) break;
 		*--mseq1[0] = seq1[0][ifi];
 		*--mseq2[0] = seq2[0][jfi];
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 		if( kb ? kb_isstop( ifi, jfi ) : ijp[ifi][jfi] == localstop ) break;
 #else
 		if( ijp[ifi][jfi] == localstop ) break;
@@ -738,6 +749,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	*endaljpt = endalj;
 	return( 1 );
 }
+#if defined(MAFFT_LSTRIPED)
 #if defined(MAFFT_AVX512)
 /*
  * Lfill_kb: the marker fill above in a striped layout (Farrar's), with ijp kept as one byte per
@@ -955,6 +967,9 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 	*endaljpt = endalj;
 	return( 1 );
 }
+#else
+#include "l11_avx2.h"
+#endif
 
 /* lres_hk() and lres_vmp() over the striped rows */
 static int kb_hk( int i, int j )
@@ -992,6 +1007,17 @@ static int kb_ijv( int i, int j, int lstop )
 	}
 }
 static int kb_isstop( int i, int j ) { return( i <= 0 || j <= 0 || KB_KIND( i, j-1 ) == KB_STOP ); }
+/* Both public entry points share this per-thread workspace. Their NULL-input
+   cleanup is called before worker exit (direction checking can create many workers). */
+static void kb_release( void )
+{
+#if defined(MAFFT_AVX512)
+	aligned_free_64(kb_rows); free(kb_raw);
+#else
+	kb_free(kb_rows); kb_free(kb_raw);
+#endif
+	kb_rows=NULL; kb_raw=NULL; kb_rcap=kb_cap=0;
+}
 #endif
 #else
 static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
@@ -1231,7 +1257,7 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	double *prevwmrecords = NULL;
 	int warpn = 0;
 	int warpbase;
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	int kbfill = 0;
 #endif
 	double curm = 0.0;
@@ -1242,6 +1268,9 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_LSTRIPED)
+		kb_release();
+#endif
 		if( orlgth1 > 0 && orlgth2 > 0 )
 		{
 			orlgth1 = 0;
@@ -1357,7 +1386,21 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 
 	mseq1[0] = mseq[0];
 	mseq2[0] = mseq[1];
+	currentw = w1; /* also a valid (unused) argument to Ltracking after an integer fill */
 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	/* The byte/bit traceback is self-contained. Only allocate the full int matrix if
+	   the striped fill declines (fractional scoring, range limits or warped alignment). */
+	if( !trywarp )
+	{
+		localstop = lgth1+lgth2+1;
+		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, &maxwm, &endali, &endalj ) )
+		{
+			kbfill = 1;
+			goto Lint_done;
+		}
+	}
+#endif
 
 	if( orlgth1 > commonAlloc1 || orlgth2 > commonAlloc2 )
 	{
@@ -1386,7 +1429,7 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	}
 	ijp = commonIP;
 
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED) && !MAFFT_KB_NOIJP
 	if( !trywarp )
 	{
 		localstop = lgth1+lgth2+1;
@@ -1700,7 +1743,7 @@ fprintf( stderr, "\n" );
 #endif
 
 Lint_done:
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	if( kbfill ? kb_isstop( endali, endalj ) : ( ijp[endali][endalj] == localstop ) )
 #else
 	if( ijp[endali][endalj] == localstop )
@@ -1713,7 +1756,7 @@ Lint_done:
 		return( 0.0 );
 	}
 		
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	Ltracking( currentw, lastverticalw, seq1, seq2, mseq1, mseq2, ijp, off1pt, off2pt, endali, endalj, warpis, warpjs, warpbase, kbfill );
 #else
 	Ltracking( currentw, lastverticalw, seq1, seq2, mseq1, mseq2, ijp, off1pt, off2pt, endali, endalj, warpis, warpjs, warpbase, 0 );
@@ -1791,6 +1834,9 @@ double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+		kb_release();
+#endif
 		if( orlgth1 > 0 && orlgth2 > 0 )
 		{
 			orlgth1 = 0;
@@ -1884,6 +1930,22 @@ double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
 		amino_dynamicmtx[(int)amino[i]][(int)amino[j]] = (double)n_dynamicmtx[i][j];
 
 
+
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+	/* Identical recurrence and raw maximum to the alignment fill. Its range guard
+	   also puts every value above the scalar maximum's -999999999.9 initializer.
+	   Keep zero results on the scalar path: integral matrices may contain -0.0,
+	   whose sign can survive the original score-only return value. */
+	{
+		double fastscore;
+		int ei, ej;
+		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore, &ei, &ej ) && fastscore != 0.0 )
+		{
+			maxwm = fastscore;
+			goto Lnoalign_done;
+		}
+	}
+#endif
 
 //	mseq1[0] = mseq[0];
 //	mseq2[0] = mseq[1];
@@ -2112,6 +2174,9 @@ fprintf( stderr, "\n" );
 #endif
 
 
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+Lnoalign_done:
+#endif
 #if 0 // IRUKAMO!!!!
 	if( ijp[endali][endalj] == localstop )
 	{

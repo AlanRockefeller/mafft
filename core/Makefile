@@ -376,7 +376,7 @@ MSalignmm.o : MSalignmm.c $(HEADER)
 partSalignmm.o : partSalignmm.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c partSalignmm.c  
 
-Lalign11.o : Lalign11.c $(HEADER)
+Lalign11.o : Lalign11.c $(HEADER) l11_avx2.h
 	$(CC) $(MYCFLAGS) -c Lalign11.c 
 
 genalign11.o : genalign11.c $(HEADER)
@@ -497,7 +497,7 @@ l11gpu_src.h : l11gpu.metal
 l11gpu_lib.h : l11gpu.metal mkmetallib.sh
 	sh ./mkmetallib.sh l11gpu.metal $@
 
-pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER)
+pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER) paircache.h
 	$(CC) $(MYCFLAGS) -c pairlocalalign.c
 
 pairlocalalignmain.o : pairlocalalignmain.c $(HEADER) $(FFTHEADER)

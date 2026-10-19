@@ -2045,8 +2045,10 @@ static void gpupairs_free( void )
 }
 #endif
 
+#include "paircache.h"
+
 /* L__align11( n_dis_consweight_multi, 0.0, ... ) for the pair (i,j) of pairalign() */
-static double L__align11_pair( int i, int j, char **mseq1, char **mseq2, int alloclen, int *off1pt, int *off2pt )
+static double L__align11_pair_impl( int i, int j, char **mseq1, char **mseq2, int alloclen, int *off1pt, int *off2pt )
 {
 #if defined(__APPLE__) || defined(MAFFT_CUDA)
 	if( gpupairs && i < j && j < gpun )
@@ -2073,6 +2075,36 @@ static double L__align11_pair( int i, int j, char **mseq1, char **mseq2, int all
 #endif
 	return( L__align11( n_dis_consweight_multi, 0.0, mseq1, mseq2, alloclen, off1pt, off2pt ) );
 }
+
+#ifdef MAFFT_PAIR_CACHE
+static double L__align11_pair( int i, int j, char **mseq1, char **mseq2, int alloclen, int *off1pt, int *off2pt )
+{
+	size_t slot;
+	dup_result *r=duppairs_get(i,j,&slot);
+	double score;
+	if(r && r->len1<=(size_t)alloclen && r->len2<=(size_t)alloclen)
+	{
+#ifdef MAFFT_DUPCACHE_CHECK
+		/* Run the original call on precisely the same input buffers before copying
+		   the cached answer. The return value is compared in all 64 bits. */
+		score=L__align11_pair_impl(i,j,mseq1,mseq2,alloclen,off1pt,off2pt);
+		if(memcmp(&score,&r->score,sizeof(double)) || *off1pt!=r->off1 || *off2pt!=r->off2
+		   || strcmp(mseq1[0],r->text) || strcmp(mseq2[0],r->text+r->len1+1))
+		{ fprintf(stderr,"DUP_CACHE_CHECK: pair %d,%d differs\n",i,j); abort(); }
+#else
+		if(!r->len1 && !r->len2) fprintf(stderr,"maxwm <- 0.0 \n");
+#endif
+		memcpy(mseq1[0],r->text,r->len1+1); memcpy(mseq2[0],r->text+r->len1+1,r->len2+1);
+		*off1pt=r->off1; *off2pt=r->off2;
+		return r->score;
+	}
+	score=L__align11_pair_impl(i,j,mseq1,mseq2,alloclen,off1pt,off2pt);
+	duppairs_put(slot,score,*off1pt,*off2pt,mseq1[0],mseq2[0]);
+	return score;
+}
+#else
+#define L__align11_pair L__align11_pair_impl
+#endif
 
 #if enablemultithread
 static void *athread( void *arg ) // alg='R', alg='r' -> tsukawarenai.
@@ -2730,6 +2762,9 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 #if defined(__APPLE__) || defined(MAFFT_CUDA)
 	gpupairs_prepare( njob, seq, targetmap, alloclen );
 #endif
+#ifdef MAFFT_PAIR_CACHE
+	duppairs_prepare(njob,seq);
+#endif
 #if enablemultithread
 	if( nthread > 0 ) // alg=='r' || alg=='R' -> nthread:=0 (sukoshi ue)
 	{
@@ -3109,6 +3144,9 @@ static void pairalign( char **name, int *nlen, char **seq, char **aseq, char **d
 	}
 #if defined(__APPLE__) || defined(MAFFT_CUDA)
 	gpupairs_free();
+#endif
+#ifdef MAFFT_PAIR_CACHE
+	duppairs_free();
 #endif
 
 

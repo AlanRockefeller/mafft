@@ -37,7 +37,10 @@
 
 
 
-#define VERSION "7.526-opt8"
+#define VERSION "7.526-opt8-dikarya2"
+/* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout. Preserve
+   the designated opt8 reference's header byte-for-byte across this speedup. */
+#define ALIGNMENT_VERSION "7.526-opt8"
 #define SHOWVERSION reporterr( "%s (%s) Version " VERSION "\nalg=%c, model=%s, amax=%3.1f\n%d thread(s)\n\n", progName( argv[0] ), (dorp=='d')?"nuc":((nblosum==-2)?"text":"aa"), alg, modelname, specificityconsideration, nthread )
 
 #if defined(MAFFT_AVX512)
