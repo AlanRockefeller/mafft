@@ -13,7 +13,9 @@ s = p.read_text(encoding="latin-1")
 head = "double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )"
 assert s.count(head) == 1
 s = s.replace(head, "static int lns_vec=1;\nstatic long lns_taken=0;\nstatic double Lscore_impl( double **n_dynamicmtx, char **seq1, char **seq2 )")
-gate = "if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore, &ei, &ej ) && fastscore != 0.0 )"
+gate = "if( Lscore_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore ) && fastscore != 0.0 )"
+if gate not in s:  # Also accept the previous traceback-retaining score path.
+    gate = "if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore, &ei, &ej ) && fastscore != 0.0 )"
 assert s.count(gate) == 1
 s = s.replace(gate, gate.replace("if( ", "if( lns_vec && ", 1))
 s = s.replace("maxwm = fastscore;", "lns_taken++; maxwm = fastscore;")

@@ -971,6 +971,15 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 #include "l11_avx2.h"
 #endif
 
+#if defined(MAFFT_AVX512) || !MAFFT_KB_SCORE_ONLY
+static int Lscore_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                      char *s1, char *s2, int lgth1, int lgth2, double *maxwmpt )
+{
+	int ei, ej;
+	return Lfill_kb(amino_dynamicmtx,n_dynamicmtx,scoreoffset,s1,s2,lgth1,lgth2,maxwmpt,&ei,&ej);
+}
+#endif
+
 /* lres_hk() and lres_vmp() over the striped rows */
 static int kb_hk( int i, int j )
 {
@@ -1015,6 +1024,9 @@ static void kb_release( void )
 	aligned_free_64(kb_rows); free(kb_raw);
 #else
 	kb_free(kb_rows); kb_free(kb_raw);
+#if MAFFT_KB_SCORE_ONLY
+	kb_free(kb_score_mem); kb_score_mem=NULL; kb_score_cap=0;
+#endif
 #endif
 	kb_rows=NULL; kb_raw=NULL; kb_rcap=kb_cap=0;
 }
@@ -1938,8 +1950,7 @@ double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
 	   whose sign can survive the original score-only return value. */
 	{
 		double fastscore;
-		int ei, ej;
-		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore, &ei, &ej ) && fastscore != 0.0 )
+		if( Lscore_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore ) && fastscore != 0.0 )
 		{
 			maxwm = fastscore;
 			goto Lnoalign_done;
