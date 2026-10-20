@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 import datetime
@@ -27,6 +28,52 @@ def digest(p):
 
 def write_json(p,d):
     t=p.with_suffix('.tmp'); t.write_text(json.dumps(d,indent=2)+'\n');t.replace(p)
+
+def run_process_group(argv, *, stdout, stderr, env, timeout, grace_seconds=5):
+    """Terminate MAFFT descendants as well as GNU time after a timeout.
+
+    A final SIGKILL covers descendants ignoring SIGTERM even if the leader dies.
+    No shell is involved; the new session makes this process the group leader.
+    """
+    process=subprocess.Popen(argv,stdout=stdout,stderr=stderr,env=env,start_new_session=True)
+    result={'process_group_pid':process.pid,'timed_out':False,'signals_sent':[]}
+    try:
+        result['returncode']=process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        result['timed_out']=True
+        try:
+            os.killpg(process.pid,signal.SIGTERM);result['signals_sent'].append('SIGTERM')
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process.pid,signal.SIGKILL);result['signals_sent'].append('SIGKILL')
+        except ProcessLookupError:
+            pass
+        result['returncode']=process.wait()
+    except BaseException:
+        try:
+            os.killpg(process.pid,signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        raise
+    return result
+
+def read_resources(path):
+    """GNU time may prefix JSON with exit diagnostics, or die before writing."""
+    if not path.exists():return None,'resource file is missing'
+    for line in reversed(path.read_text(errors='replace').splitlines()):
+        try:
+            value=json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value,dict) and all(isinstance(value.get(k),(int,float)) for k in ['user','system','rss_kib']):
+            return value,None
+    return None,'no complete GNU time JSON record'
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
@@ -70,7 +117,7 @@ def main():
     if logpath.exists():
         for l in logpath.read_text().splitlines():
             r=json.loads(l); key=(r['input'],r['config'],r['replicate'])
-            if r['returncode'] or digest(r['alignment'])!=r['output_sha256']:raise SystemExit('invalid prior record '+str(key))
+            if r['returncode'] or not r.get('completed',True) or digest(r['alignment'])!=r['output_sha256']:raise SystemExit('invalid prior record '+str(key)+'; preserve failed artifacts and use a new output directory')
             done[key]=r
     total=sum((args.a_replicates if c=='A' else args.replicates)*len(files) for c in args.configs)
     with logpath.open('a',buffering=1) as log:
@@ -93,22 +140,39 @@ def main():
                     command=['nice','-n','10','taskset','-c','0,1',str(args.binary),*CONFIGS[c],*f['production_options'],str(source)]
                     argv=['/usr/bin/time','-f',FORMAT,'-o',str(resources),*command]
                     start=time.monotonic();utc=datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    launch_error=None
                     with output.open('xb') as out,err.open('xb') as stderr:
-                        run=subprocess.run(argv,stdout=out,stderr=stderr,env=env,timeout=args.timeout)
+                        try:
+                            execution=run_process_group(argv,stdout=out,stderr=stderr,env=env,timeout=args.timeout)
+                        except OSError as exc:
+                            launch_error=str(exc)
+                            execution={'returncode':127,'timed_out':False,'signals_sent':[],'process_group_pid':None}
                     elapsed=time.monotonic()-start
+                    resource_values,resource_error=read_resources(resources)
                     r={'input':f['file'],'input_sha256':f['sha256'],'config':c,'replicate':rep,
                        'argv':command,'version':metadata['version'],'binary':str(args.binary),
-                       'alignment':str(output),'output_sha256':digest(output),'returncode':run.returncode,
-                       'wall':elapsed,'start_utc':utc,'resources':json.loads(resources.read_text()),
+                       'alignment':str(output),'output_sha256':digest(output),**execution,
+                       'timeout_seconds':args.timeout,'launch_error':launch_error,
+                       'wall':elapsed,'start_utc':utc,'resources':resource_values,
+                       'resources_complete':resource_values is not None,'resource_error':resource_error,
                        'environment':{k:env[k] for k in ['LC_ALL','LANG','TMPDIR']},
                        'strategy':next((s for s in ['L-INS-i','FFT-NS-i','FFT-NS-2','G-INS-i','E-INS-i'] if s in err.read_text(errors='replace')),'unknown')}
-                    r['cpu']=r['resources']['user']+r['resources']['system']
+                    r['cpu']=resource_values['user']+resource_values['system'] if resource_values is not None else None
                     if args.golden:
                         golden=args.golden/f['file'];r['golden_sha256']=digest(golden);r['matches_A_golden']=r['output_sha256']==r['golden_sha256']
+                    failure=('launch error: '+launch_error if launch_error else
+                             'alignment timeout' if r['timed_out'] else
+                             'alignment process exited '+str(r['returncode']) if r['returncode'] else
+                             'empty alignment output' if not output.stat().st_size else
+                             'incomplete resource metadata: '+resource_error if resource_error else
+                             'A differs from frozen golden' if c=='A' and args.golden and not r['matches_A_golden'] else None)
+                    r['completed']=failure is None;r['failure_reason']=failure
                     log.write(json.dumps(r,sort_keys=True)+'\n');done[key]=r
-                    print(f'{len(done)}/{total} {f["file"]} {c} r{rep} wall={elapsed:.3f} cpu={r["cpu"]:.3f} A={r.get("matches_A_golden")} {r["output_sha256"][:12]}',flush=True)
-                    if run.returncode or not output.stat().st_size:raise SystemExit('alignment failed')
-                    if c=='A' and args.golden and not r['matches_A_golden']:raise SystemExit('A differs from frozen golden')
+                    cpu_text=f'{r["cpu"]:.3f}' if r['cpu'] is not None else 'unavailable'
+                    print(f'{len(done)}/{total} {f["file"]} {c} r{rep} wall={elapsed:.3f} cpu={cpu_text} A={r.get("matches_A_golden")} {r["output_sha256"][:12]} completed={r["completed"]}',flush=True)
+                    if failure:
+                        write_json(args.output/'STATUS.json',{'failed':True,'finished':False,'complete':len(done)-1,'total':total,'failed_run':key,'failure_reason':failure,'timed_out':r['timed_out']})
+                        raise SystemExit(failure)
     write_json(args.output/'STATUS.json',{'paused':False,'complete':len(done),'total':total,'finished':True})
 
 if __name__=='__main__':main()

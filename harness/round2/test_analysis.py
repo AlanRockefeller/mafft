@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 import itertools
+import json
 from pathlib import Path
 import random
 import tempfile
 import unittest
 
 from analysis import (compare_alignments, make_mapping, prepare, read_alignment,
-                      reverse_complement)
+                      reverse_complement, write_json)
 from tree import (IndexedTree, compare_trees, compare_view, detect_support_order,
                   parse_newick)
 
@@ -205,6 +206,43 @@ class TreeTests(unittest.TestCase):
             path = Path(directory) / "inference.iqtree"
             path.write_text("Numbers in parentheses are SH-aLRT support (%) / ultrafast bootstrap support (%).\n")
             self.assertEqual(detect_support_order(path), ["shalrt", "ufboot"])
+
+    def test_complete_comparison_serializes_as_strict_sorted_json(self):
+        a, b = self.tree("((a,b),(c,d));"), self.tree("((a,c),(b,d));")
+        result = compare_trees(a, b, details=True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "comparison.json"
+            write_json(path, result)
+            self.assertEqual(json.loads(path.read_text())["views"]["raw"]["rf"], 2)
+            with self.assertRaises(FileExistsError):
+                write_json(path, result)
+
+    def test_lca_quartets_match_inducing_splits_after_collapse_and_pruning(self):
+        a = self.tree("((a:1,b:1):0.01,((c:1,d:1):0.000001,(e:1,(f:1,(g:1,h:1):0.2):0.1):0.000001):0.05);")
+        for selected in [a.taxa, ["a", "c", "d", "f", "g", "h"]]:
+            for threshold in [-1, .000001, .02]:
+                retained = {mask for mask, edge in a.splits(selected).items()
+                            if edge.length is None or edge.length > threshold}
+                depths = a.weighted_depth(selected, retained)
+                for quartet in itertools.combinations(selected, 4):
+                    answers = set()
+                    for mask in retained:
+                        side = {i for i, taxon in enumerate(quartet)
+                                if mask & (1 << a.position[taxon])}
+                        if len(side) == 2:
+                            if 0 not in side:
+                                side = set(range(4)) - side
+                            answers.add({frozenset([0, 1]): 0, frozenset([0, 2]): 1,
+                                         frozenset([0, 3]): 2}[frozenset(side)])
+                    self.assertLessEqual(len(answers), 1)
+                    self.assertEqual(a.quartet(quartet, depths), next(iter(answers)) if answers else None)
+
+    def test_nonfinite_result_rejected_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad.json"
+            with self.assertRaises(ValueError):
+                write_json(path, {"invalid": float("nan")})
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

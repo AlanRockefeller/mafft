@@ -1,4 +1,4 @@
-# Round 2 kernel experiments
+# Round 2 experiments
 
 Use a private artifact directory, retain the original goldens and stop competing
 builds or experiments before timing. None of these drivers installs MAFFT.
@@ -11,10 +11,9 @@ described in [the Broadwell harness](../broadwell/README.md).
 Two additional AVX2 switches support independent experiments:
 
 - `MAFFT_KB_SELF_SCORE=1` enables the guarded analytic score for identical strings.
-  The default is off until production validation and measurements are completed.
+  It is enabled by default; compare with `=0` for a controlled ablation.
 - `MAFFT_KB_ZERO_EXT=1` enables an explicit zero-extension specialization of the
-  full traceback row. The default is off until validation and measurements are
-  completed. It shares the generic row body; the compiler receives a constant
+  full traceback row, enabled by default. It shares the generic row body; the compiler receives a constant
   zero extension. Compare with `=0`, and check the resulting assembly.
 
 For the analytic shortcut, every used character must have the same nonnegative
@@ -70,3 +69,102 @@ alternates implementation order over three rounds. `valid_cells` and
 `padded_cells` expose wasted work from length imbalance. FASTA normalization in
 this driver uppercases letters and drops preexisting `-`/`.` gaps; it never
 rewrites the input file or creates a biological alignment.
+
+`lfill_guard_check.c` tests integer-path rejection before unsafe conversions,
+including nonfinite/out-of-int scores, INT_MIN/MAX scoring parameters, impossible
+length bounds and ordinary/fractional/signed-zero controls:
+
+```sh
+gcc -O1 -g -march=native -ffp-contract=off -std=c99 -Denablemultithread \
+  -fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer \
+  -ffunction-sections -fdata-sections harness/round2/lfill_guard_check.c \
+  core/defs.o -Wl,--gc-sections -lm -lpthread -o "$scratch/lfill_guard_check"
+ASAN_OPTIONS=detect_leaks=0 "$scratch/lfill_guard_check"
+```
+
+This direct helper test deliberately does not execute the upstream scalar DP on
+unsupported extreme parameters. It does not establish their end-to-end support.
+
+## Paired timing and shared-VM CPU checks
+
+`paired.py` replays the recorded production strategy and direction options with
+one MAFFT thread, verifies complete alignment bytes against frozen goldens, and
+records each installed binary's hashes and checked version. Two builds alternate
+order for each input across rounds. The experiment plan freezes inputs, goldens,
+build hashes and timing settings; a differing resume plan is rejected. Give every
+new experiment a new output directory. A `PAUSE` file in an experiment directory
+holds execution at job boundaries.
+
+```sh
+python3 harness/round2/paired.py \
+  --manifest /private/manifest.json --data /private/inputs \
+  --golden /private/golden --output /private/new-paired-experiment \
+  --build reference=/private/reference/bin/mafft \
+  --build candidate=/private/candidate/bin/mafft --rounds 2
+```
+
+Both timing runners enable the read-only quiet gate by default. Before each
+paired job or throughput policy, it requires two consecutive one-second samples
+with at most 0.10 busy CPU cores globally and no recognized scientific process
+using more than 0.05 cores. The gate waits at most 300 seconds, then stops before
+launching the timed work. It never stops or signals an external process.
+`--quiet-timeout`, `--quiet-interval`, `--quiet-samples` and `--quiet-max-cpu`
+configure these limits. `--no-quiet` or `MAFFT_BENCH_QUIET=0` disables the gate;
+the override is recorded in the immutable experiment plan. Gate waits occur
+outside service and policy timing, with progress in `STATUS.json` and retained
+sample metadata.
+
+Every timed job also records `/proc/stat` snapshots. Global guest busy CPU minus
+GNU-time job CPU estimates unaccounted work; negative residuals from sampling or
+rounding remain recorded, and contention is flagged without excluding results.
+For simultaneous workers, individual residuals include the other measured job
+and are explicitly unsuitable for external attribution. The throughput policy's
+aggregate uses the sum of all measured job CPU instead. Steal time is recorded
+separately. These estimates cannot rule out host-side VM interference.
+
+The reusable API is `quiet.settings(args)`, `quiet.wait_for_quiet(config,
+status_path=..., context=...)`, `quiet.cpu_snapshot()` and
+`quiet.busy_delta(before, after, job_cpu_seconds, ...)`. `quiet.add_arguments`
+adds the runner controls. Quiet checks read process names, identities and CPU
+counters; they do not read external command lines or send signals.
+
+## Throughput replay
+
+`throughput.py` uses a saturated queue with all selected jobs available at time
+zero. Seeded queue orders are shared across policies within each round; policy
+order rotates between rounds. This models backlog throughput rather than
+observed production arrival times. Service time, queue delay and response time
+are reported separately.
+
+The default policies are serial `two_threads` (configuration B), concurrent
+`two_jobs` (two configuration-A workers pinned to separate CPUs), and serial
+`selective` (configuration C). Optional `production` runs jobs serially with
+their recorded per-file one- or two-thread settings. `one_job` and `refine_one`
+are additional explicitly selected controls. Use `--all-inputs` to include the
+full production mix; otherwise the recorded two-thread inputs are selected.
+
+```sh
+python3 harness/round2/throughput.py \
+  --manifest /private/manifest.json --data /private/inputs \
+  --golden /private/golden --binary /private/candidate/bin/mafft \
+  --source /private/frozen-source --output /private/new-throughput-experiment \
+  --all-inputs --policies production two_threads two_jobs selective --rounds 2
+```
+
+Supply `--source` for the frozen source snapshot actually used to build the
+binary. Its hashes complement installed-file, launcher, manifest and golden
+hashes; retain separate compiler/build provenance to establish correspondence.
+The harness never assumes that the current checkout produced an installed
+binary. Sampled process-group RSS measures concurrent measured jobs only;
+per-job GNU-time maximum RSS is a separate statistic. Timeouts and interruption
+terminate only measured child groups, which remain registered for RSS sampling
+through cleanup. A failed throughput experiment is preserved and requires a new
+output directory.
+
+The mocked runner checks launch no scientific jobs:
+
+```sh
+python3 -m unittest discover -s harness/round2 -p test_quiet.py
+python3 -m unittest discover -s harness/round2 -p test_throughput.py
+python3 -m unittest discover -s harness/round2 -p test_execution.py
+```

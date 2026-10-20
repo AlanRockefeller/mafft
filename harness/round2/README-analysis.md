@@ -269,11 +269,96 @@ python3 -m venv /path/to/round2/venv
 /path/to/round2/venv/bin/python -m pip install -r harness/round2/requirements-figures.txt
 ```
 
+## Figures and interpretable exports
+
+`figures.py` builds publication SVG/PDF/PNG figures from completed
+`summarize_study.py` and `analyze_trees.py` outputs:
+
+```sh
+/path/to/round2/venv/bin/python harness/round2/figures.py \
+  --alignment-analysis /path/to/round2/all-alignment-analysis \
+  --tree-analysis /path/to/round2/pilot-normal-tree-analysis \
+                  /path/to/round2/support-tree-analysis \
+  --data /path/to/bench/data --output /path/to/round2/science-figures \
+  --formats svg pdf png --tanglegrams 3
+```
+
+Use `--dry-run` for a figure plan with no rendering or output creation. Each
+analysis stage and compatible inference protocol remains separate, including
+when two stages share a protocol. Input-level medians/ranges distinguish
+between-alignment distances from fixed-alignment search controls. Ranges are
+observed ranges rather than confidence intervals. The F1-versus-RF join checks
+the exact alignment hashes used for inference and requires that its A reference
+is the exact frozen A used in the alignment metric. Identical reused tree jobs
+are represented by one scatter point with all logical replicate IDs retained
+in the corresponding table. Missing or incompatible joins are explicit.
+
+The default conflict export uses `strong_support`; it does not turn unsupported
+raw edges into strongly supported edges. Complete conflicting split pairs are
+reconstructed from `split_details` and checked against recorded conflict counts.
+The export includes stable tip sets, four incompatibility quadrants, support
+values, source trees and example original headers. `taxa-labels.tsv` keeps the
+complete reversible ordinal/header/hash mapping. Quartet-witness counts for
+different conflicting split pairs overlap and must not be summed as a distance.
+An explicit `--max-conflict-pairs` limit records truncation. Raw conflicts can be
+requested with `--conflict-view raw` and are labeled accordingly. The table
+describes unrooted splits; it does not infer nominal-species monophyly or assign
+biological importance to a large tip count. Selected tanglegrams show raw trees
+and document their display subset and distance-based selection.
+
+For those selected comparisons, `taxon-quartet-stability.tsv` joins the already
+recorded per-tip quartet participation to stable IDs, original ordinals, original
+headers and sequence hashes. It records the exact or sampled quartet panel,
+per-tip sample counts and the fraction of participating quartets with different
+resolutions. Differences include resolved/unresolved changes. This is a stability
+diagnostic, not a placement-error probability; four tips participate in each
+quartet and repeated observations are nested within their input. No quartets are
+resampled while exporting. `selected-detailed-cases.tsv` documents selection.
+Use `--tables-only` to export these tables, alignment/tree joins and split
+conflicts without importing Matplotlib or producing new figures. The
+`--tanglegrams` limit also controls the number of detailed cases in this mode.
+
+## Voucher-validated non-ITS checks on queued trees
+
+The original `biological_reference.py --trees-root ...` quick-tree interface is
+unchanged. Completed current-candidate queues can be audited directly:
+
+```sh
+python3 harness/round2/biological_reference.py \
+  --data /path/to/bench/data \
+  --references /path/to/round2/biological-reference \
+  --tree-queues /path/to/round2/pilot-normal-trees \
+                /path/to/round2/support-trees \
+  --output /path/to/round2/biological-current-candidate
+```
+
+`--tree-queues` accepts queue directories or their `runs.jsonl` files. An optional
+`--queue-configs A B C F` filter otherwise defaults to all recorded configurations.
+The audit verifies executed plans, the complete inference-method cohort, original
+input hashes, named-alignment hashes and tree hashes. Every scored tree must
+retain the full original stable-ID taxon set. Exact accession, sequence and
+voucher matching remains mandatory; names alone never establish a link.
+
+`queue-quartet-congruence.tsv`/`.json` report each configuration, alignment
+replicate and search seed against the same induced non-ITS quartet panel.
+`queue-quartet-summary.json` keeps stages and method cohorts separate and counts
+logical requests, unique named alignments and actually used inference jobs
+separately from unique biological input hashes. Reused alignments or tree jobs do
+not become extra biological datasets. All matched quartets are used up to
+`--max-reference-quartets` (default 10000); a fixed-seed uniform panel with
+replacement is recorded above that limit. Fewer than four exact specimen matches
+is explicitly unassessable. Full-source classical bootstrap >=95 is a reference
+witness; candidate strong conflicts require verified SH-aLRT >=80 and UFBoot >=95
+with edges <=1e-6 collapsed. An unresolved candidate is not counted as a resolved
+conflict. Separate gene-tree congruence does not establish a complete true
+species tree or validate unmatched local queries.
+
 ## Verification
 
 ```sh
 cd harness/round2
 python3 -m unittest -v test_analysis
+python3 -m unittest -v test_queue test_execution test_science_exports
 ```
 
 Fixtures verify shifted all-gap columns, reordered taxa, original-strand
@@ -281,4 +366,36 @@ coordinates, ambiguous duplicate labels, altered residue rejection, ambiguity
 filters, explicit versus contingency pair counts, root-invariant splits,
 resolved/unresolved quartets, exact known RF distances, duplicate-taxonomy
 pruning, short edges and the conjunction of support thresholds. They run no
-MAFFT or IQ-TREE searches.
+MAFFT or IQ-TREE searches. Export fixtures additionally verify complete original
+taxon retention, non-bijective specimen rejection, strong reference conflicts,
+named-alignment hashes, reused-job accounting and original-label quartet tables
+with rendering blocked.
+
+## Campaign recovery and method compatibility
+
+`alignments.py` starts each measured command in its own process group. A timeout
+signals the whole group with SIGTERM, then SIGKILL for any remaining descendants,
+including when the GNU-time leader has already exited. The failed alignment,
+stderr and run metadata are preserved. Missing GNU-time data are explicitly
+unavailable, including CPU time; they are never replaced with zero. A failed
+study cannot silently resume over its failed artifacts in the same directory.
+
+`run_plan.py` retains the first `step.log` and writes retries as
+`step.attempt-002.log`, including after an interruption before the ledger was
+written. Completed accepted steps are not rerun. The default policy accepts
+only exit code zero. A plan can explicitly permit a partial-result stage using
+`"accepted_returncodes": [0, 1]` on that step; the actual nonzero exit remains
+visible in `steps.jsonl` and final `STATUS.json`. This does not change the tree
+queue's own nonzero exit for incomplete searches. Plan hashes are immutable, so
+changing this policy requires a new campaign output directory.
+
+`analyze_trees.py` checks each successful request against its prepared command
+and verifies its recorded tree and original-input hashes. Compatible inference
+cohorts require the same executable path/hash/version, model, inference thread
+count, memory/search settings and branch-support settings. The full argument
+template is part of the cohort identity, so a future unrecognized search flag
+cannot be silently ignored. Only alignment path, output prefix and the recorded
+random seed vary within a cohort. Distinct cohorts receive separate dataset
+and aggregate summaries, identified by `protocol_id`; they are never pooled
+merely because both used normal search or both used fast search. Missing A
+searches after partial failures are explicitly recorded as excluded groups.
