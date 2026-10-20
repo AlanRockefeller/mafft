@@ -5,12 +5,22 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from confirmation_plan import select_rows
 from unittest.mock import patch
 
 from summarize_performance import contention_summary, main, unique_input_rows
 
 
 class PerformanceSummaryTests(unittest.TestCase):
+    def test_followup_selection_retains_contention_and_material_regressions(self):
+        quiet = {'input': 'quiet', 'input_sha256': 'q', 'cpu_regression_over_5pct_and_50ms': 'False',
+                 **{f'{a}_contention_{b}_rounds': '0' for a in ['reference', 'candidate'] for b in ['flagged', 'unknown']}}
+        regression = dict(quiet, input='regression', cpu_regression_over_5pct_and_50ms='True')
+        uncertain = dict(quiet, input='uncertain', reference_contention_unknown_rounds='1')
+        flagged = dict(quiet, input='flagged', candidate_contention_flagged_rounds='1')
+        result = select_rows([quiet, regression, uncertain, flagged])
+        self.assertEqual([row['input'] for row in result], ['regression', 'uncertain', 'flagged'])
+
     def test_duplicate_input_timing_is_averaged_before_equal_hash_weighting(self):
         def row(digest, value):
             return dict(input_sha256=digest, **{key: value for key in

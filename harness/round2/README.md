@@ -168,3 +168,12 @@ python3 -m unittest discover -s harness/round2 -p test_quiet.py
 python3 -m unittest discover -s harness/round2 -p test_throughput.py
 python3 -m unittest discover -s harness/round2 -p test_execution.py
 ```
+
+## Confirming per-input regressions
+
+After the full paired summary, `confirmation_plan.py` creates an immutable
+follow-up plan for inputs exceeding both 5% CPU regression and 50ms, plus any
+input whose original timings had flagged or unknown CPU contention. Its three
+new interleaved rounds use the same binaries, inputs and goldens. Execute the
+generated plan with `run_plan.py`. Original corpus results remain intact and
+remain in the original totals; confirmation measurements are reported separately.
