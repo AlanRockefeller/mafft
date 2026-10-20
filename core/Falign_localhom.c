@@ -1,5 +1,15 @@
 #include "mltaln.h"
 
+#ifndef MAFFT_REJECT_MEMO
+#define MAFFT_REJECT_MEMO 0
+#endif
+#if MAFFT_REJECT_MEMO
+/* Experimental rejection reuse must not retain results from inherited
+ * short-block or interrupted paths whose scratch-state independence is
+ * unproven.  This flag reports safety only; scoring arithmetic is unchanged. */
+TLS int mafft_reject_memo_falign_safe = 0;
+#endif
+
 //static FILE *fftfp;
 static TLS int n20or4or2;
 
@@ -268,6 +278,9 @@ double Falign_localhom( int **whichmtx, double ***scoringmatrices, double **n_dy
 		return( 0.0 );
 	}
 
+#if MAFFT_REJECT_MEMO
+	mafft_reject_memo_falign_safe = 1;
+#endif
 	len1 = strlen( seq1[0] );
 	len2 = strlen( seq2[0] );
 	nlentmp = MAX( len1, len2 );
@@ -807,6 +820,14 @@ system( "less seqVec2 < /dev/tty > /dev/tty" );
 				totalscore += Aalign( tmpres1, tmpres2, eff1, eff2, clus1, clus2, alloclen );
 				break;
 			case( 'A' ):
+#if MAFFT_REJECT_MEMO
+				/* Empty blocks can leave impmatch untouched; one-column
+				 * blocks can read gap scratch beyond its initialized prefix.
+				 * Exclude both from reuse without changing inherited scoring.
+				 * Test char 0 before char 1 for each possibly empty string. */
+				if( !tmpres1[0][0] || !tmpres1[0][1] || !tmpres2[0][0] || !tmpres2[0][1] )
+					mafft_reject_memo_falign_safe = 0;
+#endif
 				if( scoringmatrices ) // called by tditeration.c 
 				{
 					totalscore += partA__align_variousdist( whichmtx, scoringmatrices, NULL, tmpres1, tmpres2, eff1, eff2, eff1s, eff2s, clus1, clus2, alloclen, constraint, &impmatch, cut1[i], cut1[i+1]-1, cut2[i], cut2[i+1]-1, gapmap1, gapmap2, sgap1, sgap2, egap1, egap2, chudanpt, chudanref, chudanres );
@@ -827,6 +848,9 @@ system( "less seqVec2 < /dev/tty > /dev/tty" );
 		if( chudanres && *chudanres )
 		{
 //			fprintf( stderr, "\n\n## CHUUDAN!!! at Falign_localhom\n" );
+#if MAFFT_REJECT_MEMO
+			mafft_reject_memo_falign_safe = 0;
+#endif
 			return( -1.0 );
 		}
 #endif
