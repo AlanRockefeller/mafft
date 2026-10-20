@@ -3,7 +3,8 @@
 This is an interim scientific report. The completed evidence comprises 610
 alignment runs on all 46 original two-thread production inputs, an 11-input fast-search screen,
 a four-input default-search study, a completed robust-support example, and accession/voucher
-audits against primary non-ITS references. Broader tree screening, remaining support
+audits against primary non-ITS references. The 46-input fast-tree screen is also
+complete. Additional full searches, remaining support
 analyses and production scheduling comparisons remain pending. This
 report contains no new performance conclusion.
 
@@ -214,12 +215,12 @@ the sensitivity view that prunes exact duplicate rows and collapses original
 short edges. Quartet values are exact for `ghy3` and a shared 10,000-draw fixed
 panel for each larger input:
 
-| Input | Original taxa | A–B nRF median / maximum | Fixed-A search-control nRF median / maximum | A–B median quartet disagreement | Fixed-A median quartet disagreement |
-|---|---:|---:|---:|---:|---:|
-| `ghy3` | 21 | 0.05556 / 0.16667 | 0 / 0 | 0.04211 | 0 |
-| `1msv` | 37 | 0.10294 / 0.16176 | 0.01471 / 0.01471 | 0.03280 | 0.00040 |
-| `26et` | 128 | 0.14474 / 0.18421 | 0.16228 / 0.19298 | 0.01580 | 0.00620 |
-| `8q2l` | 135 | 0.51485 / 0.54455 | 0.45050 / 0.46535 | 0.06110 | 0.12630 |
+| Input | Original taxa | A–B nRF median / maximum | A–C nRF median | Fixed-A search-control nRF median / maximum | A–B median quartet disagreement | Fixed-A median quartet disagreement |
+|---|---:|---:|---:|---:|---:|---:|
+| `ghy3` | 21 | 0.05556 / 0.16667 | 0 | 0 / 0 | 0.04211 | 0 |
+| `1msv` | 37 | 0.10294 / 0.16176 | 0.10294 | 0.01471 / 0.01471 | 0.03280 | 0.00040 |
+| `26et` | 128 | 0.14474 / 0.18421 | 0.16228 | 0.16228 / 0.19298 | 0.01580 | 0.00620 |
+| `8q2l` | 135 | 0.51485 / 0.54455 | 0.46535 | 0.45050 / 0.46535 | 0.06110 | 0.12630 |
 
 Normalized RF divides by `2*(retained_taxa-3)` and can be odd in its numerator
 when one tree has additional collapsed branches. RF disagreement is not itself
@@ -426,7 +427,8 @@ that subset informative-case sampling, not a prevalence estimate.
 
 All repeated production-input alignments, F checks and original-opt8 controls
 are complete. Broader feasible tree searches, the `zdku` follow-up and remaining
-support analyses are queued as distinct stages. Their results must be added
+support analyses are queued as distinct stages; the broader fast-tree screen is
+complete. Remaining full-search and support results must be added
 before making workload-wide phylogenetic conclusions.
 No raw likelihoods are used to rank different alignments, and no production
 threading setting has been changed by this study.
