@@ -172,6 +172,26 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(result["reference_splits"], 0)
         self.assertEqual(result["candidate_splits"], 0)
 
+    def test_short_edges_collapse_before_pruned_paths_are_summed(self):
+        a = self.tree("(((a:1,b:1):0.0000005,x:1):0.0000005,(c:1,d:1):0.0000005,y:1);")
+        b = self.tree("(a:1,b:1,c:1,d:1,x:1,y:1);")
+        selected = ["a", "b", "c", "d"]
+        self.assertGreater(next(iter(a.splits(selected).values())).length, 1e-6)
+        result = compare_view(a, b, selected, zero=True)
+        self.assertEqual(result["rf"], 0)
+        self.assertEqual(result["quartets"]["both_unresolved"], 1)
+
+    def test_strong_projected_edge_survives_weak_neighboring_path_edges(self):
+        a = self.tree("(((a:1,b:1)90/99:0.1,x:1)50/50:0.1,(c:1,d:1)60/60:0.1,y:1);",
+                      ["shalrt", "ufboot"])
+        b = self.tree("((a:1,c:1)95/99:0.1,b:1,d:1,x:1,y:1);", ["shalrt", "ufboot"])
+        result = compare_view(a, b, ["a", "b", "c", "d"], support=True, zero=True)
+        self.assertEqual(result["reference_splits"], 1)
+        self.assertEqual(result["candidate_splits"], 1)
+        self.assertEqual(result["rf"], 2)
+        self.assertEqual(result["incompatible_split_pairs"], 1)
+        self.assertEqual(result["quartets"]["resolved_conflict"], 1)
+
     def test_strong_support_conflicts(self):
         a = self.tree("(a,b,(c,d)80/95:0.01);", ["shalrt", "ufboot"])
         b = self.tree("(a,c,(b,d)100/100:0.01);", ["shalrt", "ufboot"])

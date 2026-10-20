@@ -239,7 +239,7 @@ class IndexedTree:
         anchor = universe & -universe
         return universe ^ mask if mask & anchor else mask
 
-    def splits(self, selected: Iterable[str] | None = None) -> dict[int, Edge]:
+    def splits(self, selected: Iterable[str] | None = None, *, edge_filter=None) -> dict[int, Edge]:
         universe = self.selected_mask(selected)
         n = universe.bit_count()
         result: dict[int, Edge] = {}
@@ -248,8 +248,15 @@ class IndexedTree:
             if mask.bit_count() < 2 or n - mask.bit_count() < 2:
                 continue
             support = parse_support(node.label, self.support_order)
+            edge = Edge(node.length, support, [node.label] if node.label else [])
+            # Collapse on the original tree BEFORE pruning taxa. Several original
+            # edges can project to the same reduced split: a surviving strong edge
+            # must not be discarded because another path edge has weak support,
+            # nor may several collapsed short edges sum to an apparent long edge.
+            if edge_filter is not None and not edge_filter(edge):
+                continue
             if mask not in result:
-                result[mask] = Edge(node.length, support, [node.label] if node.label else [])
+                result[mask] = edge
             else:
                 # Suppress degree-two root / degree-two paths after taxon pruning.
                 old = result[mask]
@@ -374,11 +381,10 @@ def compare_view(reference: IndexedTree, candidate: IndexedTree, selected: list[
                  zero_threshold: float = ZERO_THRESHOLD, shalrt: float = SHALRT_THRESHOLD,
                  ufboot: float = UFBOOT_THRESHOLD, quartets: int = 10000,
                  quartet_seed: int = QUARTET_SEED, details: bool = False) -> dict[str, Any]:
-    ra, ca = reference.splits(selected), candidate.splits(selected)
-    r = {mask: edge for mask, edge in ra.items() if keep_edge(edge, zero=zero, support=support,
-                                                           zero_threshold=zero_threshold, shalrt=shalrt, ufboot=ufboot)}
-    c = {mask: edge for mask, edge in ca.items() if keep_edge(edge, zero=zero, support=support,
-                                                           zero_threshold=zero_threshold, shalrt=shalrt, ufboot=ufboot)}
+    retain = lambda edge: keep_edge(edge, zero=zero, support=support,
+                                    zero_threshold=zero_threshold, shalrt=shalrt, ufboot=ufboot)
+    r = reference.splits(selected, edge_filter=retain)
+    c = candidate.splits(selected, edge_filter=retain)
     shared, onlyr, onlyc = set(r) & set(c), set(r) - set(c), set(c) - set(r)
     universe = reference.selected_mask(selected)
     pairs = [(a, b) for a in sorted(onlyr) for b in sorted(onlyc) if incompatible(a, b, universe)]
@@ -397,6 +403,7 @@ def compare_view(reference: IndexedTree, candidate: IndexedTree, selected: list[
               "reference_compatible_resolution_only_splits": len(onlyr) - len(conflicts_r),
               "candidate_compatible_resolution_only_splits": len(onlyc) - len(conflicts_c),
               "zero_edges_collapsed": zero, "zero_threshold": zero_threshold if zero else None,
+              "collapse_order": "Filter original edges before pruning taxa and suppressing degree-two paths",
               "support_filter": {"shalrt_min": shalrt, "ufboot_min": ufboot} if support else None,
               "quartets": compare_quartets(reference, candidate, selected, set(r), set(c), samples=quartets, seed=quartet_seed)}
     def show_pair(a: int, b: int) -> dict[str, Any]:

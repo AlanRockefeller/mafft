@@ -4,7 +4,7 @@
 This is an informative-case selection, not a population frequency estimate.
 All alignment replicates remain in screening and normal-search summaries.
 """
-import argparse,json
+import argparse,json,sys
 from pathlib import Path
 from tree import read_tree
 from analysis import make_mapping,write_json
@@ -21,13 +21,20 @@ for name in sorted({r['input'] for r in rs}):
  for r in mapping['records']:
   if r['sequence_sha256'] not in seen:seen.add(r['sequence_sha256']);ids.append(r['id'])
  def informative(tree):
-  return {k for k,e in tree.splits(ids).items() if e.length is None or e.length>1e-6}
+  return set(tree.splits(ids,edge_filter=lambda e:e.length is None or e.length>1e-6))
  ref=informative(read_tree(baseline['tree']));options=[]
  for r in rr:
   if r['config']=='B':options.append((len(ref^informative(read_tree(r['tree']))),-r['replicate'],r))
  best=max(options,key=lambda x:x[:2]);rep=best[2]['replicate']
  for c,r in [('A',0),('B',rep),('C',0)]:selected.append(next(z for z in source if z['input']==name and z['config']==c and z['replicate']==r))
  details.append({'input':name,'selected_B_replicate':rep,'duplicate_pruned_RF':best[0],'original_taxa':len(mapping['records']),'retained_taxa_for_comparison':len(ids),'selection':'Maximum B/A RF among normal-search seed73111 B replicates after pruning exact original duplicate sequences and collapsing edges <=1e-6; ties choose earliest replicate. Support results are conditional on this informative-case selection.'})
+metadata=a.output.with_suffix('.selection.json')
+if a.output.exists():
+ existing=[json.loads(line) for line in a.output.read_text().splitlines() if line.strip()]
+ if existing!=selected or not metadata.exists() or json.loads(metadata.read_text())!=details:
+  raise SystemExit('Existing selection differs; preserve it and choose a new output')
+ print('Verified existing deterministic support selection:',a.output)
+ sys.exit(0)
 with a.output.open('x') as f:
  for r in selected:f.write(json.dumps(r,sort_keys=True)+'\n')
-write_json(a.output.with_suffix('.selection.json'),details)
+write_json(metadata,details)

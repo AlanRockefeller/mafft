@@ -76,6 +76,9 @@ first ordinal per exact original ungapped sequence are compared. This duplicate 
 prunes comparison views only; no taxon is removed from original inference. When support is
 available, a strong edge must satisfy both SH-aLRT>=80 and UFBoot>=95, prespecified before
 examining supported trees. Support label order is verified from the inference report.
+Length/support filters act on original edges before pruning duplicate tips and suppressing
+degree-two paths. Several collapsed short edges cannot be restored by summing their lengths;
+one surviving strong edge still implies its projected split despite weak neighboring edges.
 Support jobs use 1,000 SH-aLRT replicates, 1,000 ultrafast bootstrap replicates and bootstrap
 NNI correction. Support conditional on an alignment/model does not establish biological truth.
 
