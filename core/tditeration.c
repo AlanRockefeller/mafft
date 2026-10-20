@@ -423,7 +423,7 @@ static void *athread( void *arg )
 	unsigned long memo_hits = 0, memo_misses = 0;
 	int memo_accepted = 0;
 	const int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
-		parallelizationstrategy == BAATARI2 && randomseed == 0 && !cooling && cut == 0.0 &&
+		parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
 		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
 		!rnakozo && !nkozo && specificityconsideration == 0.0 && ntarget == njob &&
 		!scoreout && !FULLSCORE && !DEBUG && !RECORD;
