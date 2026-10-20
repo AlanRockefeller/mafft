@@ -2,9 +2,9 @@
 
 This is an interim scientific report. The completed evidence comprises 144
 alignment runs on 12 distinct production inputs, an 11-input fast-search screen,
-a completed default-search and robust-support example, and accession/voucher
-audits against primary non-ITS references. The larger default searches are active;
-the 46-input study and production scheduling comparisons remain pending. This
+a four-input default-search study, a completed robust-support example, and accession/voucher
+audits against primary non-ITS references. The 46-input study, remaining support
+analyses and production scheduling comparisons remain pending. This
 report contains no new performance conclusion.
 
 Two findings are already clear for this selected workload: ordinary two-thread
@@ -130,6 +130,31 @@ normalized RF was 0.054348. Fixed-A search controls differed in 9/11 inputs,
 with a corresponding median 0.163043. Fast search therefore introduces substantial
 noise and is used for screening, rather than a causal estimate of alignment error.
 Corrected evidence is in `round2/pilot-fast-tree-analysis-v2`.
+
+The completed default-search cohort has **four** inputs, **56** logical requests
+and **35** distinct inference jobs. Each input has A2/B5/C5 at seed 73111 plus A
+at seeds 73129 and 73141. Inference retains every original taxon; the table uses
+the sensitivity view that prunes exact duplicate rows and collapses original
+short edges. Quartet values are exact for `ghy3` and a shared 10,000-draw fixed
+panel for each larger input:
+
+| Input | Original taxa | A–B nRF median / maximum | Fixed-A search-control nRF median / maximum | A–B median quartet disagreement | Fixed-A median quartet disagreement |
+|---|---:|---:|---:|---:|---:|
+| `ghy3` | 21 | 0.05556 / 0.16667 | 0 / 0 | 0.04211 | 0 |
+| `1msv` | 37 | 0.10294 / 0.16176 | 0.01471 / 0.01471 | 0.03280 | 0.00040 |
+| `26et` | 128 | 0.14474 / 0.18421 | 0.16228 / 0.19298 | 0.01580 | 0.00620 |
+| `8q2l` | 135 | 0.51485 / 0.54455 | 0.45050 / 0.46535 | 0.06110 | 0.12630 |
+
+Normalized RF divides by `2*(retained_taxa-3)` and can be odd in its numerator
+when one tree has additional collapsed branches. RF disagreement is not itself
+a count of incompatible strongly supported clades. In `ghy3` and `1msv`, the
+observed alignment-associated variation exceeds these finite A search controls.
+In `26et` and especially `8q2l`, search variability is substantial, and the
+relative magnitude depends on the distance measure. A small quartet distance
+can coexist with many changed splits in small tip groups. These deliberately
+selected inputs do not estimate the prevalence of severe changes among all
+production jobs. Detailed support for the three larger cases is still pending.
+Full split/quartet records are in `round2/normal-extended-analysis`.
 
 Edge collapse precedes duplicate-tip pruning. Collapsing after pruning could
 incorrectly restore a path composed of multiple short edges, or discard a strong
