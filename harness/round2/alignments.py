@@ -30,13 +30,13 @@ def digest(p):
 def write_json(p,d):
     t=p.with_suffix('.tmp'); t.write_text(json.dumps(d,indent=2)+'\n');t.replace(p)
 
-def run_process_group(argv, *, stdout, stderr, env, timeout, grace_seconds=5):
-    """Terminate MAFFT descendants as well as GNU time after a timeout.
+def run_process_group(argv, *, stdout, stderr, env, timeout, grace_seconds=5, cwd=None):
+    """Terminate descendants as well as GNU time after a timeout.
 
     A final SIGKILL covers descendants ignoring SIGTERM even if the leader dies.
     No shell is involved; the new session makes this process the group leader.
     """
-    process=subprocess.Popen(argv,stdout=stdout,stderr=stderr,env=env,start_new_session=True)
+    process=subprocess.Popen(argv,stdout=stdout,stderr=stderr,env=env,start_new_session=True,cwd=cwd)
     result={'process_group_pid':process.pid,'timed_out':False,'signals_sent':[]}
     try:
         result['returncode']=process.wait(timeout=timeout)

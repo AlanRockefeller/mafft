@@ -4,14 +4,55 @@ import argparse
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
 from analysis import read_alignment, sha256_file, write_named_alignment
-from queue_trees import create_queue, execute_queue
+from queue_trees import create_queue, execute_queue, execute_parallel_queue
 
 
 class QueueTests(unittest.TestCase):
+    def test_two_independent_workers_adopt_each_job_once_and_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobs, requests = {}, []
+            for number in range(3):
+                job = root / str(number); job.mkdir()
+                jobs[str(number)] = {'directory': str(job), 'support': False}
+                for alias in range(2):
+                    requests.append({'job_key': str(number), 'requested_id': f'{number}-{alias}',
+                                     'input': 'fixture', 'config': 'A' if not alias else 'C',
+                                     'replicate': 0, 'seed': 73111})
+            queue = {'jobs': jobs, 'requests': requests}
+            (root/'queue.json').write_text(json.dumps(queue))
+            args = argparse.Namespace(output=root, workers=2, timeout=1, lock=None, continue_on_error=False)
+            barrier = threading.Barrier(2); lock = threading.Lock()
+            counts = {'calls': 0, 'active': 0, 'peak': 0}
+            def run(plan, **_):
+                with lock:
+                    counts['calls'] += 1; index = counts['calls']
+                    counts['active'] += 1
+                    counts['peak'] = max(counts['peak'], counts['active'])
+                if index <= 2:
+                    barrier.wait(timeout=2)
+                job = Path(plan['directory']); tree = job/'inference.treefile'
+                tree.write_text('((a,b),(c,d));')
+                result = {'plan': plan, 'completed': True, 'tree': str(tree),
+                          'tree_sha256': sha256_file(tree), 'elapsed_seconds': .1, 'resources': None}
+                (job/'run.json').write_text(json.dumps(result))
+                with lock: counts['active'] -= 1
+                return result
+            with patch('queue_trees.run_tree_job', side_effect=run) as runner:
+                self.assertTrue(execute_parallel_queue(queue, args))
+                self.assertTrue(execute_parallel_queue(queue, args))
+                self.assertEqual(runner.call_count, 3)
+            self.assertEqual(counts['peak'], 2)
+            records = [json.loads(line) for line in (root/'runs.jsonl').read_text().splitlines()]
+            self.assertEqual(len(records), 6)
+            self.assertEqual(sum(r['inference_counts_as_independent'] for r in records), 3)
+            self.assertTrue(json.loads((root/'STATUS.json').read_text())['finished'])
+
     def test_identical_named_alignments_reuse_but_seeds_and_search_method_do_not(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

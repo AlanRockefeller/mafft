@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare/deduplicate/execute a serial IQ-TREE queue from MAFFT runs.jsonl.
+"""Prepare/deduplicate/execute IQ-TREE searches from MAFFT runs.jsonl.
 
 All alignment replicates are considered unless --replicates is supplied.
 --controls-seeds adds distinct searches on ONE fixed A alignment per dataset.
@@ -8,6 +8,7 @@ Create OUTPUT/PAUSE to pause safely between jobs. --plan-only runs no inference.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait
 from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
@@ -15,6 +16,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import threading
 import time
 
 from analysis import make_mapping, read_alignment, sha256_file, write_json
@@ -195,6 +197,78 @@ def execute_queue(queue, args):
     return not any(not r["completed"] for r in done.values())
 
 
+def execute_parallel_queue(queue, args):
+    """Precompute disjoint jobs, then let the serial writer adopt their results.
+
+    Each IQ-TREE still has -T 1. Only its own directory is written by a worker.
+    The established serial recovery/alias writer creates the canonical log.
+    """
+    workers = args.workers
+    if workers not in (1, 2):
+        raise ValueError('Only one or two independent searches may run at once')
+    pending = []
+    for key, plan in queue['jobs'].items():
+        directory = Path(plan['directory'])
+        if (directory/'run.json').exists():
+            result = json.loads((directory/'run.json').read_text())
+            if result['plan'] != plan or (result['completed'] and sha256_file(result['tree']) != result['tree_sha256']):
+                raise ValueError('Changed completed search: ' + str(directory))
+            if not result['completed'] and not args.continue_on_error:
+                raise ValueError('Previous failed search requires review or an explicit continue-on-error: ' + str(directory))
+        elif (directory/'started.json').exists():
+            raise ValueError('Interrupted started job; preserve and use a new queue: ' + str(directory))
+        else:
+            pending.append((key, plan))
+    attempt = args.output / ('execution-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ') + '.json')
+    write_json(attempt, {'workers': workers, 'inference_threads_per_job': 1,
+                         'argv': sys.argv,
+                         'queue_sha256': sha256_file(args.output/'queue.json'),
+                         'runner_sha256': sha256_file(__file__), 'pending_jobs': len(pending),
+                         'timing_scope': 'Independent tree searches may overlap. Their wall times are descriptive; no alignment performance benchmark runs concurrently.'})
+    lock = threading.Lock()
+    active, completed = set(), set()
+    stop = threading.Event()
+    def worker():
+        while not stop.is_set():
+            with lock:
+                if not pending:
+                    return
+                if (args.output/'PAUSE').exists():
+                    job = None
+                else:
+                    job = pending.pop(0)
+                    active.add(job[0])
+            if job is None:
+                time.sleep(.5)
+                continue
+            key, plan = job
+            try:
+                result = run_tree_job(plan, timeout=args.timeout, lock=args.lock)
+                if not result['completed'] and not args.continue_on_error:
+                    stop.set()
+            except BaseException:
+                stop.set()
+                raise
+            finally:
+                with lock:
+                    active.discard(key)
+                    completed.add(key)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(worker) for _ in range(workers)]
+        while not all(f.done() for f in futures):
+            with lock:
+                state = {'finished': False, 'workers': workers, 'inference_threads_per_job': 1,
+                         'paused': (args.output/'PAUSE').exists(), 'running_jobs': sorted(active),
+                         'new_jobs_finished': len(completed), 'pending_jobs': len(pending),
+                         'unique_jobs': len(queue['jobs'])}
+            write_status(args.output, state)
+            wait(futures, timeout=.5)
+        for future in futures:
+            future.result()
+    # Failed searches and aliases retain the same exit/recovery policy as serial.
+    return execute_queue(queue, args)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--alignments", nargs="+", required=True)
@@ -214,6 +288,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=3600)
     ap.add_argument("--plan-only", action="store_true")
     ap.add_argument("--continue-on-error", action="store_true")
+    ap.add_argument("--workers", type=int, choices=[1, 2], default=1,
+                    help="Independent searches at once; IQ-TREE itself always uses one thread")
     ap.add_argument("--lock")
     args = ap.parse_args()
     if len(set(args.seeds)) != len(args.seeds) or len(set(args.controls_seeds)) != len(args.controls_seeds):
@@ -224,7 +300,8 @@ def main():
     queue = create_queue(args)
     print(json.dumps({"queue": str(args.output / "queue.json"),
                       "requested_searches": queue["requested_searches"], "unique_searches": queue["unique_searches"]}), flush=True)
-    if not args.plan_only and not execute_queue(queue, args):
+    executor = execute_queue if args.workers == 1 else execute_parallel_queue
+    if not args.plan_only and not executor(queue, args):
         sys.exit(1)
 
 

@@ -410,6 +410,19 @@ with rendering blocked.
 
 ## Campaign recovery and method compatibility
 
+`queue_trees.py --workers 2` optionally executes two independent IQ-TREE
+processes. Each keeps `-T 1`, its original alignment, seed and inference options.
+The immutable prepared plans and method cohorts do not change. Disjoint job
+directories prevent competing writes; the established serial writer adopts
+completed `run.json` files into the canonical logical-request log. An
+`execution-*.json` records the outer concurrency and runner hash. `OUTPUT/PAUSE`
+prevents new jobs at the next boundary; at most two searches finish in progress.
+Default-search controls already completed serially are retained. Wall times from
+overlapping tree searches are descriptive and are not alignment benchmarks.
+
+IQ-TREE jobs use the same tested process-group timeout helper as alignment jobs:
+SIGKILL also covers descendants after a GNU-time leader exits on SIGTERM.
+
 `alignments.py` starts each measured command in its own process group. A timeout
 signals the whole group with SIGTERM, then SIGKILL for any remaining descendants,
 including when the GNU-time leader has already exited. The failed alignment,

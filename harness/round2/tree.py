@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Recorded IQ-TREE searches and unrooted tree comparisons for MAFFT round 2.
 
-All inference is explicit and serial.  Importing this module runs no analyses.
+Every inference process uses one thread. Importing this module runs no analyses.
 Newick, RF, quartet and identity checks require only Python's standard library.
 Matplotlib is optional and used only by the visualisation commands.
 """
@@ -31,6 +31,7 @@ from typing import Any, Iterable
 
 from analysis import (Alignment, load_mapping, read_alignment, sha256_file,
                       write_json, write_named_alignment)
+from alignments import run_process_group
 
 ZERO_THRESHOLD = 1e-6
 SHALRT_THRESHOLD = 80.0
@@ -528,23 +529,15 @@ def run_tree_job(plan: dict[str, Any], *, timeout: float | None = None,
             fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
         write_json(directory / "started.json", {"started_utc": datetime.now(timezone.utc).isoformat(),
                                                "pid": os.getpid()})
-        measured = ["/usr/bin/time", "-f", "%e\t%U\t%S\t%M", "-o", str(directory / "resource.tsv"), *plan["command"]]
+        measured = ["/usr/bin/time", "-f", "%e\t%U\t%S\t%M", "-o", str(directory / "resource.tsv"),
+                    "nice", "-n", "10", *plan["command"]]
         begin = time.monotonic()
         timed_out = False
         with open(directory / "stdout.txt", "xb") as stdout, open(directory / "stderr.txt", "xb") as stderr:
             env = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
-            process = subprocess.Popen(measured, stdout=stdout, stderr=stderr, env=env, start_new_session=True,
-                                       cwd=directory)
-            try:
-                exit_code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    exit_code = process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    exit_code = process.wait()
+            execution = run_process_group(measured, stdout=stdout, stderr=stderr, env=env,
+                                          timeout=timeout, cwd=directory)
+            exit_code, timed_out = execution['returncode'], execution['timed_out']
         elapsed = time.monotonic() - begin
         resource_values = None
         resource_file = directory / "resource.tsv"
@@ -578,6 +571,8 @@ def run_tree_job(plan: dict[str, Any], *, timeout: float | None = None,
                   "tree_sha256": sha256_file(tree_path) if tree_path.exists() else None,
                   "support_order": order, "validation_error": validation_error,
                   "completed": exit_code == 0 and tree_path.exists() and validation_error is None,
+                  "execution": execution,
+                  "execution_argv": measured,
                   "finished_utc": datetime.now(timezone.utc).isoformat()}
         write_json(directory / "run.json", result)
         return result
