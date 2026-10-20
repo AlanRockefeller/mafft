@@ -494,3 +494,38 @@ different commands/inputs and wholly inactive cache guards cannot pass as an
 active-reuse validation. Traced executions are correctness experiments and are
 excluded from timing claims. The experimental macro and instrumentation live
 on the isolated `experiment/rejected-branch-memo` branch, not the frozen release.
+
+`reject_memo_scores_check.py --source SNAPSHOT/core/tditeration.c --output NEW_DIR`
+extracts the actual experimental symmetry guard and tests finite matrices,
+asymmetric values/zero signs, nonfinite values, null rows and seeded mutations.
+It retains the full source/helper hashes, generated driver, compiler commands
+and strict GCC/ASAN/UBSAN results. This verifies guard behavior, not whole
+refinement equivalence; see the separate traced and full-output checks.
+
+`support_resolution_fig.py --analysis SUPPORT_ANALYSIS --output NEW_DIR`
+plots stored strong-split RF alongside quartet disagreement separated into
+resolved only in A, resolved only in B/C, and opposing resolved quartets.
+It exports the underlying TSV and figure/source hashes without recomputing
+quartets or inferring trees. Deep resolution changes can affect many quartets
+even when normalized RF is small. These are conditional stability metrics,
+not error probabilities or independent biological replicates.
+
+`raxml_sensitivity.py --queue NORMAL_QUEUE --data INPUTS --input FILE.fasta
+--b-replicate N --output NEW_DIR --pilot` performs one RAxML-NG cost pilot.
+Resume without `--pilot` for seven separately executed searches: three A seeds,
+two selected-B seeds and two C seeds, each with two parsimony and two random
+starts, `GTR+F+G4`, one thread/worker and likelihood epsilon 0.1. It reuses
+validated stable-ID alignments and requires every original taxon in each tree.
+Failed/timed-out jobs remain visible and are not silently resumed or replaced.
+Results form a separate inference-method cohort; no raw cross-alignment
+likelihood ranking, extra support estimate or biological accuracy claim follows.
+The limited starting-tree search is a sensitivity check, not exhaustive search.
+
+`idle_background.py --output NEW_DIR [--wait-for COMPLETION_MARKER ...]`
+records a prespecified two-minute idle-service calibration. It rejects windows
+with a busy scientific process or excessive background activity and keeps
+waiting. A successful window recommends a prospective quiet threshold from its
+p95 plus headroom, bounded at 0.20 CPU cores; it never changes the default gate
+or reclassifies earlier measurements. Review the raw window and apply an
+explicit threshold only in a new measurement plan. Busy scientific jobs remain
+a hard blocker at 0.05 cores even if a different global threshold is selected.

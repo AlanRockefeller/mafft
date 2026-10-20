@@ -229,6 +229,15 @@ unrooted splits, not counts of independent biological relationships.
 | `8q2l` | 4 | 170 / 152 | 12 / 10 / 12 | 2 / 2 | 0 / 0 | 0.0042 / 0.2022 |
 | `zdku` | 1 | 78 / 60 | 42 / 37 / 39 | 13 / 13 | 0 / 0 | 0.0488 / 0.2020 |
 
+The [paired RF and quartet-resolution figure](../../round2/support-resolution-figures/support-resolution.svg)
+places normalized RF beside the percentage of all evaluated quartets resolved
+only in A, resolved only in B/C, or resolved incompatibly in both. It makes the
+approximately 20% resolution differences visible despite small normalized RF.
+The [underlying counts](../../round2/support-resolution-figures/support-resolution.tsv)
+and [manifest](../../round2/support-resolution-figures/manifest.json) preserve
+denominators, exact/sampled panels, thresholds and source hashes without
+recomputing or resampling quartets.
+
 There are zero resolved strong-quartet conflicts in all ten comparisons.
 The nonzero strong quartet distances are differences between a resolved and
 an unresolved quartet after filtering. They are not necessarily small: a
