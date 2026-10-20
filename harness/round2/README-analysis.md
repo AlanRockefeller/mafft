@@ -492,8 +492,10 @@ source. It preserves all raw score bits and checks complete original-order
 intermediate rows at every acceptance. Missing traces, malformed row blocks,
 different commands/inputs and wholly inactive cache guards cannot pass as an
 active-reuse validation. Traced executions are correctness experiments and are
-excluded from timing claims. The experimental macro and instrumentation live
-on the isolated `experiment/rejected-branch-memo` branch, not the frozen release.
+excluded from timing claims. The isolated `experiment/rejected-branch-memo`
+branch preserves the default-off development snapshots. The guarded code is
+now selected in dikarya4; its semantic-trace switch remains independently off
+in the normal release build.
 
 `reject_memo_scores_check.py --source SNAPSHOT/core/tditeration.c --output NEW_DIR`
 extracts the actual experimental symmetry guard and tests finite matrices,
@@ -529,3 +531,31 @@ p95 plus headroom, bounded at 0.20 CPU cores; it never changes the default gate
 or reclassifies earlier measurements. Review the raw window and apply an
 explicit threshold only in a new measurement plan. Busy scientific jobs remain
 a hard blocker at 0.05 cores even if a different global threshold is selected.
+
+`summarize_scheduling.py` validates and summarizes explicit final measurement
+selections after all native work. It checks complete workloads, seeded queue
+orders, recorded commands, input/golden/output/stderr/resource hashes, native
+installation and frozen source identity. A/F outputs must match frozen A bytes.
+Selection uses the prespecified **policy-level** aggregate contention check;
+transient serial-job flags remain counted and visible. Concurrent workers'
+individual residuals include the other worker and cannot attribute external
+contention. Unknown serial attribution is rejected. The tool never selects by
+speed or discards original attempts.
+
+```sh
+python3 harness/round2/summarize_scheduling.py \
+  --full-selection ../round2/dikarya4-r2-throughput-selected.jsonl \
+  --isolated-selection ../round2/dikarya4-r2-isolated-selected.jsonl \
+  --pilot-selection ../round2/dikarya4-r2-throughput-pilot-selected.jsonl \
+  --manifest ../bench/production-corpus.json --output /private/new-scheduling-summary
+```
+
+The new output contains full-policy, isolated-per-input/configuration and
+two-round pilot TSVs, plus JSON provenance. Latency averages the two isolated
+runs per selected input before giving each filename one vote; this 12-input
+subset is separate from the full 100-job distribution. Full throughput retains
+all production filenames, including the repeated raw inputs. Queue delay,
+service latency, response latency, per-job GNU-time peak RSS and sampled
+concurrent process-group RSS remain separate. B/C timing can accompany changed
+alignments. Two-repeat stability and two-round ranges do not establish universal
+determinism, a timing-noise confidence interval or biological accuracy.
