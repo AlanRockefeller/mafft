@@ -34,6 +34,29 @@ LINKS = {
 }
 
 
+def resolve_accession(header, records):
+    """Resolve a leading accession only against unambiguous cached versions.
+
+    A versionless header is not evidence for the latest database version.  It
+    may identify the single archived version, which must still pass the exact
+    residue and reviewed voucher checks below.  Explicit versions never fall
+    back to a different version.
+    """
+    match = re.match(r"([A-Z]{1,4}_?[0-9]{5,}(?:\.[0-9]+)?)(?=$|[\s_|:;])", header)
+    if not match:
+        return None, None, "No leading accession in original header; no independently verified voucher link"
+    token = match[1]
+    if "." in token:
+        if token in records:
+            return token, token, None
+        return token, None, "Explicit accession version is absent from the archived GenBank records"
+    versions = sorted(key for key in records if key.rsplit(".", 1)[0] == token)
+    if len(versions) != 1:
+        return token, None, ("No archived accession version" if not versions else
+                             "Multiple archived accession versions; versionless identity is ambiguous")
+    return token, versions[0], None
+
+
 def normalize_identifier(value):
     # Two documented conventions, not fuzzy name matching.
     value = re.sub(r" SV[0-9]+$", "", value.upper())
@@ -228,16 +251,15 @@ def audit(data, references, output, datasets, trees_root=None, configs=("A", "B"
         originalmaps[dataset] = original
         selected = []
         for row in original["records"]:
-            match = re.match(r"([A-Z]{1,3}_[0-9]+\.[0-9]+|[A-Z]{1,3}[0-9]{5,}\.[0-9]+)", row["original_header"])
+            header_acc, acc, resolution_error = resolve_accession(row["original_header"], records)
             record = {"dataset": f"{dataset}.fasta", "input_sha256": original["input_sha256"],
                       "id": row["id"], "original_header": row["original_header"],
-                      "accession": match[1] if match else None, "accepted_reference_tip": None,
+                      "header_accession": header_acc, "accession": acc, "accepted_reference_tip": None,
                       "reference_loci": []}
-            if not match:
-                record["unmatched_reason"] = "No accession in original header; no independently verified voucher link"
+            if resolution_error:
+                record["unmatched_reason"] = resolution_error
                 allrows.append(record)
                 continue
-            acc = match[1]
             gb = records[acc]
             qualifiers = source_qualifiers(gb)
             identity = sequence_identity(row["sequence"], gb.findtext("GBSeq_sequence").upper())
@@ -329,6 +351,8 @@ def audit(data, references, output, datasets, trees_root=None, configs=("A", "B"
     write_json(output / "matched-records.json", allrows)
     write_json(output / "matched-nonITS-splits.json", summary)
     write_json(output / "provenance.json", {
+        "analysis_code_sha256": sha256_file(__file__),
+        "accession_resolution": "Leading explicit version, or unique archived version for a versionless token; exact residue and reviewed voucher checks remain mandatory.",
         "publication": "https://doi.org/10.1002/ajb2.70054",
         "archive": "https://doi.org/10.6084/m9.figshare.25691193",
         "source_downloads": json.loads((references / "download-provenance.json").read_text()),
