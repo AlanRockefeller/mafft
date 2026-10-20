@@ -20,24 +20,95 @@ import subprocess
 import sys
 
 
-def function(source, name):
+_C_TOKENS = re.compile(
+    r'"(?:\\[\s\S]|[^"\\])*"|'
+    r"'(?:\\[\s\S]|[^'\\])*'|"
+    r'/\*[\s\S]*?\*/|//(?:\\(?:\r\n|\r|\n)|[^\r\n])*')
+_C_LITERALS = re.compile(r'"(?:\\[\s\S]|[^"\\])*"|'
+                         r"'(?:\\[\s\S]|[^'\\])*'")
+
+
+def _blank(text):
+    """Preserve byte/character offsets and CR/LF layout."""
+    return re.sub(r"[^\r\n]", " ", text)
+
+
+def mask_c_comments(source):
+    """Blank comments while preserving string/character literals exactly.
+
+    The lexer consumes literals as whole tokens, so comment-looking bytes in a
+    literal cannot begin a comment. Latin-1 source decoding makes each retained
+    position correspond to the same byte in the original file.
+    """
+    return _C_TOKENS.sub(
+        lambda match: _blank(match.group()) if match.group().startswith(("//", "/*"))
+        else match.group(), source)
+
+
+def _code_mask(source):
+    # A second positional mask lets structural parsing ignore punctuation in
+    # literals too, without changing mask_c_comments' literal-preserving API.
+    return _C_LITERALS.sub(lambda match: _blank(match.group()), mask_c_comments(source))
+
+
+def _function_header(source, name):
+    code = _code_mask(source)
     pattern = (r"(?m)^(?:static\s+)?(?:void|int|double)\s+\*?\s*" +
-               re.escape(name) + r"\s*\([^;{}]*\)\s*\{")
-    matches = list(re.finditer(pattern, source))
-    if len(matches) != 1:
-        raise ValueError(f"Expected one definition of {name}, found {len(matches)}")
-    start, opening = matches[0].start(), matches[0].end() - 1
-    tokens = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
-                        r"'(?:\\.|[^'\\])*'|[{}]", re.S)
+               re.escape(name) + r"\s*\(")
+    definitions = []
+    for match in re.finditer(pattern, code):
+        opening = match.end() - 1
+        depth, closing = 1, opening + 1
+        while closing < len(code) and depth:
+            if code[closing] == "(":
+                depth += 1
+            elif code[closing] == ")":
+                depth -= 1
+            closing += 1
+        if depth:
+            raise ValueError(f"Unterminated parameter list of {name}")
+        after = closing
+        while after < len(code) and code[after].isspace():
+            after += 1
+        if after < len(code) and code[after] == "{":
+            definitions.append((match.start(), opening, closing - 1, after))
+    if len(definitions) != 1:
+        raise ValueError(f"Expected one definition of {name}, found {len(definitions)}")
+    return code, definitions[0]
+
+
+def function(source, name):
+    code, (start, _, _, opening) = _function_header(source, name)
     depth = 0
-    for token in tokens.finditer(source, opening):
-        if token.group() == "{":
+    for position in range(opening, len(code)):
+        if code[position] == "{":
             depth += 1
-        elif token.group() == "}":
+        elif code[position] == "}":
             depth -= 1
             if depth == 0:
-                return start, token.end(), source[start:token.end()]
+                return start, position + 1, source[start:position + 1]
     raise ValueError(f"Unterminated definition of {name}")
+
+
+def function_parameters(source, name):
+    """Return parameters from the same positional mask used for matching."""
+    code, (_, opening, closing, _) = _function_header(source, name)
+    parameters, start, depth = [], opening + 1, 0
+    for position in range(start, closing):
+        if code[position] in "([":
+            depth += 1
+        elif code[position] in ")]":
+            depth -= 1
+        elif code[position] == "," and depth == 0:
+            parameters.append(code[start:position].strip())
+            start = position + 1
+    parameters.append(code[start:closing].strip())
+    return [] if parameters == [""] or parameters == ["void"] else parameters
+
+
+def null_arguments(source, name):
+    return ["NULL" if "*" in parameter or "[" in parameter else "0"
+            for parameter in function_parameters(source, name)]
 
 
 def replace_function(source, name, transform):
@@ -471,9 +542,7 @@ def main():
             if allocation_guard != -1 and forward > allocation_guard:
                 raise ValueError(f"{name}: cleanup forwarding is allocation-dependent")
             cleanup_checks[name] = "NULL cleanup forwards before DP allocation guard"
-            signature = re.search(r"\b" + re.escape(name) + r"\s*\((.*?)\)\s*\{", text, re.S)
-            arguments = ["NULL" if "*" in parameter else "0"
-                         for parameter in signature.group(1).split(",")]
+            arguments = null_arguments(text, name)
             public_calls.append((name, f"{name}({','.join(arguments)});"))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
