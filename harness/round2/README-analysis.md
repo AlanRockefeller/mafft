@@ -478,3 +478,10 @@ and refuses contended native throughput summaries. Projections omit other
 pipeline stages and resource users and must remain separate from measured
 throughput and latency. Recorded historical runtimes are never used as paired
 benchmark denominators.
+
+`rejected_branch_audit.py` reads the verified historical paired-corpus stderr
+traces and counts repeat rejections at the same accepted-alignment epoch. It
+merges adjacent preliminary/final messages and resets state for each new
+refinement invocation. Counts are opportunities, never CPU fractions or speedups.
+No branch is skipped. The included fixtures cover accepted-change invalidation,
+repeated FFT-NS-i refiner invocations and rejection of multiple-worker traces.

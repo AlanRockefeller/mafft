@@ -176,6 +176,25 @@ The median B-versus-A homology F1 is 0.996996 for `0uuv` and 0.985317 for
 preserves every comparison. This small control cannot establish whether the
 fork increases or decreases the frequency or magnitude of nondeterminism.
 
+## Broader topology screening
+
+The completed 46-input fast-search screen has 138 logical A/B/C requests at
+paired seed 73111 and 90 separately executed alignment/seed/method searches.
+Repeated identical normalized alignments reuse a result within the queue. Each
+input contributes its first B and first C alignment; the other B replicates
+remain in the repeat-rich pilot and selected full-search cohorts.
+
+| Comparison to A | Inputs with raw RF >0 | Inputs with RF >0 after exact-duplicate pruning and short-edge collapse | Maximum normalized RF in that sensitivity view |
+|---|---:|---:|---:|
+| First B alignment | 19/46 | 18/46 | 0.372807 |
+| First C alignment | 24/46 | 23/46 | 0.381579 |
+
+Every requested screen search completed. These are topology-screening frequencies
+under IQ-TREE `--fast`, not estimates of biological error or a controlled causal
+effect beyond search variability. They do not replace the three-seed A controls
+and five-B-replicate full-search comparisons. `round2/broad-fast-tree-analysis`
+retains all 46 file-level RF, incompatible-split and quartet comparisons.
+
 ## Search variability and a completed supported example
 
 The 11-input fast-search pilot requested 154 trees, including additional A seeds,

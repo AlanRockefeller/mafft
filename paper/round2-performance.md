@@ -266,6 +266,31 @@ assigned a meaningful FFT-NS-i gain from this experiment. This follow-up support
 improvement on the actual FFT-NS-i input while preserving the unfavorable earlier
 measurement. The final stack-off selected configuration remains to be measured.
 
+## Additional refinement reuse audit
+
+An additional investigation counted repeated rejected branch attempts before
+changing refinement. In the verified historical dikarya2 traces, 3,668 of 94,762
+completed branch attempts (3.87%, retaining all 100 production jobs) revisited a
+branch whose previous rejection had no intervening accepted alignment change.
+No such repeat later accepted a change. The fraction varies: 30.51% of attempts
+in `xwu3`, 28.29% in `najy` and 22.47% in `iyam`. This is an opportunity count,
+not a CPU fraction or a speedup; branch costs differ considerably.
+
+`harness/round2/rejected_branch_audit.py` validates archived stderr hashes and
+preserves each refinement invocation. FFT-NS-i calls the refiner repeatedly, so
+iteration/branch coordinates alone cannot identify an attempt across the whole
+job. Only adjacent preliminary/final status messages are merged. The initial
+exploratory audit that merged keys across invocations is superseded by the
+tested parser and `round2/rejected-branch-audit`.
+
+The proposed reuse would retain exact rejected scores and convergence-history
+updates while invalidating every branch after an acceptance. It is **not
+enabled or implemented as a production shortcut**: unchanged alignment rows are
+not sufficient proof that omitting a call preserves temporary scoring structures
+and subsequent-call behavior. A restricted one-worker prototype, differential
+execution and separate timings would be necessary. This audit leaves the
+selected source and pending benchmarks unchanged.
+
 ## Compiler research and rejected alternatives
 
 Clang 15, GCC LTO alone and newly trained GCC PGO were rebuilt from the optimized
