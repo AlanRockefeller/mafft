@@ -14,6 +14,7 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+from quiet import cpu_snapshot, busy_delta
 import datetime
 
 CONFIGS = {'A':['--thread','1'], 'B':['--thread','2'],
@@ -106,7 +107,7 @@ def main():
               'configs':CONFIGS,'selected_configs':args.configs,'selected_files':files,'independent_files':[f['file'] for f in independent],
               'replicates':args.replicates,'a_replicates':args.a_replicates,
               'argv':list(os.sys.argv),'cpu_affinity':sorted(os.sched_getaffinity(0)),
-              'purpose':'alignment variability and descriptive isolated latency; no competing research computation'}
+              'purpose':'alignment variability; runtime is descriptive and external guest contention is observationally flagged where counters are available. Isolated performance claims use separate quiet-gated measurements.'}
     mp=args.output/'experiment.json'
     if mp.exists():
         old=json.loads(mp.read_text())
@@ -139,6 +140,7 @@ def main():
                     output=dest/'alignment.fasta';err=dest/'stderr.txt';resources=dest/'resources.json'
                     command=['nice','-n','10','taskset','-c','0,1',str(args.binary),*CONFIGS[c],*f['production_options'],str(source)]
                     argv=['/usr/bin/time','-f',FORMAT,'-o',str(resources),*command]
+                    cpu_before=cpu_snapshot()
                     start=time.monotonic();utc=datetime.datetime.now(datetime.timezone.utc).isoformat()
                     launch_error=None
                     with output.open('xb') as out,err.open('xb') as stderr:
@@ -147,7 +149,7 @@ def main():
                         except OSError as exc:
                             launch_error=str(exc)
                             execution={'returncode':127,'timed_out':False,'signals_sent':[],'process_group_pid':None}
-                    elapsed=time.monotonic()-start
+                    elapsed=time.monotonic()-start;cpu_after=cpu_snapshot()
                     resource_values,resource_error=read_resources(resources)
                     r={'input':f['file'],'input_sha256':f['sha256'],'config':c,'replicate':rep,
                        'argv':command,'version':metadata['version'],'binary':str(args.binary),
@@ -158,6 +160,8 @@ def main():
                        'environment':{k:env[k] for k in ['LC_ALL','LANG','TMPDIR']},
                        'strategy':next((s for s in ['L-INS-i','FFT-NS-i','FFT-NS-2','G-INS-i','E-INS-i'] if s in err.read_text(errors='replace')),'unknown')}
                     r['cpu']=resource_values['user']+resource_values['system'] if resource_values is not None else None
+                    r['cpu_stat_before']=cpu_before;r['cpu_stat_after']=cpu_after
+                    r['contention']=busy_delta(cpu_before,cpu_after,r['cpu'])
                     if args.golden:
                         golden=args.golden/f['file'];r['golden_sha256']=digest(golden);r['matches_A_golden']=r['output_sha256']==r['golden_sha256']
                     failure=('launch error: '+launch_error if launch_error else
