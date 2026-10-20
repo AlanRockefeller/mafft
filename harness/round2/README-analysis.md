@@ -353,6 +353,14 @@ with edges <=1e-6 collapsed. An unresolved candidate is not counted as a resolve
 conflict. Separate gene-tree congruence does not establish a complete true
 species tree or validate unmatched local queries.
 
+`audit_albatrellus.py --article article.xml --genbank voucher-genbank.xml
+--input 8q2l.fasta --output NEW_DIRECTORY` reproduces the separate accession and
+voucher audit of the cached primary Albatrellus article. It checks actual input
+residues against cached GenBank sequences, keeps organism-name conflicts and
+marks loci sharing the ITS accession. Its two matching protein-locus specimens
+are insufficient for a quartet. The seven-locus published concatenation includes
+ITS and is not treated as independent validation.
+
 ## Verification
 
 `clade_stability.py` follows splits supported by SH-aLRT >=80 and UFBoot >=95
