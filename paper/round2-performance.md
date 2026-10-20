@@ -391,9 +391,22 @@ overhead. Review added release hooks outside DP allocation guards, including
 the D path. The first checker-generation attempt failed before compilation
 because its C signature parser did not accept inline comments. That parser was
 corrected and passed seven focused Python fixtures. Source `f8d8fe6` is frozen
-separately; its native differential checks are queued after all timed release
-measurements. This experiment has no executed native differential or performance
-result yet and is not included in dikarya4.
+separately. While production load kept the timing gate closed, two explicitly
+exclusive correctness windows paused only the three waiting research Python
+processes, verified that none had launched a native job, and resumed them
+afterward. No production process was signaled.
+
+Six native variants then passed **10,448 exact matrix/bound comparisons and
+150,646,080 matrix cells**, counting repeated strict/sanitizer backends. These
+cover normal banded/direct operation, a 1,024-byte budget, zero budget,
+allocation failures, repeated edits, aliased IDs, epoch wrap and actual pthread
+isolation. ASAN/UBSAN and leak detection passed. A separate full-object sanitizer
+probe exercised all **nine actual public NULL cleanup paths** before DP
+workspace allocation; every path released the warmed cache. The preserved
+commands and sources are in `resmap-cache-v3-check` and
+`resmap-cache-v4-public-cleanup`. These results establish the tested internal and
+cleanup behavior, not full-alignment equivalence or saved time. The prototype
+has no full-corpus golden or performance result and is not included in dikarya4.
 
 ## Compiler research and rejected alternatives
 
