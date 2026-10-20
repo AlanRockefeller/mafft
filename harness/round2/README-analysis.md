@@ -363,6 +363,21 @@ ITS and is not treated as independent validation.
 
 ## Verification
 
+Export an inspectable collection without changing inference trees:
+
+```sh
+python3 harness/round2/export_trees.py \
+  --queues /path/to/normal-trees /path/to/support-trees \
+  --files 1msv.fasta ghy3.fasta --data /path/to/bench/data \
+  --output /path/to/NEW_TREE_EXPORT
+```
+
+Each logical request has the original stable-ID Newick, a separate Newick with
+the full original header plus stable ID, named alignment and execution provenance.
+Readable labels are quoted, and a reversed relabeling must preserve all splits,
+branch lengths and support labels. Original FASTA files and reversible taxon maps
+are included. Reused requests remain distinguishable from executed searches.
+
 `clade_stability.py` follows splits supported by SH-aLRT >=80 and UFBoot >=95
 across the complete normal-search alignment replicates and fixed-alignment
 search seeds. It validates full taxon sets, source hashes and inference methods.
