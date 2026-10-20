@@ -3,6 +3,32 @@
 Use a private artifact directory, retain the original goldens and stop competing
 builds or experiments before timing. None of these drivers installs MAFFT.
 
+The dikarya4 validation source is frozen at Git commit `58d960d`. To rebuild
+that exact source without using existing object files:
+
+```sh
+validation_source=$(mktemp -d)
+git archive 58d960d | tar -x -C "$validation_source"
+python3 harness/round2/build.py --source "$validation_source" \
+  --output /private/new-dikarya4-build --jobs 1
+```
+
+`build.py` uses GCC and `-O3 -march=native -ffp-contract=off -g` by default.
+Its new private output contains source, build commands/logs, installed files
+and hashes. It refuses an existing output directory. Preserve that directory
+and use another path for each variant. The CLUSTAL alignment stamp remains
+opt8 while diagnostics identify dikarya4.
+
+`MAFFT_REJECT_MEMO` defaults to one in the shared header. Its narrow runtime
+guards authorize exact reuse only in a verified terminal no-gain suffix of
+one-worker refinement. For an ablation, pass `--flags` with the full strict
+flags above plus `-DMAFFT_REJECT_MEMO=0` to a separate build. The
+[dependency argument](../../paper/round2-refinement-reuse.md) explains the
+short-block, scoring-symmetry and scratch-state exclusions. Independent
+`MAFFT_REJECT_MEMO_TRACE=1` enables semantic traces; do not time a trace build
+as the normal release. The residue-map cache on its separate experimental
+branch remains default-off and is not part of this source.
+
 The score-only rolling fill is in `core/l11_avx2.h`. Its public return values can
 be checked against the original double recurrence with
 `harness/broadwell/noalign_check.py` and the existing `L11_SCORE` driver, as
