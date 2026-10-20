@@ -21,6 +21,31 @@ def quantile(values, p):
     return values[i] + (values[min(i + 1, len(values) - 1)] - values[i]) * (x - i)
 
 
+def contention_summary(records):
+    flags = [r.get('contention', {}).get('contention_flag') for r in records]
+    estimates = [r.get('contention', {}).get('external_busy_cores_estimate') for r in records]
+    estimates = [x for x in estimates if x is not None]
+    return {'jobs': len(flags), 'flagged': sum(x is True for x in flags),
+            'not_flagged': sum(x is False for x in flags),
+            'unknown': sum(x is None for x in flags),
+            'max_external_busy_cores_estimate': max(estimates) if estimates else None,
+            'selection': 'All completed pairs retained, including flagged measurements.'}
+
+
+def unique_input_rows(rows):
+    """Average repeated production copies before assigning one vote per hash."""
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row['input_sha256']].append(row)
+    result = []
+    for digest, copies in sorted(groups.items()):
+        row = {'input_sha256': digest}
+        for key in ['reference_cpu', 'candidate_cpu', 'reference_wall', 'candidate_wall']:
+            row[key] = statistics.mean(r[key] for r in copies)
+        result.append(row)
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--runs', type=Path, required=True)
@@ -66,18 +91,31 @@ def main():
             rss = [pair[index].get('resources', {}).get('rss_kib') for pair in pairs
                    if pair[index].get('resources')]
             row[label + '_max_rss_mib'] = max(rss) / 1024 if rss else None
+            flags = [pair[index].get('contention', {}).get('contention_flag') for pair in pairs]
+            row[label + '_contention_flagged_rounds'] = sum(flag is True for flag in flags)
+            row[label + '_contention_unknown_rounds'] = sum(flag is None for flag in flags)
         for metric in ['wall', 'cpu']:
             row[metric + '_speedup'] = row['reference_' + metric] / row['candidate_' + metric]
             row[metric + '_saved'] = row['reference_' + metric] - row['candidate_' + metric]
         row['cpu_regression_over_5pct_and_50ms'] = row['cpu_speedup'] < 1 / 1.05 and row['cpu_saved'] < -.05
         rows.append(row)
     totals = []
-    for partition in ['all', 'development', 'holdout', 'difficult']:
-        selected = [r for r in rows if partition == 'all' or r['partition'] == partition]
+    development_hashes = {f['sha256'] for f in manifest.values() if f['partition'] == 'development'}
+    shared_holdout = [f['file'] for f in manifest.values()
+                      if f['partition'] == 'holdout' and f['sha256'] in development_hashes]
+    selections = [(partition, [r for r in rows if partition == 'all' or r['partition'] == partition],
+                   'Recorded production file, retaining repeated raw input copies')
+                  for partition in ['all', 'development', 'holdout', 'difficult']]
+    selections.extend([
+        ('all_unique_inputs', unique_input_rows(rows), 'Distinct raw input SHA-256; average repeated file copies'),
+        ('holdout_unique_excluding_development', unique_input_rows([
+            r for r in rows if r['partition'] == 'holdout' and r['input_sha256'] not in development_hashes]),
+         'Distinct raw input SHA-256; exclude every development hash; average repeated holdout copies')])
+    for partition, selected, unit in selections:
         if not selected:
             continue
         total = {'partition': partition, 'jobs_per_corpus_pass': len(selected),
-                 'distinct_input_hashes': len({r['input_sha256'] for r in selected})}
+                 'distinct_input_hashes': len({r['input_sha256'] for r in selected}), 'unit': unit}
         for metric in ['wall', 'cpu']:
             a = sum(r['reference_' + metric] for r in selected)
             b = sum(r['candidate_' + metric] for r in selected)
@@ -110,6 +148,11 @@ def main():
         'runs': str(args.runs.resolve()), 'runs_sha256': sha256_file(args.runs),
         'manifest_sha256': sha256_file(args.manifest), 'reference': args.reference, 'candidate': args.candidate,
         'completed_exact_jobs': len(records), 'totals': totals, 'bootstrap_workload_mix': interval,
+        'contention': {build: contention_summary([r for r in records if r['build'] == build])
+                       for build in [args.reference, args.candidate]},
+        'holdout_audit': {'development_hashes_also_in_holdout_files': sorted(shared_holdout),
+                          'frozen_partition_retained': True,
+                          'strict_supplement': 'holdout_unique_excluding_development'},
         'per_input_summary': {'cpu_faster': sum(r['cpu_saved'] > 0 for r in rows),
                               'cpu_slower': sum(r['cpu_saved'] < 0 for r in rows),
                               'cpu_unchanged': sum(r['cpu_saved'] == 0 for r in rows),
