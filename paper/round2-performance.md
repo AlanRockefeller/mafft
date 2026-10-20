@@ -148,8 +148,10 @@ within about 0.7% of the original. `Lfill_kb` text grew from 6,673 to 8,089 byte
 so instruction-cache/code-layout effects remain a tradeoff.
 
 Follow-up guard hardening checks floating finiteness/range before integer
-conversion, widens bound arithmetic and avoids inherited `abs(INT_MIN)` and
-negation-overflow risks. Its focused sanitizer checks passed; frozen component
+conversion, widens bound arithmetic and avoids `abs(INT_MIN)` and
+negation-overflow risks inside that guard. Inherited public scalar initializers
+still need separate review before claiming support for INT_MIN offset/penalty
+parameters. Its focused sanitizer checks passed; frozen component
 timings precede that hardening, so final integrated timing remains necessary.
 
 ### Fused common-gap filtering and pair scoring
@@ -283,13 +285,36 @@ job. Only adjacent preliminary/final status messages are merged. The initial
 exploratory audit that merged keys across invocations is superseded by the
 tested parser and `round2/rejected-branch-audit`.
 
-The proposed reuse would retain exact rejected scores and convergence-history
-updates while invalidating every branch after an acceptance. It is **not
-enabled or implemented as a production shortcut**: unchanged alignment rows are
-not sufficient proof that omitting a call preserves temporary scoring structures
-and subsequent-call behavior. A restricted one-worker prototype, differential
-execution and separate timings would be necessary. This audit leaves the
-selected source and pending benchmarks unchanged.
+An isolated, default-off prototype now exists on branch
+`experiment/rejected-branch-memo` in the separate `mafft-reject-memo` worktree.
+It retains exact rejected scores and original convergence-history updates,
+invalidating every branch after an acceptance. Guards restrict it to one worker,
+BAATARI2, fixed tree/order, zero cut, DNA, ordinary constrained profile alignment,
+complete targets and no RNA/specificity scoring. Allocation failure disables the
+optional cache. It is not part of the frozen release source.
+
+The first build's guard was inactive because dvtditr initializes `cooling=1`
+even with inert `cut=0`. Those eight golden matches validate only the bypass.
+The corrected active version matched all eight targeted real-input goldens and
+skipped 1,259 attempts. A later revision adds explicit RNA exclusion, allocation
+fallback and independently enabled semantic tracing.
+
+Same-source memo-off/on trace builds then matched every semantic record on five
+inputs: **2,469 attempts, 171 accepted intermediate alignments, 6,603 original-order
+master rows and 508 cached attempts**. This checks raw double score/gain bits,
+including signed zero, acceptance, subgeneration and convergence/finish flags,
+as well as exact intermediate sequence strings. All ten final alignments also
+matched the goldens. `round2/reject-memo-v3-semantic-analysis` retains the result
+and hashed stderr paths. End-output identity alone was not used to assert equal
+search paths.
+
+Full-corpus and alternate-option validation of the latest nontracing source,
+followed by quiet-gated paired timings, remain pending. Its longer correctness
+run waits until the detailed phylogenetic jobs finish, protecting their
+wall-time budgets. Earlier v2 full-corpus output was preserved at nine successful
+jobs when superseded at an input boundary. The prototype will be retained only
+if the new measurements demonstrate an improvement; no speedup is inferred from
+the loaded correctness-run durations.
 
 ## Compiler research and rejected alternatives
 

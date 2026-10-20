@@ -485,3 +485,12 @@ merges adjacent preliminary/final messages and resets state for each new
 refinement invocation. Counts are opportunities, never CPU fractions or speedups.
 No branch is skipped. The included fixtures cover accepted-change invalidation,
 repeated FFT-NS-i refiner invocations and rejection of multiple-worker traces.
+
+`refinement_semantics.py` compares optional experimental `REFINE_SEMANTIC` and
+`REFINE_MASTER` traces from actual memo-off/on processes built from the same
+source. It preserves all raw score bits and checks complete original-order
+intermediate rows at every acceptance. Missing traces, malformed row blocks,
+different commands/inputs and wholly inactive cache guards cannot pass as an
+active-reuse validation. Traced executions are correctness experiments and are
+excluded from timing claims. The experimental macro and instrumentation live
+on the isolated `experiment/rejected-branch-memo` branch, not the frozen release.
