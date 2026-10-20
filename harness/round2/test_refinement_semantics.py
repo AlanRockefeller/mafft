@@ -1,5 +1,5 @@
 import unittest
-from refinement_semantics import read_semantics
+from refinement_semantics import read_semantics, validate_builds
 
 
 def semantic(score=b'0000000000000000', accepted=b'0'):
@@ -27,6 +27,18 @@ class RefinementSemanticTests(unittest.TestCase):
         self.assertEqual(read_semantics(raw, 2)[1]['cached_attempts'], 1)
         with self.assertRaisesRegex(ValueError, 'Cache-hit diagnostic'):
             read_semantics(raw.replace(b'hits=1', b'hits=0'), 2)
+
+    def test_every_recorded_modified_source_must_match(self):
+        reference = {'memo': 0, 'semantic_trace': 1, 'source_tditeration_sha256': 'td',
+                     'source_Falign_localhom_sha256': 'falign', 'inherited_build_json_sha256': 'base'}
+        candidate = dict(reference, memo=1)
+        validate_builds(reference, candidate)
+        candidate['source_Falign_localhom_sha256'] = 'changed'
+        with self.assertRaisesRegex(ValueError, 'same-source'):
+            validate_builds(reference, candidate)
+        del candidate['source_Falign_localhom_sha256']
+        with self.assertRaisesRegex(ValueError, 'same-source'):
+            validate_builds(reference, candidate)
 
 
 if __name__ == '__main__':

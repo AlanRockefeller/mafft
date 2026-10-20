@@ -306,15 +306,43 @@ including signed zero, acceptance, subgeneration and convergence/finish flags,
 as well as exact intermediate sequence strings. All ten final alignments also
 matched the goldens. `round2/reject-memo-v3-semantic-analysis` retains the result
 and hashed stderr paths. End-output identity alone was not used to assert equal
-search paths.
+search paths. A later explicit suffix check also requires zero current gain and
+valid stamps for every remaining actual branch before any hit, preventing
+skipped scratch updates from feeding a later expensive attempt.
 
-Full-corpus and alternate-option validation of the latest nontracing source,
-followed by quiet-gated paired timings, remain pending. Its longer correctness
-run waits until the detailed phylogenetic jobs finish, protecting their
-wall-time budgets. Earlier v2 full-corpus output was preserved at nine successful
-jobs when superseded at an input boundary. The prototype will be retained only
-if the new measurements demonstrate an improvement; no speedup is inferred from
-the loaded correctness-run durations.
+That earlier suffix-guarded prototype (`2b9008d`, artifact label v4) passed
+**100/100** full golden outputs and **612/612** option/format comparisons.
+Its three-round timing screens produced the following observed ratios, with
+background contention retained rather than discarded:
+
+| Earlier prototype screen | Dikarya3 CPU seconds per pass | Prototype CPU seconds per pass | Observed ratio | Flagged jobs / total |
+|---|---:|---:|---:|---:|
+| 12 development inputs | 56.657 | 54.743 | 1.035x | 70/72 |
+| Three high-reuse inputs | 25.023 | 21.777 | 1.149x | 18/18 |
+
+These are **not clean confirmation or accepted release gains**. Brief pre-job
+quiet checks did not prevent background activity during most jobs. They also
+precede the latest narrower eligibility rules, so cannot substitute for a new
+measurement of that source.
+
+Independent code review found inherited short-block scratch dependencies that
+the broad predicate did not exclude. The latest isolated source, `ad2ccd1`
+(artifact label v5), adds per-call safety reporting: blocks shorter than two
+columns after gap removal, interrupted calls, warp/nonstandard endpoint paths
+and asymmetric/nonfinite pair matrices cannot authorize reuse. Unsafe attempts
+clear old stamps. It leaves inherited scoring arithmetic unchanged.
+The [scoped dependency and terminal-tail argument](round2-refinement-reuse.md)
+explains those restrictions and the exact reset sites.
+
+Fresh v5 memo-off/on traces again match all **2,469 attempts, 171 accepted
+alignments and 6,603 master rows**, retaining all **508** active hits on the
+five-input subset. Latest full-corpus, option and sanitizer validation and clean
+paired measurements remain pending. Those jobs now follow the completed main
+phylogenetic study; their timings wait for the additional RAxML sensitivity
+cohort and the user-requested quiet window. Earlier v2 full-corpus output was
+preserved at nine successful jobs when superseded at an input boundary. No
+speedup is inferred from correctness-run durations, and the experiment remains
+outside the frozen release source until its new decision is complete.
 
 ## Compiler research and rejected alternatives
 

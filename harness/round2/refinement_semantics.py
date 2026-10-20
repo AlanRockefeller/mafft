@@ -58,6 +58,17 @@ def load_runs(path):
     return result
 
 
+def validate_builds(reference, candidate):
+    source_keys = {key for build in [reference, candidate] for key in build
+                   if key.startswith('source_') and key.endswith('_sha256')}
+    if (reference['memo'] != 0 or candidate['memo'] != 1 or
+            not all(x['semantic_trace'] == 1 for x in [reference, candidate]) or
+            'source_tditeration_sha256' not in source_keys or
+            any(not reference.get(key) or reference.get(key) != candidate.get(key) for key in source_keys) or
+            reference['inherited_build_json_sha256'] != candidate['inherited_build_json_sha256']):
+        raise ValueError('Require same-source traced memo-off and memo-on builds')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--reference-runs', type=Path, required=True)
@@ -68,11 +79,7 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     args = p.parse_args()
     builds = [json.loads(path.read_text()) for path in [args.reference_build, args.candidate_build]]
-    if (builds[0]['memo'] != 0 or builds[1]['memo'] != 1 or
-            not all(x['semantic_trace'] == 1 for x in builds) or
-            builds[0]['source_tditeration_sha256'] != builds[1]['source_tditeration_sha256'] or
-            builds[0]['inherited_build_json_sha256'] != builds[1]['inherited_build_json_sha256']):
-        raise ValueError('Require same-source traced memo-off and memo-on builds')
+    validate_builds(*builds)
     reference, candidate = load_runs(args.reference_runs), load_runs(args.candidate_runs)
     if not reference or set(reference) != set(candidate):
         raise ValueError('Semantic input cohorts differ')
@@ -104,6 +111,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     passed = all(r['semantic_records_byte_identical'] for r in results)
     write_json(args.output / 'summary.json', {
+        'analysis_code_sha256': sha256_file(__file__),
         'passed': passed, 'distinct_inputs': len(results), 'results': results,
         'reference_build_sha256': sha256_file(args.reference_build),
         'candidate_build_sha256': sha256_file(args.candidate_build),
