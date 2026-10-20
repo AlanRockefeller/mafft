@@ -7,6 +7,12 @@
 */
 
 #include "mltaln.h"
+#include <stdint.h>
+
+/* Experimental whole-attempt reuse; never enabled in the release build. */
+#ifndef MAFFT_REJECT_MEMO
+#define MAFFT_REJECT_MEMO 0
+#endif
 
 
 #define FULLSCORE 0
@@ -411,6 +417,24 @@ static void *athread( void *arg )
 	int **whichmtx;
 	void *igscache;
 
+#if MAFFT_REJECT_MEMO
+	uint64_t memo_epoch = 1, *memo_stamp = NULL;
+	double *memo_score = NULL;
+	unsigned long memo_hits = 0, memo_misses = 0;
+	int memo_accepted = 0;
+	const int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
+		parallelizationstrategy == BAATARI2 && randomseed == 0 && !cooling && cut == 0.0 &&
+		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
+		!rnakozo && !nkozo && specificityconsideration == 0.0 && ntarget == njob &&
+		!scoreout && !FULLSCORE && !DEBUG && !RECORD;
+	if( memo_enabled )
+	{
+		memo_stamp = calloc( (size_t)nbranch, sizeof(*memo_stamp) );
+		memo_score = malloc( (size_t)nbranch * sizeof(*memo_score) );
+		if( !memo_stamp || !memo_score ) ErrorExit( "Cannot allocate rejected-branch experiment." );
+	}
+#endif
+
 
 	locnjob = njob;
 
@@ -695,6 +719,10 @@ static void *athread( void *arg )
 			if( *collectingpt == -1 )
 			{
 				pthread_mutex_unlock( targ->mutex );
+#if MAFFT_REJECT_MEMO
+				if( memo_enabled ) fprintf( stderr, "\nREJECT_MEMO hits=%lu misses=%lu\n", memo_hits, memo_misses );
+				free( memo_stamp ); free( memo_score );
+#endif
 				igs_cache_free( igscache );
 				freelocalarrays
 				( 
@@ -755,6 +783,17 @@ static void *athread( void *arg )
 #endif
 
 //			for( i=0; i<2; i++ ) for( j=0; j<locnjob; j++ ) pair[i][j] = 0;
+#if MAFFT_REJECT_MEMO
+			memo_accepted = 0;
+			if( memo_enabled && alg == 'A' && memo_stamp[branchpos] == memo_epoch )
+			{
+				tscore = memo_score[branchpos];
+				memo_hits++;
+				fprintf( stderr, "%03d-%04d-%d (thread %4d) cached-rejection\r", iterate+1, *ndonept, k, thread_no );
+				goto memo_finish;
+			}
+			if( memo_enabled ) memo_misses++;
+#endif
 			distFromABranch( locnjob, distarr, stopol, topol, len, l, k ); // ato de idou
 			OneClusterAndTheOther_fast( locnjob, memlist[0], memlist[1], &s1, &s2, pairbuf, topol, l, k, smalldistmtx, distmtx, distarr );
 
@@ -1173,6 +1212,17 @@ static void *athread( void *arg )
 						pthread_mutex_lock( targ->mutex );
 						for( i=0; i<locnjob; i++ ) strcpy( mastercopy[i], localcopy[i] );
 						*subgenerationpt += 1;
+#if MAFFT_REJECT_MEMO
+						if( memo_enabled )
+						{
+							memo_accepted = 1;
+							if( ++memo_epoch == 0 )
+							{
+								memset( memo_stamp, 0, (size_t)nbranch * sizeof(*memo_stamp) );
+								memo_epoch = 1;
+								}
+						}
+#endif
 						gainlist[thread_no] = *basegainpt + gain;
 						*basegainpt += gain;
 
@@ -1218,6 +1268,14 @@ static void *athread( void *arg )
 #endif
 
 
+#if MAFFT_REJECT_MEMO
+			if( memo_enabled && !memo_accepted && isfinite(tscore) )
+			{
+				memo_score[branchpos] = tscore;
+				memo_stamp[branchpos] = memo_epoch;
+			}
+			memo_finish:
+#endif
 			converged2 = 0;
 			for( ii=iterate-2; ii>=0; ii-=1 ) 
 			{
