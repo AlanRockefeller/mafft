@@ -29,6 +29,38 @@ def simulate(arrivals, services, workers):
     return result
 
 
+def service_contention(rows, inputs):
+    """Describe the actual service observations used by a modeled input set.
+
+    Policy-level quiet acceptance does not erase transient job-level flags.
+    Concurrent-job None flags indicate unavailable individual attribution; they
+    are recorded separately from the isolated A observations used by two_jobs.
+    """
+    by_input = defaultdict(list)
+    for row in rows:
+        flag = row.get('contention', {}).get('contention_flag')
+        if flag is not None and type(flag) is not bool:
+            raise ValueError('Contention flags must be boolean or unknown')
+        by_input[row['input']].append(flag)
+    requested = set(inputs)
+    if requested - by_input.keys():
+        raise ValueError('Missing service-time evidence for modeled inputs')
+    details = []
+    for name in sorted(requested):
+        flags = by_input[name]
+        details.append({'input': name, 'observations': len(flags),
+                        'flagged': sum(flag is True for flag in flags),
+                        'unknown': sum(flag is None for flag in flags)})
+    affected = [row['input'] for row in details if row['flagged'] or row['unknown']]
+    return {'inputs': len(details),
+            'observations': sum(row['observations'] for row in details),
+            'flagged_observations': sum(row['flagged'] for row in details),
+            'unknown_observations': sum(row['unknown'] for row in details),
+            'affected_inputs': affected,
+            'has_flagged_or_unknown_observations': bool(affected),
+            'per_input': details}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--starts', type=Path, required=True)
@@ -44,6 +76,7 @@ def main():
     isolated = defaultdict(list)
     input_hashes = {}
     flags = []
+    a_rows = []
     for line in args.paired_runs.read_text().splitlines():
         row = json.loads(line)
         if row['build'] == args.build:
@@ -52,6 +85,7 @@ def main():
             isolated[row['input']].append(row['wall'])
             input_hashes[row['input']] = row['input_sha256']
             flags.append(row.get('contention', {}).get('contention_flag'))
+            a_rows.append(row)
     a_service = {name: statistics.mean(values) for name, values in isolated.items()}
     for row in starts:
         if input_hashes.get(row['input']) != row['input_sha256']:
@@ -75,6 +109,10 @@ def main():
         if any(r['returncode'] or r['timed_out'] or r['input_sha256'] != input_hashes.get(r['input']) for r in runs):
             raise ValueError('Failed or mismatched native throughput record')
         services = a_service if policy == 'two_jobs' else {r['input']: r['service_seconds'] for r in runs}
+        service_rows = a_rows if policy == 'two_jobs' else runs
+        service_path = args.paired_runs if policy == 'two_jobs' else path.parent/'runs.jsonl'
+        arrival_contention = service_contention(service_rows, (r['input'] for r in starts))
+        backlog_contention = service_contention(service_rows, native['queue_order'])
         projected = simulate(starts, services, native['concurrency'])
         # Calibrate the simple service model on the measured saturated order.
         backlog = [{'input': name, 'relative_seconds': 0.} for name in native['queue_order']]
@@ -92,11 +130,24 @@ def main():
                         'native_saturated_makespan_seconds': native['makespan_seconds'],
                         'modeled_saturated_makespan_seconds': predicted_backlog,
                         'saturated_calibration_relative_error': predicted_backlog/native['makespan_seconds']-1,
+                        'service_time_source': {'kind': 'isolated_A_pairs' if policy == 'two_jobs' else 'serial_native_policy',
+                                                'runs': str(service_path), 'runs_sha256': sha256_file(service_path)},
+                        'arrival_service_contention': arrival_contention,
+                        'backlog_service_contention': backlog_contention,
+                        'native_job_contention': service_contention(runs, native['queue_order']),
+                        'projection_interpretation': (
+                            'Sensitivity model using flagged or unknown individual service observations; '
+                            'not quiet individual latency evidence.'
+                            if arrival_contention['has_flagged_or_unknown_observations'] else
+                            'Projection using individually unflagged service observations; still a model, '
+                            'not measured arrival-time latency.'),
                         'native_summary': str(path), 'native_summary_sha256': sha256_file(path)})
     args.output.mkdir(parents=True, exist_ok=False)
     write_json(args.output/'summary.json', {'results': results,
                'starts_sha256': sha256_file(args.starts), 'excluded_starts': trace['excluded'],
                'paired_runs_sha256': sha256_file(args.paired_runs),
+               'throughput_selection_sha256': sha256_file(args.throughput_selection),
+               'projection_code_sha256': sha256_file(Path(__file__)),
                'paired_A_contention_flags': {'flagged': sum(x is True for x in flags), 'unknown': sum(x is None for x in flags)},
                'assumptions': 'A service uses isolated deterministic measurements; other policies use the selected single-job native policy service times. Two independent A workers share a fixed pool with no dynamic slowdown model. Native saturated calibration reports its approximation error. Selected execution-start timestamps are not user submissions or the complete arrival stream. Upstream/downstream jobs, cache/frequency changes and other production CPU users are omitted. These are projections, never measured latency or throughput guarantees.'})
     print(json.dumps([{k: r[k] for k in ['policy', 'observed_jobs', 'jobs_with_projected_wait', 'projected_response_seconds']} for r in results]))

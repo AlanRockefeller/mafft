@@ -107,3 +107,12 @@ response latency are separate. Throughput is completed jobs divided by queue mak
 GNU time records CPU and per-job peak RSS; process-group RSS is sampled for concurrent
 aggregate memory and labelled as a sampled maximum. External shared-VM activity cannot be
 fully controlled and no physical-host counter/frequency claim is made.
+
+Observed-stage-start projections are separate models, not native arrival-time
+measurements. Each policy records its service-time source and affected inputs
+with flagged or unknown individual contention observations, separately for the
+observed-start projection and saturated calibration. A policy-level quiet pass
+does not erase transient per-job flags. Projections using affected service
+observations are explicitly labeled sensitivity models; concurrent two-job
+individual attribution is recorded separately from the isolated A service
+observations that drive that model.
