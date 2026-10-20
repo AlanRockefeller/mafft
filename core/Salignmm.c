@@ -12,6 +12,21 @@
 #define TERMGAPFAC 0.0
 #define TERMGAPFAC_EX 0.0
 
+/* New ordinary-profile experiments are independent of the accepted partA cache. */
+#ifndef MAFFT_A_MATCH_ROWCACHE
+#define MAFFT_A_MATCH_ROWCACHE 0
+#endif
+#ifndef MAFFT_A_MATCH_ROWCACHE_BYTES
+#define MAFFT_A_MATCH_ROWCACHE_BYTES 8388608
+#endif
+#ifndef MAFFT_A_SCARR_STACK
+#define MAFFT_A_SCARR_STACK 0
+#endif
+#if MAFFT_A_MATCH_ROWCACHE
+#include "rawrowcache.h"
+static TLS mafft_rowcache amc_cache;
+#endif
+
 
 static TLS double **impmtx = NULL;
 static TLS int impalloclen = 0;
@@ -285,6 +300,9 @@ static void match_calc_add( double **scoreingmtx, double *match, double **cpmx1,
 	free( scarr );
 #endif
 }
+#if MAFFT_A_MATCH_ROWCACHE
+#define match_calc match_calc_uncached
+#endif
 static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, double **cpmx2, int i1, int lgth2, double **doublework, int **intwork, int initialize )
 {
 #if FASTMATCHCALC
@@ -296,7 +314,13 @@ static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, do
 	double *matchpt, *cpmxpdpt, **cpmxpdptpt;
 	int *cpmxpdnpt, **cpmxpdnptpt;
 	double *scarr;
+	#if MAFFT_A_SCARR_STACK
+	/* scarr_fill writes every element; the original calloc zeros are unused. */
+	double scarr_local[32];
+	scarr = nalphabets <= 32 ? scarr_local : calloc( nalphabets, sizeof( double ) );
+#else
 	scarr = calloc( nalphabets, sizeof( double ) );
+#endif
 	if( initialize )
 	{
 		int count = 0;
@@ -353,7 +377,11 @@ static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, do
 			matchpt++;
 		} 
 	}
+	#if MAFFT_A_SCARR_STACK
+	if( scarr != scarr_local ) free( scarr );
+#else
 	free( scarr );
+#endif
 //	fprintf( stderr, "done\n" );
 #else
 	int j, k, l;
@@ -361,7 +389,13 @@ static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, do
 	double **cpmxpd = doublework;
 	int **cpmxpdn = intwork;
 	double *scarr;
+	#if MAFFT_A_SCARR_STACK
+	/* scarr_fill writes every element; the original calloc zeros are unused. */
+	double scarr_local[32];
+	scarr = nalphabets <= 32 ? scarr_local : calloc( nalphabets, sizeof( double ) );
+#else
 	scarr = calloc( nalphabets, sizeof( double ) );
+#endif
 // simple
 	if( initialize )
 	{
@@ -388,9 +422,31 @@ static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, do
 		for( k=0; cpmxpdn[k][j]>-1; k++ )
 			match[j] += scarr[cpmxpdn[k][j]] * cpmxpd[k][j];
 	} 
+	#if MAFFT_A_SCARR_STACK
+	if( scarr != scarr_local ) free( scarr );
+#else
 	free( scarr );
 #endif
+#endif
 }
+
+#if MAFFT_A_MATCH_ROWCACHE
+#undef match_calc
+/* Only raw substitution scores are cached.  The caller adds row-specific
+ * importance afterward and retains all original gap/DP/traceback processing. */
+static void match_calc( double **matrix, double *match, double **p1, double **p2, int row, int width, double **work, int **iwork, int initialize )
+{
+	int slot = -1;
+	if( initialize ) mafft_rowcache_clear( &amc_cache );
+	else
+	{
+		slot = mafft_rowcache_slot( &amc_cache, p1, matrix, constants_generation, nalphabets, row, width );
+		if( mafft_rowcache_load( &amc_cache, slot, match ) ) return;
+	}
+	match_calc_uncached( matrix, match, p1, p2, row, width, work, iwork, initialize );
+	if( !initialize ) mafft_rowcache_store( &amc_cache, slot, match );
+}
+#endif
 
 static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double *lastverticalw, 
 						char **seq1, char **seq2, 
@@ -1369,6 +1425,9 @@ double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **
 
 	if( seq1 == NULL )
 	{
+#if MAFFT_A_MATCH_ROWCACHE
+		mafft_rowcache_clear( &amc_cache );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );
@@ -1898,6 +1957,11 @@ double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **
 		imp_match_out_vead_tate( initverticalw, 0, lgth1 ); // 060306
 
 	match_calc( n_dynamicmtx, currentw, *cpmx1pt, *cpmx2pt, 0, lgth2, doublework, intwork, 1 );
+#if MAFFT_A_MATCH_ROWCACHE
+	mafft_rowcache_prepare( &amc_cache, *cpmx1pt, lgth1, lgth2, nalphabets,
+	                       n_dynamicmtx, constants_generation, MAFFT_A_MATCH_ROWCACHE_BYTES,
+	                       "A_MATCH_ROWCACHE" );
+#endif
 	if( constraint )
 		imp_match_out_vead( currentw, 0, lgth2 ); // 060306
 #if 0 // -> tbfast.c // impossible

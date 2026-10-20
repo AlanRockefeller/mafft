@@ -364,7 +364,7 @@ defs.o : defs.c
 #A+++alignmm.o : SA+++alignmm.c $(HEADER)
 #	$(CC) $(MYCFLAGS) -c SA+++alignmm.c -o A+++alignmm.o
 
-Salignmm.o : Salignmm.c $(HEADER)
+Salignmm.o : Salignmm.c $(HEADER) rawrowcache.h
 	$(CC) $(MYCFLAGS) -c Salignmm.c 
 
 Dalignmm.o : Dalignmm.c $(HEADER)
