@@ -132,6 +132,11 @@ Each input produced **five different B outputs**, all different from its matchin
 A golden. These nested controls confirm longstanding MAFFT behavior; they are
 not two additional independent biological datasets and do not imply equal
 distributions of nondeterministic outcomes across builds.
+The median B-versus-A homology F1 is 0.996996 for `0uuv` and 0.985317 for
+`1msv`; the respective minima are 0.988897 and 0.976345. Within-B minima are
+0.989205 and 0.975704. The separate `round2/original-threading-control-analysis`
+preserves every comparison. This small control cannot establish whether the
+fork increases or decreases the frequency or magnitude of nondeterminism.
 
 ## Search variability and a completed supported example
 
@@ -201,6 +206,14 @@ joint criterion. This does not establish that every possible two-thread change
 is trivial. Selecting a maximally different B replicate makes this a stress case,
 not an estimate of the prevalence of strong conflicts. Support remains conditional
 on each analyzed alignment and model.
+
+Among the 15 nonzero splits shared by A and B in this example, median SH-aLRT
+and UFBoot changes are both zero, but individual changes range from -12.5 to
++89.5 and -12 to +6 percentage points, respectively. None crosses the joint
+strong-support threshold. The large SH-aLRT change therefore does not identify
+a newly strong conflicting clade. `round2/ghy3-support-changes` contains the
+signed per-split changes and original labels; branches within one tree are not
+independent biological replicates.
 
 Evidence includes `round2/ghy3-support-preview`, `round2/ghy3-clade-stability` and
 SVG/PDF tanglegrams with support annotations in `round2/ghy3-support-figures`.
@@ -354,9 +367,10 @@ Higher support alone does not establish greater accuracy. Selecting the B run
 with the largest prior default-search distance for a detailed analysis makes
 that subset informative-case sampling, not a prevalence estimate.
 
-The remaining 34 production two-thread inputs, repeated F checks, frozen
-original-opt8 controls and broader feasible tree searches are queued as distinct
-stages. Their results must be added before making workload-wide conclusions.
+The remaining 34 production two-thread inputs and broader feasible tree searches
+are queued as distinct stages. The repeated F checks and original-opt8 controls
+are complete, as described above. Broader alignment and tree results must be
+added before making workload-wide conclusions.
 No raw likelihoods are used to rank different alignments, and no production
 threading setting has been changed by this study.
 
