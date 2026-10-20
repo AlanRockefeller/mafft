@@ -53,10 +53,11 @@ read the single-thread result as a byte-identity guarantee for threaded refineme
 
 ## Round 2 research (unreleased)
 
-The `perf/dikarya-round2` branch currently reports `7.526-opt8-dikarya3`. It adds
+The `perf/dikarya-round2` branch currently reports `7.526-opt8-dikarya4`. It adds
 rolling score-only DP, a guarded identical-sequence score shortcut, zero-extension
 traceback specialization, exact raw-profile reuse, direct gap-aware pair scoring
-and immutable six-mer histograms. Component measurements and correctness checks
+immutable six-mer histograms and guarded reuse of terminal rejected refinement
+attempts. Component measurements and correctness checks
 are recorded in the [performance report](paper/round2-performance.md); final
 whole-corpus paired timing, profiles and scheduling measurements are pending a
 quiet VM window. There is no final incremental speedup or deployment claim yet.

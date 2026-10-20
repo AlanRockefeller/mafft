@@ -1,10 +1,7 @@
 #include "mltaln.h"
 
-#ifndef MAFFT_REJECT_MEMO
-#define MAFFT_REJECT_MEMO 0
-#endif
 #if MAFFT_REJECT_MEMO
-/* Experimental rejection reuse must not retain results from inherited
+/* Rejection reuse must not retain results from inherited
  * short-block or interrupted paths whose scratch-state independence is
  * unproven.  This flag reports safety only; scoring arithmetic is unchanged. */
 TLS int mafft_reject_memo_falign_safe = 0;

@@ -9,10 +9,8 @@
 #include "mltaln.h"
 #include <stdint.h>
 
-/* Experimental whole-attempt reuse; never enabled in the release build. */
-#ifndef MAFFT_REJECT_MEMO
-#define MAFFT_REJECT_MEMO 0
-#endif
+/* Reuse only verified terminal no-gain attempts; see the scoped proof in
+ * paper/round2-refinement-reuse.md. The shared switch lives in mltaln.h. */
 #if MAFFT_REJECT_MEMO
 extern TLS int mafft_reject_memo_falign_safe;
 static int reject_memo_symmetric_scores( void )
