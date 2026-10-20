@@ -23,6 +23,10 @@ alignment retains its recorded production direction and strategy flags. Inputs
 are fungal DNA from the supplied production/sample corpus; strategy is never
 replaced with `--auto` for convenience.
 
+The original `sample.tgz` archive was not located. The recovered extracted inputs
+match all 100 hashes in the preserved production manifest, establishing continuity
+with the previous real-data study.
+
 Each original FASTA SHA-256 defines one file-level summary unit. There are 12
 distinct hashes in the pilot, with 8–1,042 records per file. These are selected
 files, not a random sample of fungal diversity. Some datasets share taxa and
@@ -117,7 +121,17 @@ is compatible with a source-level distinction: A enters a one-worker plus
 coordinator refinement implementation, whereas C enters a separate serial
 implementation. Configuration F (`--thread 2 --threadit 1`) tests retaining the
 A-style refinement path while parallelizing earlier stages. Its one-run quick
-checks matched A on three inputs; repeated and broad F results are still needed.
+checks matched A on three inputs. The completed broader F check now has **92/92
+byte matches to the A golden**, comprising two runs on each of all **46** original
+two-thread inputs. All F repeats match each other in this finite test. This is
+the frozen candidate2 study binary; final dikarya3 checks and isolated throughput
+measurements remain separate, pending evidence.
+
+Frozen original opt8 controls ran A once and B five times on `0uuv` and `1msv`.
+Each input produced **five different B outputs**, all different from its matching
+A golden. These nested controls confirm longstanding MAFFT behavior; they are
+not two additional independent biological datasets and do not imply equal
+distributions of nondeterministic outcomes across builds.
 
 ## Search variability and a completed supported example
 

@@ -69,6 +69,10 @@ duplicates. Actual production strategy and direction flags are retained:
 accurate-direction prepass. Deterministic performance comparisons explicitly use
 `--thread 1`; they do not silently substitute a different alignment strategy.
 
+`sample.tgz` itself was not found during the filesystem audit. The recovered
+original extracted FASTAs in `bench/data` match all 100 archived manifest hashes;
+the experiments use those actual fungal sequences, not generated substitutes.
+
 Timed experiments were serialized, with builds, training and correctness runs
 stopped. Build order alternated or rotated within each paired experiment. Earlier
 kernel/stage probes used CPU 1; later compiler, ordinary-profile and FFT repeats
@@ -300,7 +304,7 @@ Other major decisions:
 | Common-query groups from real FASTA shapes | 1.145–1.253x in three probes using a synthetic +600/-450 matrix. No production scoring API/dispatch; no production speedup claim. |
 | Stack-only ordinary `scarr` allocation removal | Exact, but 58.22 versus 58.22 development CPU seconds; leave off. |
 | Additional dynamic duplicate realignment cache | Production specificity setting did not execute the proposed calls; rejected by path inspection rather than implementing an unused optimization. |
-| Prefix/suffix/substring DP reuse | Matching substrings do not prove matching incoming affine states, endpoint/tie handling or striped layout. No unjustified block reuse implemented. |
+| Prefix/suffix/substring DP reuse | Audit of 97 raw input hashes finds substantial exact prefix structure, but matching substrings do not prove matching incoming affine states, endpoint/tie handling or striped layout. No unjustified block reuse implemented; measured structure is detailed below. |
 | More importance-band tuning | Prior 16/32-row bands and branchless bounds already regressed. Preserved the successful previous policy instead of repeating those failures. |
 
 ## Correctness and memory evidence
@@ -408,6 +412,27 @@ Private evidence directories include `candidate1-dev`, `candidate2-dev`,
 `ordinary-development`, `fftnsi-repeat`, `compiler-screen`,
 `ordinary-rowcache-prototype` and `score-kernel-check-*` under `round2/`.
 Every measured snapshot remains separate from subsequent source changes.
+
+An additional data audit (`reuse-data-audit`, reproduced by
+`harness/round2/reuse_audit.py`) uses verified golden strand orientations,
+uppercase/ungapped strings and one vote per original raw input hash. After
+deduplicating strings within each input, 7,266,647 characters remain. Adjacent
+lexicographically sorted sequences share **1,749,674 prefix characters (24.08%)**;
+the equivalent reverse-string trie shares **1,730,336 suffix characters (23.81%)**.
+These are trie-structure counts, not percentages of executed DP work or time.
+Across 942,936 distinct unordered sequence pairs, 5,395 are proper exact
+containments; pure A/C/G/T containments cover only **0.517% of nominal pair cells**.
+None has multiple literal occurrences in the longer string. Containment alone
+therefore looks narrow in this corpus, while common-target prefix batches deserve
+more investigation.
+
+One precise future experiment is to sort variable queries for a fixed striped
+target and restore complete DP frontiers at shared prefixes. Full traceback would
+also need the matching prefix history and global endpoint/tie state. Current
+pair order, variable striped widths, guard/storage classes and checkpoint-copy
+costs prevent treating the character fraction as an available speedup. Suffix
+counts do not authorize reversing recurrences or tie-breaking. The audit enables
+no shortcut and supplies no runtime estimate.
 
 The strongest remaining research candidates must be prioritized with the final
 profile: further exact full-traceback work, ordered importance-contribution
