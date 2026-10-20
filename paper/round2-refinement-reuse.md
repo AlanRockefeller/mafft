@@ -126,9 +126,23 @@ goldens. The additional guards preserved all 508 hits in this subset; none of
 its rejected attempts used the short-block exclusion.
 
 See [the v5 semantic result](../../round2/reject-memo-v5-semantic-analysis/summary.json).
-The broader v4 prototype had already passed 100 full outputs and 612
-option/format comparisons, but those results do not substitute for validation
-of the latest v5 source. Its full-corpus, alternate-option and sanitizer checks
-and clean paired timing decision remain pending. Earlier v4 timing screens
+The latest v5 source also passed all 100 full outputs and 612 option/format
+comparisons. Its active guard ran on 97 production jobs, with hits in 84:
+3,632 attempts were reused and 82,371 computed normally. These job-weighted
+counts do not estimate CPU fractions. No production rejection used the
+short-block exclusion in this run.
+
+An ASAN/UBSAN build matched four real goldens and all 20 short-input
+comparisons. Three one-column settings each exercised nine unsafe rejections
+and zero hits, confirming that the exclusion actually ran. Fractional-scoring
+two- and three-column cases also exercised active hits while remaining exact.
+The extracted actual matrix guard passed 373 expectations in each of strict
+GCC and ASAN/UBSAN builds, covering symmetric/asymmetric values and zero signs,
+NaN/Inf, null rows and seeded mutations. Repeated backends are not independent
+data. See [the corpus validation summary](../../round2/reject-memo-v5-validation-summary.json),
+[sanitizer completion record](../../round2/memo-v5-sanitizer-finished.json) and
+[matrix-guard check](../../round2/reject-memo-v5-score-guard/manifest.json).
+
+The clean paired timing decision remains pending. Earlier v4 timing screens
 had observed background contention, so their apparent gains are not clean
 confirmation. The experiment is not promoted on that evidence alone.

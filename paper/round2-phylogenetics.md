@@ -383,6 +383,54 @@ publisher Figshare record had no downloadable files. No independent topology
 score is claimed. The [Albatrellus audit](../../round2/albatrellus-audit/audit.json)
 preserves exact scope, voucher evidence and limitations.
 
+## Separate RAxML-NG sensitivity check on `zdku`
+
+The deep split loss motivated a separate **RAxML-NG 2.0.2** cohort on the
+same three prepared MAFFT alignments: A r0, selected B r1 and C r0. Seven
+searches used `GTR+F+G4`, one thread and one worker, four starting trees per
+search (`pars{2},rand{2}`), and likelihood convergence epsilon 0.1. A used
+seeds 88311, 88329 and 88341; B and C each used 88311 and 88329. All 141
+original taxa were retained during inference. The
+[experiment record](../../round2/raxml-zdku/experiment.json) records the
+executable/version/hash, source alignments and settings. These searches are
+kept separate from IQ-TREE results rather than pooled into that cohort.
+
+The comparison below first collapses original edges <=1e-6, then retains the
+134 exact original duplicate representatives. Quartet disagreement uses the
+stored fixed panel of 10,000 draws. Each A–B/A–C comparison pairs the same
+RAxML-NG seed across alignments.
+
+| Comparison | Seed | Normalized RF | Sampled quartet disagreement |
+|---|---:|---:|---:|
+| A–B r1 | 88311 | 0.17557 | 0.0344 |
+| A–B r1 | 88329 | 0.25191 | 0.1184 |
+| A–C r0 | 88311 | 0.17939 | 0.0563 |
+| A–C r0 | 88329 | 0.17176 | 0.1119 |
+| Same A alignment, three seed pairs | 88311/88329/88341 | 0.03817–0.04962 | 0.0024–0.0687 |
+
+Direct inspection of the seven raw best trees confirms that the **70|71
+bipartition `370c41447962b7c6` occurs in all three A trees and is absent
+from both B trees and both C trees**. Its 100/100 support refers to
+the earlier IQ-TREE A analysis, not to these RAxML-NG trees: no RAxML-NG
+bootstrap or branch-support analysis was performed. Representative raw
+[A](../../round2/raxml-zdku/A-seed88311/inference.raxml.bestTree),
+[B](../../round2/raxml-zdku/B-seed88311/inference.raxml.bestTree) and
+[C](../../round2/raxml-zdku/C-seed88311/inference.raxml.bestTree) best trees
+and the [complete comparisons](../../round2/raxml-zdku/comparisons.json)
+are available for inspection.
+
+Thus the selected alignments' deep-split difference and larger RF variation
+are not confined to IQ-TREE's search implementation. All four paired
+between-alignment nRF values exceed the observed fixed-A nRF range. Quartet
+variability is less cleanly separated: the lower A–B/A–C quartet distances
+overlap the range produced by different searches on the fixed A alignment.
+Neither the finite within-A controls nor four starts exhaust search
+uncertainty. This is **one selected input and three MAFFT alignments**, not
+seven biological observations or independent biological truth. Cross-program
+congruence of a sensitivity pattern does not establish which ITS alignment or
+tree is more accurate; the independent voucher-matched loci remain too sparse
+to adjudicate this split.
+
 ## Build checks, visualizations and practical interpretation
 
 Frozen original opt8 controls used A once and B five times on `0uuv` and
@@ -454,9 +502,10 @@ strongly supported split and substantial changes in support-filtered resolution.
 Independent evidence is too sparse to adjudicate those cases.
 
 Limitations include selected overlapping inputs, only five B/C alignment draws,
-three fixed-A search seeds, one support seed per selected alignment, a single
-fixed substitution model and no completed cross-program sensitivity result in
-this report. Support-aware disagreement can reflect alignment, search and
+three fixed-A search seeds, one IQ-TREE support seed per selected alignment, a
+single fixed substitution model, and second-program sensitivity on only one
+selected input without RAxML-NG bootstrap support. Support-aware disagreement
+can reflect alignment, search and
 support-estimation sensitivity together. Broader taxonomic/biological accuracy
 claims would require suitable additional independent evidence. Choosing among
 A, F and concurrent independent one-thread jobs for production still requires

@@ -336,10 +336,19 @@ explains those restrictions and the exact reset sites.
 
 Fresh v5 memo-off/on traces again match all **2,469 attempts, 171 accepted
 alignments and 6,603 master rows**, retaining all **508** active hits on the
-five-input subset. Latest full-corpus, option and sanitizer validation and clean
-paired measurements remain pending. Those jobs now follow the completed main
-phylogenetic study; their timings wait for the additional RAxML sensitivity
-cohort and the user-requested quiet window. Earlier v2 full-corpus output was
+five-input subset. The latest source also passed **100/100** goldens,
+**612/612** option/format comparisons, four real ASAN/UBSAN checks and 20 short
+comparisons. One-column cases actually exercised the protective bypass; two
+fractional-scoring cases exercised reuse. The actual matrix guard separately
+passed 373 expectations per strict GCC and sanitizer build. On the corpus,
+97 jobs entered the guard and 84 reused at least one attempt, totaling 3,632
+hits; these counts do not measure saved time.
+
+Clean paired measurements remain pending. The main phylogenetic study and
+additional RAxML sensitivity cohort have completed. Timing still waits for
+the user-requested quiet window; a separate read-only idle-service audit can
+recommend a prospective threshold without changing earlier flags or stopping
+production. Earlier v2 full-corpus output was
 preserved at nine successful jobs when superseded at an input boundary. No
 speedup is inferred from correctness-run durations, and the experiment remains
 outside the frozen release source until its new decision is complete.
