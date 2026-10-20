@@ -5,9 +5,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
+
+
+def check_version_stamps(core):
+    native = re.search(r'^#define\s+VERSION\s+"([^"\n]+)"',
+                       (core / 'mltaln.h').read_text(), re.MULTILINE)
+    launcher = re.search(r'^version="v([^ ()"\n]+)',
+                         (core / 'mafft.tmpl').read_text(), re.MULTILINE)
+    if not native or not launcher or native[1] != launcher[1]:
+        raise ValueError('Native VERSION and launcher template version must agree before building')
+    return {'native': native[1], 'launcher': launcher[1]}
 
 
 def main():
@@ -19,7 +30,8 @@ def main():
     source=dst/'source';prefix=dst/'install'
     shutil.copytree(args.source.resolve(),source,ignore=shutil.ignore_patterns('.git','*.o','*.gcda','*.gcno','__pycache__','bin','binaries','scripts'))
     (source/'scripts').mkdir(exist_ok=True);(source/'binaries').mkdir(exist_ok=True)
-    core=source/'core';cc=shutil.which(args.cc) if not Path(args.cc).is_absolute() else args.cc
+    core=source/'core';versions=check_version_stamps(core)
+    cc=shutil.which(args.cc) if not Path(args.cc).is_absolute() else args.cc
     if not cc:raise SystemExit('compiler unavailable')
     commands=[['make','-C',str(core),'clean'],
               ['make','-C',str(core),'-j'+str(args.jobs),'CC='+cc,'CFLAGS='+args.flags],
@@ -27,7 +39,8 @@ def main():
               ['make','-C',str(core),'install','CC='+cc,'CFLAGS='+args.flags,'PREFIX='+str(prefix),'STRIP=true']]
     hashes={str(p.relative_to(source)):hashlib.sha256(p.read_bytes()).hexdigest() for p in core.iterdir() if p.is_file() and (p.suffix in ['.c','.h','.tmpl'] or p.name=='Makefile')}
     metadata={'source':str(args.source.resolve()),'source_sha256':hashes,'compiler':subprocess.check_output([cc,'--version'],text=True),
-              'flags':args.flags,'commands':commands,'prefix':str(prefix),'argv':os.sys.argv}
+              'flags':args.flags,'commands':commands,'prefix':str(prefix),'argv':os.sys.argv,
+              'diagnostic_version_stamps':versions}
     (dst/'build.json').write_text(json.dumps(metadata,indent=2)+'\n')
     with (dst/'build.log').open('x') as log:
         start=time.monotonic()
