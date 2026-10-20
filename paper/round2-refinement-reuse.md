@@ -1,9 +1,10 @@
 # Exact reuse of a terminal rejected-refinement suffix
 
-This is an isolated, default-off experiment on branch
-`experiment/rejected-branch-memo`, separate from the selected dikarya3 source.
-The latest guarded snapshot is `ad2ccd1`. Earlier snapshots and their evidence
-remain available; no production setting or installation changed.
+The guarded experiment is preserved default-off on branch
+`experiment/rejected-branch-memo`, snapshot `ad2ccd1`. Its exact guarded code
+is now selected, enabled through a shared header switch, for dikarya4 validation
+on `perf/dikarya-round2`. The earlier dikarya3 source/build and every experimental
+snapshot remain available; no production setting or installation changed.
 
 ## What is reused
 
@@ -143,6 +144,18 @@ data. See [the corpus validation summary](../../round2/reject-memo-v5-validation
 [sanitizer completion record](../../round2/memo-v5-sanitizer-finished.json) and
 [matrix-guard check](../../round2/reject-memo-v5-score-guard/manifest.json).
 
-The clean paired timing decision remains pending. Earlier v4 timing screens
-had observed background contention, so their apparent gains are not clean
-confirmation. The experiment is not promoted on that evidence alone.
+The later v5 three-round screen, under the prospectively calibrated idle-service
+criterion, reduced the three deliberately selected high-reuse inputs' CPU total
+per pass from 25.417 to 22.090 seconds (**1.151x**), with 18/18 exact outputs and
+zero contention flags. All three rounds favored reuse. Development averaged
+57.727 versus 55.797 CPU seconds (**1.035x**), retaining three flagged jobs among
+72; those two affected inputs have a separate confirmation plan. Earlier v4
+screens retain their contention caveat and are not the selection evidence.
+
+The guarded implementation is selected for dikarya4 on this restricted measured
+gain plus its exactness evidence. Its final fresh tracked builds, corpus timing,
+profiles and scheduling measurements remain pending. The high-reuse set was
+purposefully selected and does not estimate the whole-corpus gain. See the
+[v5 development](../../round2/reject-memo-v5-idle-development-analysis/summary.json)
+and [high-reuse](../../round2/reject-memo-v5-idle-high-reuse-analysis/summary.json)
+results, with every original record and prospective criterion retained.

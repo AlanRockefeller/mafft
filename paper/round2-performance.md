@@ -1,7 +1,7 @@
 # Round 2: further exact MAFFT speedups on the Dikarya VM
 
 Research dates: 2026-10-19–20. Starting version: **7.526-opt8-dikarya2**.
-Selected version for final validation: **7.526-opt8-dikarya3**.
+Selected version for final validation: **7.526-opt8-dikarya4**.
 
 **This is an interim performance report.** Component experiments, tracked release
 build and the regression/sanitizer sweep are complete. The final 100-file paired
@@ -285,13 +285,14 @@ job. Only adjacent preliminary/final status messages are merged. The initial
 exploratory audit that merged keys across invocations is superseded by the
 tested parser and `round2/rejected-branch-audit`.
 
-An isolated, default-off prototype now exists on branch
+The isolated, default-off prototype is preserved on branch
 `experiment/rejected-branch-memo` in the separate `mafft-reject-memo` worktree.
 It retains exact rejected scores and original convergence-history updates,
 invalidating every branch after an acceptance. Guards restrict it to one worker,
 BAATARI2, fixed tree/order, zero cut, DNA, ordinary constrained profile alignment,
 complete targets and no RNA/specificity scoring. Allocation failure disables the
-optional cache. It is not part of the frozen release source.
+optional cache. Its guarded final form is now selected for dikarya4 validation;
+the earlier dikarya3 build remains independently frozen.
 
 The first build's guard was inactive because dvtditr initializes `cooling=1`
 even with inert `cut=0`. Those eight golden matches validate only the bypass.
@@ -344,14 +345,42 @@ passed 373 expectations per strict GCC and sanitizer build. On the corpus,
 97 jobs entered the guard and 84 reused at least one attempt, totaling 3,632
 hits; these counts do not measure saved time.
 
-Clean paired measurements remain pending. The main phylogenetic study and
-additional RAxML sensitivity cohort have completed. Timing still waits for
-the user-requested quiet window; a separate read-only idle-service audit can
-recommend a prospective threshold without changing earlier flags or stopping
-production. Earlier v2 full-corpus output was
-preserved at nine successful jobs when superseded at an input boundary. No
-speedup is inferred from correctness-run durations, and the experiment remains
-outside the frozen release source until its new decision is complete.
+A read-only idle-service calibration eventually accepted its twentieth
+two-minute window: median busy load 0.128 cores, p95 0.178, no busy scientific
+process. Its prespecified rule selected a **prospective 0.20-core** ceiling,
+with the scientific-process limit still 0.05 cores. Earlier measurements retain
+their original flags. No external process was stopped or reprioritized.
+
+The fresh v5 screen then completed:
+
+| Guarded v5 screen, three paired rounds | Dikarya3 CPU seconds per pass | Memo CPU seconds per pass | CPU speedup | Flagged jobs / total |
+|---|---:|---:|---:|---:|
+| 12 development inputs | 57.727 | 55.797 | 1.035x | 3/72 |
+| Three deliberately selected high-reuse holdout inputs | 25.417 | 22.090 | 1.151x | 0/18 |
+
+All 90 outputs matched goldens. Each round favored reuse in both screens;
+no input crossed the prespecified material-regression threshold. The high-reuse
+set establishes a useful restricted improvement, not an unbiased holdout or
+whole-corpus estimate. The development result retains its three flagged jobs;
+`khx6` and `jqh7` have a separate three-round confirmation plan. Results are
+`reject-memo-v5-idle-{development,high-reuse}-analysis`.
+
+This evidence, the dependency argument and differential/sanitizer checks support
+selecting the guarded code for **dikarya4**. The common macro is defined in
+`mltaln.h` so worker and Falign agree; `-DMAFFT_REJECT_MEMO=0` remains an ablation.
+Fresh tracked-source release/sanitizer builds and the final paired corpus,
+profiles and scheduling campaign use new `dikarya4-*` directories. The unused
+zero-job dikarya3 final timing plans remain preserved and paused. Earlier v2
+full-corpus output was preserved at nine successful jobs when superseded.
+No speedup is inferred from correctness-run durations.
+
+A separate default-off residue-map cache prototype is preserved on branch
+`experiment/residue-map-cache`. Complete row bytes, including NUL, establish
+identity; per-call pins protect aliased IDs. Persistent requested storage is
+capped at 16 MiB per worker, excluding temporary fallbacks and allocator
+overhead. Review added release hooks outside DP allocation guards, including
+the D path. This experiment has no executed differential or performance result
+yet and is not included in dikarya4.
 
 ## Compiler research and rejected alternatives
 
