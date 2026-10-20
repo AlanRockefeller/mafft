@@ -37,7 +37,7 @@
 
 
 
-#define VERSION "7.526-opt8-dikarya2"
+#define VERSION "7.526-opt8-dikarya3"
 /* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout. Preserve
    the designated opt8 reference's header byte-for-byte across this speedup. */
 #define ALIGNMENT_VERSION "7.526-opt8"

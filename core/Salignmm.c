@@ -12,9 +12,9 @@
 #define TERMGAPFAC 0.0
 #define TERMGAPFAC_EX 0.0
 
-/* New ordinary-profile experiments are independent of the accepted partA cache. */
+/* Ordinary-profile row reuse is independent of the partial-profile cache. */
 #ifndef MAFFT_A_MATCH_ROWCACHE
-#define MAFFT_A_MATCH_ROWCACHE 0
+#define MAFFT_A_MATCH_ROWCACHE 1
 #endif
 #ifndef MAFFT_A_MATCH_ROWCACHE_BYTES
 #define MAFFT_A_MATCH_ROWCACHE_BYTES 8388608

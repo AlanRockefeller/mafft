@@ -163,7 +163,7 @@ static inline int kb_kind( int i, int c )
 #endif
 
 #ifndef MAFFT_KB_ZERO_EXT
-#define MAFFT_KB_ZERO_EXT 0
+#define MAFFT_KB_ZERO_EXT 1
 #endif
 typedef struct
 {
@@ -371,7 +371,7 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 #define MAFFT_KB_SCORE_ONLY 1
 #endif
 #ifndef MAFFT_KB_SELF_SCORE
-#define MAFFT_KB_SELF_SCORE 0
+#define MAFFT_KB_SELF_SCORE 1
 #endif
 #if MAFFT_KB_SCORE_ONLY
 /*

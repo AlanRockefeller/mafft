@@ -6,7 +6,7 @@
  * order stay with the caller. Storage is local to one distance-matrix stage.
  */
 #ifndef MAFFT_DENSE_KMER
-#define MAFFT_DENSE_KMER 0
+#define MAFFT_DENSE_KMER 1
 #endif
 #include <stdint.h>
 #if MAFFT_DENSE_KMER && defined(__AVX2__)

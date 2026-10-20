@@ -267,7 +267,7 @@ static TLS double *mc_scarr = NULL;
  * Hashing only locates candidates; every double's bits must compare equal.
  */
 #ifndef MAFFT_MATCH_ROWCACHE
-#define MAFFT_MATCH_ROWCACHE 0
+#define MAFFT_MATCH_ROWCACHE 1
 #endif
 #ifndef MAFFT_MATCH_ROWCACHE_BYTES
 #define MAFFT_MATCH_ROWCACHE_BYTES 8388608
