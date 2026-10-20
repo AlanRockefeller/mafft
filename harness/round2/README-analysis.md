@@ -449,3 +449,19 @@ random seed vary within a cohort. Distinct cohorts receive separate dataset
 and aggregate summaries, identified by `protocol_id`; they are never pooled
 merely because both used normal search or both used fast search. Missing A
 searches after partial failures are explicitly recorded as excluded groups.
+
+`observed_starts.py` reads matching dated alignment commands from existing
+production logs without changing jobs. It requires the current input SHA-256,
+binary path, thread count and options to match the frozen manifest. It records
+excluded or changed inputs. The selected stage execution starts are neither
+user submission times nor the entire production arrival stream. Log clock
+timestamps have no specified timezone; only relative intervals are used.
+
+After isolated and saturated native measurements finish, `trace_replay.py`
+projects fixed worker policies onto those observed start intervals. The simple
+queue model separates service, waiting and response time and reports its error
+against the measured saturated schedule. It checks build and input identities
+and refuses contended native throughput summaries. Projections omit other
+pipeline stages and resource users and must remain separate from measured
+throughput and latency. Recorded historical runtimes are never used as paired
+benchmark denominators.
