@@ -300,17 +300,27 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 static int lfill_prepare( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
                           unsigned char *u1, unsigned char *u2, int lgth1, int lgth2, int *ithrpt, unsigned char *used )
 {
-	int i, j, c, k, maxabs = 0, ithr;
+	int i, j, c, k, ithr;
 	int pen = penalty, ext = penalty_ex;
-	double thr = -offset + scoreoffset * 600;
+	double maxabs = 0.0, thr, span, basebound;
 	if( lgth1 < 1 || lgth2 < 1 ) return( 0 );
+	if( !isfinite(scoreoffset) ) return( 0 );
+	/* Conversion must follow finite/range checks. Widen before negating the
+	   integer offset too: -INT_MIN and abs(INT_MIN) overflow in integer C. */
+	thr = ( offset ? -(double)offset : 0.0 ) + scoreoffset * 600;
+	if( !isfinite(thr) || thr < (double)INT_MIN || thr > (double)INT_MAX ) return( 0 );
 	if( thr != (double)(int)thr ) return( 0 );
 	ithr = (int)thr;
+	span = (double)lgth1 + (double)lgth2 + 4.0;
+	basebound = fabs((double)pen) + fabs((double)ext) + fabs((double)ithr) + 1.0;
+	/* This lower bound also rejects impossible lengths before scanning them. */
+	if( basebound * span * 2.0 > 5.0e8 ) return( 0 );
 	for( i=0; i<nalphabets; i++ ) for( j=0; j<nalphabets; j++ )
 	{
 		double v = n_dynamicmtx[i][j];
+		if( !isfinite(v) || v < (double)INT_MIN || v > (double)INT_MAX ) return( 0 );
 		if( v != (double)(int)v ) return( 0 );
-		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+		if( fabs(v) > maxabs ) maxabs = fabs(v);
 	}
 	/* Characters outside the alphabet read entries that were never set from n_dynamicmtx. */
 	memset( used, 0, 0x100 );
@@ -321,13 +331,13 @@ static int lfill_prepare( double **amino_dynamicmtx, double **n_dynamicmtx, doub
 		for( k=0; k<0x100; k++ ) if( used[k] )
 		{
 			double v = amino_dynamicmtx[c][k];
-			if( v != (double)(int)v || fabs( v ) > 1e6 ) return( 0 );
-			if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+			if( !isfinite(v) || fabs(v) > 1e6 || v != (double)(int)v ) return( 0 );
+			if( fabs(v) > maxabs ) maxabs = fabs(v);
 		}
 	}
 	/* Keep every intermediate (including prev[k] - k*ext) far from int32 overflow. */
 	{
-		double bound = (double)( maxabs + abs( pen ) + abs( ext ) + abs( ithr ) + 1 ) * ( lgth1 + lgth2 + 4 ) * 2.0;
+		double bound = (maxabs + basebound) * span * 2.0;
 		if( bound > 5.0e8 ) return( 0 );
 	}
 	*ithrpt = ithr;
