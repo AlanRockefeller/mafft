@@ -355,6 +355,20 @@ species tree or validate unmatched local queries.
 
 ## Verification
 
+`clade_stability.py` follows splits supported by SH-aLRT >=80 and UFBoot >=95
+across the complete normal-search alignment replicates and fixed-alignment
+search seeds. It validates full taxon sets, source hashes and inference methods.
+The TSV joins stable tip IDs to original headers and counts logical requests,
+distinct named alignments and executed jobs separately. Presence in another tree
+does not transfer the source tree's bootstrap support to that tree.
+
+```sh
+python3 harness/round2/clade_stability.py \
+  --support-queues /path/to/support-trees /path/to/support-ghy3 \
+  --normal-queues /path/to/pilot-normal-trees /path/to/normal-extra-ghy3 \
+  --data /path/to/bench/data --output /path/to/final-clade-stability
+```
+
 ```sh
 cd harness/round2
 python3 -m unittest -v test_analysis
