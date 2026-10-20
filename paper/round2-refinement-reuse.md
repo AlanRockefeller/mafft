@@ -120,9 +120,11 @@ later source revisions.
 
 The latest same-source memo-off/on trace comparison passed on five real inputs:
 2,469 attempts, 171 accepted intermediate alignments, 6,603 exact original-order
-master rows and 508 active hits. Every post-attempt raw score/gain bit,
+master rows and 508 active hits. Every post-attempt score/gain bit,
 acceptance, subgeneration and convergence/finish decision matched, including
-signed-zero representations. All ten final alignments matched their frozen
+signed-zero representations. Semantic score records occur after a rejection
+restores `tscore=mscore`; the dependency argument above establishes why the
+repeated candidate would again reject. All ten final alignments matched their frozen
 goldens. The additional guards preserved all 508 hits in this subset; none of
 its rejected attempts used the short-block exclusion.
 

@@ -303,12 +303,13 @@ fallback and independently enabled semantic tracing.
 
 Same-source memo-off/on trace builds then matched every semantic record on five
 inputs: **2,469 attempts, 171 accepted intermediate alignments, 6,603 original-order
-master rows and 508 cached attempts**. This checks raw double score/gain bits,
+master rows and 508 cached attempts**. This checks post-attempt double score/gain bits,
 including signed zero, acceptance, subgeneration and convergence/finish flags,
 as well as exact intermediate sequence strings. All ten final alignments also
 matched the goldens. `round2/reject-memo-v3-semantic-analysis` retains the result
-and hashed stderr paths. End-output identity alone was not used to assert equal
-search paths. A later explicit suffix check also requires zero current gain and
+and hashed stderr paths. Semantic scores are emitted after rejection restores
+`tscore=mscore`. End-output identity alone was not used to assert equal search
+paths. A later explicit suffix check also requires zero current gain and
 valid stamps for every remaining actual branch before any hit, preventing
 skipped scratch updates from feeding a later expensive attempt.
 
