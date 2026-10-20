@@ -439,9 +439,11 @@ static void *athread( void *arg )
 #endif
 #if MAFFT_REJECT_MEMO
 	uint64_t memo_epoch = 1, *memo_stamp = NULL;
+	uint64_t memo_tail_checked_epoch = 0;
 	double *memo_score = NULL;
 	unsigned long memo_hits = 0, memo_misses = 0;
 	int memo_accepted = 0;
+	int memo_tail_verified = 0, memo_take_hit = 0, memo_scanpos;
 	int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
 		parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
 		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
@@ -793,6 +795,35 @@ static void *athread( void *arg )
 			(*jobposintpt)++;
 			iterate = *generationofmastercopypt;
 			(*ntrypt)++;
+#if MAFFT_REJECT_MEMO
+			memo_take_hit = 0;
+			if( memo_enabled && alg == 'A' && memo_stamp[branchpos] == memo_epoch )
+			{
+				if( memo_tail_checked_epoch != memo_epoch )
+				{
+					/* With one worker and a fixed branch order, an acceptance
+					 * invalidates every earlier stamp.  The previous generation's
+					 * last acceptance also invalidates its whole prefix, so reuse
+					 * can start only in a later, final no-gain tail.  Verify that
+					 * tail explicitly: nonfinite rejections leave unstamped holes.
+					 * The current branch passed its stamp test above; jobpos now
+					 * names the next unassigned entry in the actual branchtable.
+					 * Read both it and basegain under the coordinator mutex.
+					 * A failed check disables reuse until the next acceptance.
+					 * A successful check is reusable for this entire epoch.
+					 * This still assumes an unchanged branch/master has the same
+					 * rejection result when its scratch state is rebuilt.  It
+					 * prevents skipped scratch updates from feeding a later
+					 * expensive attempt in this refinement invocation. */
+					memo_tail_checked_epoch = memo_epoch;
+					memo_tail_verified = *basegainpt == 0.0;
+					for( memo_scanpos = *jobposintpt; memo_tail_verified && memo_scanpos < nbranch; memo_scanpos++ )
+						if( memo_stamp[branchtable[memo_scanpos]] != memo_epoch )
+							memo_tail_verified = 0;
+				}
+				memo_take_hit = memo_tail_verified;
+			}
+#endif
 			pthread_mutex_unlock( targ->mutex );
 
 //			fprintf( stderr, "\n IRANAI IRANAI *jobposintpt=%d, nbranch = %d\n", *jobposintpt, nbranch );
@@ -812,7 +843,7 @@ static void *athread( void *arg )
 #endif
 #if MAFFT_REJECT_MEMO
 			memo_accepted = 0;
-			if( memo_enabled && alg == 'A' && memo_stamp[branchpos] == memo_epoch )
+			if( memo_take_hit )
 			{
 				tscore = memo_score[branchpos];
 				memo_hits++;
@@ -1246,6 +1277,8 @@ static void *athread( void *arg )
 						if( memo_enabled )
 						{
 							memo_accepted = 1;
+							memo_tail_checked_epoch = 0;
+							memo_tail_verified = 0;
 							if( ++memo_epoch == 0 )
 							{
 								memset( memo_stamp, 0, (size_t)nbranch * sizeof(*memo_stamp) );
