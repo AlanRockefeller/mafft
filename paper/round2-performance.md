@@ -370,10 +370,18 @@ This evidence, the dependency argument and differential/sanitizer checks support
 selecting the guarded code for **dikarya4**. The common macro is defined in
 `mltaln.h` so worker and Falign agree; `-DMAFFT_REJECT_MEMO=0` remains an ablation.
 Fresh tracked-source release/sanitizer builds and the final paired corpus,
-profiles and scheduling campaign use new `dikarya4-*` directories. The unused
+profiles and scheduling campaign use new `dikarya4-r2-*` directories. The unused
 zero-job dikarya3 final timing plans remain preserved and paused. Earlier v2
 full-corpus output was preserved at nine successful jobs when superseded.
 No speedup is inferred from correctness-run durations.
+
+The first fresh dikarya4 packaging attempt retained the old launcher-template
+version. MAFFT's own consistency check refused the first fixture before
+producing alignment output. The failed build and logs remain in `dikarya4-*`.
+The template was corrected, a build preflight and focused regression tests now
+reject inconsistent diagnostic stamps, and fresh sources/builds use the
+`dikarya4-r2-*` paths. The frozen corrected source is `9d963ee`; the numerical
+kernels were unchanged by this packaging recovery.
 
 A separate default-off residue-map cache prototype is preserved on branch
 `experiment/residue-map-cache`. Complete row bytes, including NUL, establish
@@ -516,7 +524,7 @@ failures were configured to halt execution.
 
 | Required final deliverable | Status in this report |
 |---|---|
-| Final tracked source/defaults/version and binary provenance | Dikarya4 source frozen at `58d960d`; fresh validation/provenance in progress; earlier dikarya3 preserved at `91146f2` |
+| Final tracked source/defaults/version and binary provenance | Dikarya4 source frozen at `9d963ee`; fresh validation/provenance in progress; earlier dikarya3 preserved at `91146f2` |
 | Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Pending |
 | Final per-file speedups/regressions and individual peak RSS | Pending |
 | Final selected-build profiles | Pending |

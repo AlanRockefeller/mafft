@@ -3,12 +3,12 @@
 Use a private artifact directory, retain the original goldens and stop competing
 builds or experiments before timing. None of these drivers installs MAFFT.
 
-The dikarya4 validation source is frozen at Git commit `58d960d`. To rebuild
+The dikarya4 validation source is frozen at Git commit `9d963ee`. To rebuild
 that exact source without using existing object files:
 
 ```sh
 validation_source=$(mktemp -d)
-git archive 58d960d | tar -x -C "$validation_source"
+git archive 9d963ee | tar -x -C "$validation_source"
 python3 harness/round2/build.py --source "$validation_source" \
   --output /private/new-dikarya4-build --jobs 1
 ```
