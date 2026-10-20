@@ -3,8 +3,9 @@
 Research dates: 2026-10-19–20. Starting version: **7.526-opt8-dikarya2**.
 Selected version for final validation: **7.526-opt8-dikarya4**.
 
-**This is an interim performance report.** Component experiments, tracked release
-build and the regression/sanitizer sweep are complete. The final 100-file paired
+**This is an interim performance report.** Component experiments and the earlier
+dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
+sanitizer builds and their checks are in progress. The final 100-file paired
 benchmark, final profiles and production scheduling recommendation remain to be
 finalized. No final whole-corpus speedup or production deployment is claimed here.
 Phylogenetic findings belong in the
@@ -503,7 +504,7 @@ manifest and the independently copied opt8 manifest. The reproducing tool is
 `harness/round2/release_audit.py`. A disassembly scan of all 32 release ELF helpers
 found zero fused multiply-add instructions (`final-machine-code.json`).
 
-The final tracked release passed **612** complete option/format comparisons on
+The earlier tracked dikarya3 release passed **612** complete option/format comparisons on
 36 generated fixtures, **six** long-boundary comparisons and **35** placement
 comparisons against frozen opt8. Both programs exited successfully in every
 comparison. An ASAN/UBSAN build additionally passed **36** fixture comparisons
@@ -515,11 +516,11 @@ failures were configured to halt execution.
 
 | Required final deliverable | Status in this report |
 |---|---|
-| Final tracked source/defaults/version and binary provenance | Verified, `91146f2` and preservation audit |
-| Fresh 100-file dikarya2/dikarya3 paired comparison, all partitions | Pending |
+| Final tracked source/defaults/version and binary provenance | Dikarya4 source frozen at `58d960d`; fresh validation/provenance in progress; earlier dikarya3 preserved at `91146f2` |
+| Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Pending |
 | Final per-file speedups/regressions and individual peak RSS | Pending |
 | Final selected-build profiles | Pending |
-| Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Passed, as enumerated above |
+| Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Dikarya3 and guarded v5 checks passed as enumerated above; fresh dikarya4 checks in progress |
 | Two-vCPU latency/throughput/reproducibility scheduling comparison | Pending; separate threading study |
 | Production binary, thread and concurrency recommendation | Pending; no production settings changed |
 
