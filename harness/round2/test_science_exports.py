@@ -13,9 +13,26 @@ from biological_reference import score_queue_quartets, validated_queue_records
 import figures
 from figures import Cohort, taxon_stability_rows
 from tree import compare_trees, read_tree
+from support_changes import shared_changes
 
 
 class ScienceExportTests(unittest.TestCase):
+    def test_support_changes_distinguish_joint_thresholds_and_missing_splits(self):
+        edge = lambda sh, uf: {'id': 'split', 'side': ['one', 'two'], 'size': 2,
+                               'support': {'shalrt': sh, 'ufboot': uf}}
+        comparison = {'views': {'zero_collapsed': {'split_details': [
+            {'status': 'shared', 'reference': edge(90, 96), 'candidate': edge(79, 99)},
+            {'status': 'reference_only', 'reference': edge(100, 100), 'candidate': None}]}}}
+        rows = shared_changes(comparison)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['reference_strong'])
+        self.assertFalse(rows[0]['candidate_strong'])
+        self.assertEqual(rows[0]['shalrt_delta'], -11)
+        self.assertEqual(rows[0]['ufboot_delta'], 3)
+        comparison['views']['zero_collapsed']['split_details'][0]['candidate']['side'] = ['one', 'three']
+        with self.assertRaisesRegex(ValueError, 'Shared split labels disagree'):
+            shared_changes(comparison)
+
     def original(self, root):
         source = root / 'fixture.fasta'
         source.write_text('>one original label\nACGTA\n>two original label\nACGTT\n'

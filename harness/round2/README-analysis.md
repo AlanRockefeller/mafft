@@ -450,6 +450,19 @@ and aggregate summaries, identified by `protocol_id`; they are never pooled
 merely because both used normal search or both used fast search. Missing A
 searches after partial failures are explicitly recorded as excluded groups.
 
+`same_seed_trees.py` verifies actual separately executed IQ-TREE searches on
+the same alignment, model, executable, options and seed. It reports Newick byte
+identity and topological equality separately. It rejects reused search records;
+these checks supplement the distinct-seed search controls.
+
+`support_changes.py --analysis SUPPORT_ANALYSIS --data INPUTS --output NEW_DIR`
+reads the validated detailed tree comparisons and exports SH-aLRT and UFBoot
+deltas for shared splits, including reversible original taxon labels. It keeps
+joint support-threshold crossings separate from missing splits and incompatible
+strong splits. The primary view retains all original taxa and collapses original
+edges <=1e-6. Support deltas on shared branches cannot establish accuracy and
+are not independent observations across branches within an input.
+
 `observed_starts.py` reads matching dated alignment commands from existing
 production logs without changing jobs. It requires the current input SHA-256,
 binary path, thread count and options to match the frozen manifest. It records
