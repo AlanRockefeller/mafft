@@ -611,3 +611,14 @@ implementation and retested with independent data if its marginal gain matters.
 No unmeasured time-saving estimate is assigned to these ideas. Threading policy
 and phylogenetic reliability require their own measured evidence; single-thread
 byte identity establishes reproducibility, not superior biological accuracy.
+
+An additional source-based investigation derives a
+[candidate exact local-DP band certificate](round2-band-certificate.md). Under
+integral/range guards, nonpositive gaps and a verified feasible positive raw
+score bound, a pair-budget inequality strictly excludes all winning and tied
+histories outside a computable band. Positive local restarts require an explicit
+virtual-pair argument. Two static reviews found no counterexample under the
+listed conditions. This remains an analytical candidate: obtaining the bound
+cheaply, mapping the band to striped SIMD and preserving sentinel/gap-carry
+semantics all need implementation and differential tests. No kernel or speedup
+is claimed from it.
