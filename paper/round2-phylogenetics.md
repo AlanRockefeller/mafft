@@ -458,6 +458,14 @@ trees. The recorded launcher reports `v7.526-opt8-dikarya3`; this checked build
 is not assumed to be the eventual release while further exact optimization
 and performance validation proceed.
 
+The subsequently selected dikarya4 source (`9d963ee`) also received a separate
+F-only check: twice on all 46 inputs, **92/92 outputs matched A goldens**.
+The [fresh-build summary](../../round2/dikarya4-r2-refine-one-analysis/summary.json)
+records no within-input F variation. Its guarded refinement reuse was active
+in 90 runs with 3,172 reused attempts; no new trees were inferred from this
+check. This later source cohort adds no independent biological datasets and
+does not establish a two-worker outcome distribution for dikarya4.
+
 The [MAFFT threading documentation](https://mafft.ddbj.nig.ac.jp/alignment/software/multithreading.html)
 recommends `--threadit 0` for reproducible refinement. Our A–C differences are
 consistent with the source distinction: A enters a one-worker plus coordinator

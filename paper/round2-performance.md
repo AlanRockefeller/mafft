@@ -5,7 +5,7 @@ Selected version for final validation: **7.526-opt8-dikarya4**.
 
 **This is an interim performance report.** Component experiments and the earlier
 dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
-sanitizer builds and their checks are in progress. The final 100-file paired
+sanitizer builds and their checks have also passed. The final 100-file paired
 benchmark, final profiles and production scheduling recommendation remain to be
 finalized. No final whole-corpus speedup or production deployment is claimed here.
 Phylogenetic findings belong in the
@@ -522,13 +522,36 @@ comparisons passed. These last checks do not establish equivalence of threaded
 iterative refinement. Leak detection was disabled; address and undefined-behavior
 failures were configured to halt execution.
 
+The corrected tracked dikarya4 source (`9d963ee`) now independently passes the
+same **612** option/format comparisons, **six** long boundaries and **35**
+placements against frozen opt8, plus **36** sanitizer fixtures and **two** real
+sanitizer/golden checks. Its 76 harness tests passed; the scheduling aggregator
+subsequently passed nine separate mocked tests. These are verification counts,
+not independent datasets. The new private build is
+`dikarya4-r2-build/install/bin/mafft`, with a separate `dikarya4-r2-asan` build.
+
+An additional **92** F runs (`--thread 2 --threadit 1`, twice on all 46 originally
+two-threaded inputs) matched every one-thread golden. The new reuse guard was
+active in 90 runs, totaling 3,172 hits and zero unsafe rejections in this finite
+production check; it was not merely compiled and bypassed. These descriptive
+correctness runs are separate from the biological experiment and from timing.
+`dikarya4-r2-refine-one-analysis/summary.json` retains all alignment comparisons.
+
+`dikarya4-r2-preservation-audit.json` verifies the 90 tracked core files, both
+source copies, installed manifest, all 100 original inputs and goldens, and both
+original opt8 manifests. `dikarya4-r2-machine-code.json` reports zero FMA
+instructions across all 32 ELF helpers. The serialized native measurement
+campaign now waits automatically for the user-requested quiet window. Its
+three-build corpus comparison, confirmations, profiles, isolated jobs, sustained
+queues and observed-start projections have new versioned output paths.
+
 | Required final deliverable | Status in this report |
 |---|---|
-| Final tracked source/defaults/version and binary provenance | Dikarya4 source frozen at `9d963ee`; fresh validation/provenance in progress; earlier dikarya3 preserved at `91146f2` |
+| Final tracked source/defaults/version and binary provenance | Dikarya4 source `9d963ee`, fresh builds and preservation/instruction audits passed; earlier dikarya3 preserved at `91146f2` |
 | Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Pending |
 | Final per-file speedups/regressions and individual peak RSS | Pending |
 | Final selected-build profiles | Pending |
-| Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Dikarya3 and guarded v5 checks passed as enumerated above; fresh dikarya4 checks in progress |
+| Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Passed for fresh dikarya4, with earlier dikarya3 and guarded v5 evidence retained |
 | Two-vCPU latency/throughput/reproducibility scheduling comparison | Pending; separate threading study |
 | Production binary, thread and concurrency recommendation | Pending; no production settings changed |
 
