@@ -13,6 +13,21 @@
 #ifndef MAFFT_REJECT_MEMO
 #define MAFFT_REJECT_MEMO 0
 #endif
+#ifndef MAFFT_REJECT_MEMO_TRACE
+#define MAFFT_REJECT_MEMO_TRACE 0
+#endif
+#if MAFFT_REJECT_MEMO_TRACE
+#include <inttypes.h>
+/* Trace only on ordinary 64-bit-double builds. memcpy preserves signed zero
+ * without introducing floating-point arithmetic or aliasing assumptions. */
+typedef char reject_trace_requires_binary64[sizeof(double) == sizeof(uint64_t) ? 1 : -1];
+static uint64_t reject_trace_bits( double value )
+{
+	uint64_t bits;
+	memcpy( &bits, &value, sizeof(bits) );
+	return bits;
+}
+#endif
 
 
 #define FULLSCORE 0
@@ -417,21 +432,30 @@ static void *athread( void *arg )
 	int **whichmtx;
 	void *igscache;
 
+#if MAFFT_REJECT_MEMO_TRACE
+	int trace_accepted = 0;
+	/* BESTFIRST accepts in the coordinator, outside this per-attempt path. */
+	const int trace_enabled = thread_no == 1 && nwa == 2 && parallelizationstrategy == BAATARI2;
+#endif
 #if MAFFT_REJECT_MEMO
 	uint64_t memo_epoch = 1, *memo_stamp = NULL;
 	double *memo_score = NULL;
 	unsigned long memo_hits = 0, memo_misses = 0;
 	int memo_accepted = 0;
-	const int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
+	int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
 		parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
 		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
-		!rnakozo && !nkozo && specificityconsideration == 0.0 && ntarget == njob &&
+		!rnakozo && !nkozo && RNAscoremtx != 'r' && specificityconsideration == 0.0 && ntarget == njob &&
 		!scoreout && !FULLSCORE && !DEBUG && !RECORD;
 	if( memo_enabled )
 	{
 		memo_stamp = calloc( (size_t)nbranch, sizeof(*memo_stamp) );
 		memo_score = malloc( (size_t)nbranch * sizeof(*memo_score) );
-		if( !memo_stamp || !memo_score ) ErrorExit( "Cannot allocate rejected-branch experiment." );
+		if( !memo_stamp || !memo_score )
+		{
+			free( memo_stamp ); free( memo_score );
+			memo_stamp = NULL; memo_score = NULL; memo_enabled = 0;
+		}
 	}
 #endif
 
@@ -783,6 +807,9 @@ static void *athread( void *arg )
 #endif
 
 //			for( i=0; i<2; i++ ) for( j=0; j<locnjob; j++ ) pair[i][j] = 0;
+#if MAFFT_REJECT_MEMO_TRACE
+			trace_accepted = 0;
+#endif
 #if MAFFT_REJECT_MEMO
 			memo_accepted = 0;
 			if( memo_enabled && alg == 'A' && memo_stamp[branchpos] == memo_epoch )
@@ -1212,6 +1239,9 @@ static void *athread( void *arg )
 						pthread_mutex_lock( targ->mutex );
 						for( i=0; i<locnjob; i++ ) strcpy( mastercopy[i], localcopy[i] );
 						*subgenerationpt += 1;
+#if MAFFT_REJECT_MEMO_TRACE
+						trace_accepted = 1;
+#endif
 #if MAFFT_REJECT_MEMO
 						if( memo_enabled )
 						{
@@ -1298,6 +1328,27 @@ static void *athread( void *arg )
 			fprintf( stderr, "\r" );
 
 			pthread_mutex_lock( targ->mutex );
+#if MAFFT_REJECT_MEMO_TRACE
+			/* Common post-attempt semantics, including cache hits.  The worker
+			 * still owns the current attempt: ndone is incremented only below,
+			 * so the coordinator cannot reset this generation during the trace.
+			 * Iteration, branch and row indices are zero-based.  No hit/cache
+			 * status belongs in these baseline-comparable records. */
+			if( trace_enabled )
+			{
+				fprintf( stderr, "\nREFINE_SEMANTIC iter=%d branch=%d score=%016" PRIx64
+				         " accepted=%d subgeneration=%d converged=%d finish=%d gainlist=%016" PRIx64
+				         " tscorelist=%016" PRIx64 " basegain=%016" PRIx64 "\n",
+				         iterate, branchpos, reject_trace_bits(tscore), trace_accepted,
+				         *subgenerationpt, converged2, *finishpt,
+				         reject_trace_bits(gainlist[thread_no]), reject_trace_bits(tscorelist[thread_no]),
+				         reject_trace_bits(*basegainpt) );
+				if( trace_accepted )
+					for( i=0; i<locnjob; i++ )
+						fprintf( stderr, "\nREFINE_MASTER iter=%d branch=%d row=%d seq=%s\n",
+						         iterate, branchpos, i, mastercopy[i] );
+			}
+#endif
 			(*ndonept)++;
 //			fprintf( stderr, "*ndonept = %d, nbranch = %d (thread %d) iterate=%d\n", *ndonept, nbranch, thread_no, iterate );
 			generationofinput[branchpos] = iterate;
