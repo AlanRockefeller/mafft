@@ -129,6 +129,9 @@ void imp_match_init_strictD( double *imp, int clus1, int clus2, int lgth1, int l
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( impmtx ) FreeFloatMtx( impmtx );
 		impmtx = NULL;
 //		if( nocount1 ) free( nocount1 );
@@ -2579,6 +2582,9 @@ double D__align( double **n_dynamicmtx, char **seq1, char **seq2, double *eff1, 
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in D__align\n" );
@@ -4417,6 +4423,9 @@ double D__align_variousdist( int **which, double ***matrices, double **n_dynamic
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in D__align\n" );

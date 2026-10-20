@@ -16659,6 +16659,139 @@ static int makeresmap( char *seq, int *map )
 	return( n );
 }
 
+/* Experimental persistence of the pure gapped-row -> residue-column mapping.
+ * Slot identity only chooses a candidate; exact row bytes establish validity. */
+#ifndef MAFFT_FILLIMP_RESMAP_CACHE
+#define MAFFT_FILLIMP_RESMAP_CACHE 0
+#endif
+#if MAFFT_FILLIMP_RESMAP_CACHE
+#include <limits.h>
+#include <stdint.h>
+#ifndef MAFFT_FILLIMP_RESMAP_CACHE_BYTES
+#define MAFFT_FILLIMP_RESMAP_CACHE_BYTES 16777216
+#endif
+#ifndef MAFFT_FILLIMP_RESMAP_CACHE_MAXSLOTS
+#define MAFFT_FILLIMP_RESMAP_CACHE_MAXSLOTS 65536
+#endif
+typedef struct
+{
+	char *snapshot;
+	int *map;
+	size_t length, bytes;
+	int nres;
+	uint64_t pin;
+} fillimp_resmap_entry;
+static TLS fillimp_resmap_entry *fi_resmap_entries = NULL;
+static TLS int fi_resmap_nslots = 0, fi_resmap_active = 0;
+static TLS size_t fi_resmap_bytes = 0;
+static TLS uint64_t fi_resmap_epoch = 0;
+
+static void fillimp_resmap_cache_clear( void )
+{
+	int i;
+	/* A recursive/ill-timed cleanup must not invalidate borrowed maps.
+	 * Normal callers clean up only after fillimp_track has returned. */
+	if( fi_resmap_active ) return;
+	for( i=0; i<fi_resmap_nslots; i++ )
+	{
+		free( fi_resmap_entries[i].snapshot );
+		free( fi_resmap_entries[i].map );
+	}
+	free( fi_resmap_entries );
+	fi_resmap_entries = NULL;
+	fi_resmap_nslots = 0;
+	fi_resmap_bytes = 0;
+	fi_resmap_epoch = 0;
+}
+
+static int fillimp_resmap_cache_begin( int clus1, int clus2, int *orinum1, int *orinum2 )
+{
+	int i;
+	size_t metadata;
+	if( fi_resmap_active || !orinum1 || !orinum2 || clus1 < 1 || clus2 < 1 ||
+	    njob < 1 || njob > MAFFT_FILLIMP_RESMAP_CACHE_MAXSLOTS ||
+	    clus1 > njob || clus2 > njob || MAFFT_FILLIMP_RESMAP_CACHE_BYTES <= 0 )
+		return( 0 );
+	for( i=0; i<clus1; i++ ) if( orinum1[i] < 0 || orinum1[i] >= njob ) return( 0 );
+	for( i=0; i<clus2; i++ ) if( orinum2[i] < 0 || orinum2[i] >= njob ) return( 0 );
+	if( (size_t)njob > (size_t)MAFFT_FILLIMP_RESMAP_CACHE_BYTES / sizeof(fillimp_resmap_entry) )
+		return( 0 );
+	metadata = (size_t)njob * sizeof(fillimp_resmap_entry);
+	if( fi_resmap_nslots != njob )
+	{
+		/* No current-call entry is borrowed yet. Shape changes can discard
+		 * all previous slots without introducing a sequence-set identity key. */
+		fillimp_resmap_cache_clear();
+		fi_resmap_entries = calloc( (size_t)njob, sizeof(fillimp_resmap_entry) );
+		if( !fi_resmap_entries ) return( 0 );
+		fi_resmap_nslots = njob;
+		fi_resmap_bytes = metadata;
+	}
+	if( ++fi_resmap_epoch == 0 )
+	{
+		for( i=0; i<fi_resmap_nslots; i++ ) fi_resmap_entries[i].pin = 0;
+		fi_resmap_epoch = 1;
+	}
+	fi_resmap_active = 1;
+	return( 1 );
+}
+
+static int *fillimp_resmap_cache_get( char *seq, int width, int original, int *nres )
+{
+	fillimp_resmap_entry *entry;
+	char *snapshot;
+	int *map, count;
+	size_t length, bytes;
+	if( !fi_resmap_active || !seq || width < 0 || original < 0 || original >= fi_resmap_nslots )
+		return( NULL );
+	length = strlen( seq );
+	if( length > (size_t)width || length > INT_MAX ) return( NULL );
+	entry = fi_resmap_entries + original;
+	if( entry->snapshot && entry->length == length &&
+	    !memcmp( entry->snapshot, seq, length+1 ) )
+	{
+		entry->pin = fi_resmap_epoch;
+		*nres = entry->nres;
+		return( entry->map );
+	}
+	/* Both groups can contain an aliased original ID. If earlier rows in
+	 * this call borrowed its old map, a changed row must use an owned temp.
+	 * An identical alias above may share the immutable map safely. */
+	if( entry->pin == fi_resmap_epoch ) return( NULL );
+	if( length > SIZE_MAX / (sizeof(int)+1) - 1 ) return( NULL );
+	bytes = (length+1) * (sizeof(int)+1);
+	if( bytes > (size_t)MAFFT_FILLIMP_RESMAP_CACHE_BYTES -
+	            (fi_resmap_bytes - entry->bytes) )
+		return( NULL );
+
+	/* Remove only this unpinned entry before allocating its replacement.
+	 * Metadata plus all live payloads, including partial allocations, stay
+	 * within the cap. An OOM leaves an empty slot and uses the old temp path. */
+	fi_resmap_bytes -= entry->bytes;
+	free( entry->snapshot ); free( entry->map );
+	memset( entry, 0, sizeof(*entry) );
+	snapshot = malloc( length+1 );
+	map = malloc( (length+1) * sizeof(int) );
+	if( !snapshot || !map )
+	{
+		free( snapshot ); free( map );
+		return( NULL );
+	}
+	memcpy( snapshot, seq, length+1 );
+	count = makeresmap( seq, map );
+	entry->snapshot = snapshot;
+	entry->map = map;
+	entry->length = length;
+	entry->bytes = bytes;
+	entry->nres = count;
+	entry->pin = fi_resmap_epoch;
+	fi_resmap_bytes += bytes;
+	/* makeresmap has NO sentinel: only map[0..count) is initialized and used. */
+	*nres = count;
+	return( map );
+}
+#endif
+
 /*
  * The segment walk of fillimp_track() in bands of FILLIMP_BAND rows of impmtx.  The walk touches
  * about 1.7 billion cells per L-INS-i shard spread over a ~32 MB matrix; a core's L2 (1-2 MB on
@@ -16820,6 +16953,17 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 	LocalHom *tmpptr;
 	double *fi_base;
 	size_t fi_stride;
+#if MAFFT_FILLIMP_RESMAP_CACHE
+	unsigned char *owned1 = NULL, *owned2 = NULL;
+	int resmap_cached = 0;
+	/* Existing profile-init NULL cleanup paths forward here via fillimp.
+	 * The TLS cache otherwise survives completed calls, bounded above. */
+	if( seq1 == NULL )
+	{
+		fillimp_resmap_cache_clear();
+		return;
+	}
+#endif
 
 	if( !rowlo )
 	{
@@ -16845,8 +16989,45 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 	map2 = malloc( clus2 * sizeof( int * ) );
 	nres1 = malloc( clus1 * sizeof( int ) );
 	nres2 = malloc( clus2 * sizeof( int ) );
-	for( i=0; i<clus1; i++ ) { map1[i] = malloc( ( lgth1 + 1 ) * sizeof( int ) ); nres1[i] = makeresmap( seq1[i], map1[i] ); }
-	for( j=0; j<clus2; j++ ) { map2[j] = malloc( ( lgth2 + 1 ) * sizeof( int ) ); nres2[j] = makeresmap( seq2[j], map2[j] ); }
+#if MAFFT_FILLIMP_RESMAP_CACHE
+	resmap_cached = fillimp_resmap_cache_begin( clus1, clus2, orinum1, orinum2 );
+	if( resmap_cached )
+	{
+		owned1 = malloc( (size_t)clus1 );
+		owned2 = malloc( (size_t)clus2 );
+		if( !owned1 || !owned2 )
+		{
+			free( owned1 ); free( owned2 ); owned1 = owned2 = NULL;
+			fi_resmap_active = 0;
+			fillimp_resmap_cache_clear();
+			resmap_cached = 0;
+		}
+	}
+#endif
+	for( i=0; i<clus1; i++ )
+	{
+#if MAFFT_FILLIMP_RESMAP_CACHE
+		map1[i] = resmap_cached ? fillimp_resmap_cache_get( seq1[i], lgth1, orinum1[i], nres1+i ) : NULL;
+		if( resmap_cached ) owned1[i] = map1[i] == NULL;
+		if( !map1[i] )
+#endif
+		{
+			map1[i] = malloc( ( lgth1 + 1 ) * sizeof( int ) );
+			nres1[i] = makeresmap( seq1[i], map1[i] );
+		}
+	}
+	for( j=0; j<clus2; j++ )
+	{
+#if MAFFT_FILLIMP_RESMAP_CACHE
+		map2[j] = resmap_cached ? fillimp_resmap_cache_get( seq2[j], lgth2, orinum2[j], nres2+j ) : NULL;
+		if( resmap_cached ) owned2[j] = map2[j] == NULL;
+		if( !map2[j] )
+#endif
+		{
+			map2[j] = malloc( ( lgth2 + 1 ) * sizeof( int ) );
+			nres2[j] = makeresmap( seq2[j], map2[j] );
+		}
+	}
 
 #if FILLIMP_BAND > 0
 	if( fillimp_banded( impmtx, fi_base, fi_stride, clus1, clus2, lgth1, eff1, eff2, eff1_kozo, eff2_kozo, effijx, localhom, swaplist, orinum1, orinum2, rowlo, rowhi, map1, map2, nres1, nres2 ) )
@@ -16935,9 +17116,25 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 #if FILLIMP_BAND > 0
 fillimp_done:
 #endif
-	for( i=0; i<clus1; i++ ) free( map1[i] );
-	for( j=0; j<clus2; j++ ) free( map2[j] );
+	for( i=0; i<clus1; i++ )
+	{
+#if MAFFT_FILLIMP_RESMAP_CACHE
+		if( !resmap_cached || owned1[i] )
+#endif
+			free( map1[i] );
+	}
+	for( j=0; j<clus2; j++ )
+	{
+#if MAFFT_FILLIMP_RESMAP_CACHE
+		if( !resmap_cached || owned2[j] )
+#endif
+			free( map2[j] );
+	}
 	free( map1 ); free( map2 ); free( nres1 ); free( nres2 );
+#if MAFFT_FILLIMP_RESMAP_CACHE
+	free( owned1 ); free( owned2 );
+	if( resmap_cached ) fi_resmap_active = 0;
+#endif
 }
 
 void fillimp( double **impmtx, double *imp, int clus1, int clus2, int lgth1, int lgth2, char **seq1, char **seq2, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, LocalHom ***localhom, char *swaplist, int forscore, int *orinum1, int *orinum2 )

@@ -188,6 +188,9 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( impmtx ) IMP_FREE( impmtx );
 		impmtx = NULL;
 		free( improwlo ); free( improwhi ); improwlo = improwhi = NULL; impclean = 0;
@@ -1657,6 +1660,9 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 #if MAFFT_MATCH_ROWCACHE
 		mc_rowcache_clear();
 #endif
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );
@@ -2375,6 +2381,9 @@ double partA__align_variousdist( int **which, double ***matrices, double **n_dyn
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );

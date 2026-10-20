@@ -106,6 +106,9 @@ void imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, int lg
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( impmtx ) FreeFloatMtx( impmtx );
 		impmtx = NULL;
 //		if( nocount1 ) free( nocount1 );
@@ -1428,6 +1431,9 @@ double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **
 #if MAFFT_A_MATCH_ROWCACHE
 		mafft_rowcache_clear( &amc_cache );
 #endif
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );
@@ -2576,6 +2582,9 @@ double A__align_variousdist( int **which, double ***matrices, double **n_dynamic
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_FILLIMP_RESMAP_CACHE) && MAFFT_FILLIMP_RESMAP_CACHE
+		fillimp( NULL, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL );
+#endif
 		if( orlgth1 )
 		{
 //			fprintf( stderr, "## Freeing local arrays in A__align\n" );
