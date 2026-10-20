@@ -5,13 +5,22 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from confirmation_plan import select_rows
+from confirmation_plan import select_rows, quiet_arguments
 from unittest.mock import patch
 
 from summarize_performance import contention_summary, main, unique_input_rows
 
 
 class PerformanceSummaryTests(unittest.TestCase):
+    def test_confirmation_keeps_original_quiet_criterion(self):
+        quiet = {'enabled': True, 'timeout_seconds': 321, 'interval_seconds': 1.5,
+                 'consecutive_samples': 3, 'max_busy_cores': .2}
+        self.assertEqual(quiet_arguments({'quiet_window': quiet}),
+                         ['--quiet', '--quiet-timeout', '321', '--quiet-interval', '1.5',
+                          '--quiet-samples', '3', '--quiet-max-cpu', '0.2'])
+        self.assertEqual(quiet_arguments({'quiet_window': dict(quiet, enabled=False)})[0], '--no-quiet')
+        self.assertEqual(quiet_arguments({}), [])
+
     def test_followup_selection_retains_contention_and_material_regressions(self):
         quiet = {'input': 'quiet', 'input_sha256': 'q', 'cpu_regression_over_5pct_and_50ms': 'False',
                  **{f'{a}_contention_{b}_rounds': '0' for a in ['reference', 'candidate'] for b in ['flagged', 'unknown']}}

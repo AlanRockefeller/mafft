@@ -21,6 +21,20 @@ def select_rows(rows):
     return result
 
 
+def quiet_arguments(metadata):
+    """Keep the original prospective timing criterion in follow-up runs."""
+    quiet = metadata.get('quiet_window')
+    if quiet is None:
+        return []
+    result = ['--quiet' if quiet['enabled'] else '--no-quiet']
+    for key, option in [('timeout_seconds', '--quiet-timeout'),
+                        ('interval_seconds', '--quiet-interval'),
+                        ('consecutive_samples', '--quiet-samples'),
+                        ('max_busy_cores', '--quiet-max-cpu')]:
+        result.extend([option, str(quiet[key])])
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--analysis', type=Path, required=True)
@@ -45,7 +59,8 @@ def main():
                 '--data', str(args.data), '--golden', str(args.golden), '--rounds', '3',
                 '--build', source['reference'] + '=' + builds[source['reference']],
                 '--build', source['candidate'] + '=' + builds[source['candidate']],
-                '--files', *[r['input'] for r in selected], '--output', str(args.output / 'paired')]},
+                '--files', *[r['input'] for r in selected], '--output', str(args.output / 'paired'),
+                *quiet_arguments(metadata)]},
             {'label': 'summarize-confirmations', 'command': [
                 'python3', str(this / 'summarize_performance.py'), '--manifest', str(args.manifest),
                 '--runs', str(args.output / 'paired/runs.jsonl'), '--reference', source['reference'],
