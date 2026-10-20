@@ -1,9 +1,9 @@
 # MAFFT threading and fungal ITS phylogenies: research in progress
 
-This is an interim scientific report. The completed evidence comprises 144
-alignment runs on 12 distinct production inputs, an 11-input fast-search screen,
+This is an interim scientific report. The completed evidence comprises 610
+alignment runs on all 46 original two-thread production inputs, an 11-input fast-search screen,
 a four-input default-search study, a completed robust-support example, and accession/voucher
-audits against primary non-ITS references. The 46-input study, remaining support
+audits against primary non-ITS references. Broader tree screening, remaining support
 analyses and production scheduling comparisons remain pending. This
 report contains no new performance conclusion.
 
@@ -15,6 +15,44 @@ current evidence does not show that any threading configuration is biologically
 less accurate.
 
 ## Data and completed experiments
+
+All 46 original two-thread inputs now have five B and five C alignments, at
+least one verified A reference, and two F alignments. The 12 pilot inputs have
+a second A run. All 58 A outputs match their frozen single-thread goldens.
+
+| Configuration | Runs | Inputs variable across repeats | Inputs with any A difference | Minimum A-comparison homology F1 |
+|---|---:|---:|---:|---:|
+| A: `--thread 1` | 58 | 0/46 observed | 0/46 | 1 |
+| B: `--thread 2` | 230 | 25/46 (54.3%) | 25/46 | 0.958981 |
+| C: `--thread 2 --threadit 0` | 230 | 0/46 | 24/46 (52.2%) | 0.965136 |
+| F: `--thread 2 --threadit 1` | 92 | 0/46 | 0/46 | 1 |
+
+A has two actual runs on 12 inputs and one on the other 34, plus comparison to
+the independently preserved golden; F has two runs per input. Neither received
+five repeated runs. B produced some A-identical runs on 12 of the 25 variable
+inputs; on the other 13, all five B outputs differed from A. No direction
+adjustment changed in any comparison. The five-replicate study detects more
+variable inputs than an earlier single two-thread pairing, as expected from the
+additional opportunities to observe nondeterminism. These are finite observations
+under the recorded build and execution conditions, not universal guarantees.
+
+The full per-file table is `round2/all-alignment-analysis/datasets.tsv`, with
+hashed inputs, complete commands, widths, gap summaries, exact residue-homology
+metrics and within-configuration comparisons in the adjacent JSON files. The
+median of the 46 input-level median B/A homology F1 values is 1.0, reflecting a
+mixture of invariant inputs and variable cases. This median must not replace the
+incidence counts or conceal the changed cases. C's corresponding median is
+0.999989. The lowest C/A F1 occurs in `zdku` (141 taxa, seven duplicate rows),
+followed by `vifv` at 0.970028. `zdku` also has the second-lowest B/A minimum,
+0.974316, and minimum within-B F1 0.972211. It was selected for an additional
+full-search and support follow-up based on these alignment results, before
+inspecting its tree differences.
+
+Descriptive Wilson intervals for 25/46 and 24/46 are 0.402–0.678 and
+0.381–0.659. These count distinct input hashes; selected production jobs and
+overlapping taxa are not a random sample of independent fungal lineages.
+Scientific-repeat runtimes are descriptive and carry observed or unknown CPU
+contention flags. Separate quiet-gated experiments determine performance.
 
 The pilot was selected before examining these round-2 results. It includes
 previously differing and matching two-thread cases, small and medium datasets,
@@ -367,10 +405,10 @@ Higher support alone does not establish greater accuracy. Selecting the B run
 with the largest prior default-search distance for a detailed analysis makes
 that subset informative-case sampling, not a prevalence estimate.
 
-The remaining 34 production two-thread inputs and broader feasible tree searches
-are queued as distinct stages. The repeated F checks and original-opt8 controls
-are complete, as described above. Broader alignment and tree results must be
-added before making workload-wide conclusions.
+All repeated production-input alignments, F checks and original-opt8 controls
+are complete. Broader feasible tree searches, the `zdku` follow-up and remaining
+support analyses are queued as distinct stages. Their results must be added
+before making workload-wide phylogenetic conclusions.
 No raw likelihoods are used to rank different alignments, and no production
 threading setting has been changed by this study.
 
