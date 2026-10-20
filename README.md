@@ -28,7 +28,7 @@ GPUs. The vector code is chosen at compile time; everything else is shared.
 
 ## Dikarya VM follow-up (unreleased)
 
-The current working-tree candidate reports `7.526-opt8-dikarya2`. It adds eight-lane AVX2
+The preserved first-round candidate reports `7.526-opt8-dikarya2`. It adds eight-lane AVX2
 striped local DP with deferred end-cell search, exact ordered duplicate-pair reuse, AVX2
 profile improvements, cache-size-aware importance filling, and faster accurate-direction
 scoring. It targets the actual two-vCPU VMware guest, whose CPUID/GCC tuning is Haswell
@@ -42,7 +42,7 @@ See [the reproduction harness](harness/broadwell/README.md). Other architectures
 received new runtime validation in this follow-up.
 
 On all 100 supplied production inputs, keeping the recorded strategy/direction flags and
-explicitly using `--thread 1`, the selected build is **1.34x faster than installed opt8**
+explicitly using `--thread 1`, that first-round build is **1.34x faster than installed opt8**
 (865 to 647 seconds, 25.2% less wall time), with **100/100 byte-identical outputs**. The
 separate 78-input holdout improves 1.30x. This is not a new stock-MAFFT comparison or a
 guarantee for nondeterministic threaded refinement. One FFT-NS-2 case regresses about 5%;
@@ -50,6 +50,34 @@ see the report for path-specific results, repeated experiments and limitations.
 In a supplemental check of all 46 recorded two-thread jobs, 20 outputs differed between
 builds, and repeats of the frozen reference itself produced different alignments. Do not
 read the single-thread result as a byte-identity guarantee for threaded refinement.
+
+## Round 2 research (unreleased)
+
+The `perf/dikarya-round2` branch currently reports `7.526-opt8-dikarya3`. It adds
+rolling score-only DP, a guarded identical-sequence score shortcut, zero-extension
+traceback specialization, exact raw-profile reuse, direct gap-aware pair scoring
+and immutable six-mer histograms. Component measurements and correctness checks
+are recorded in the [performance report](paper/round2-performance.md); final
+whole-corpus paired timing, profiles and scheduling measurements are pending a
+quiet VM window. There is no final incremental speedup or deployment claim yet.
+Additional refinement-reuse experiments remain isolated until their validation
+and controlled measurements support inclusion.
+
+The [threading and phylogenetics study](paper/round2-phylogenetics.md) completed
+610 alignment runs on all 46 originally two-threaded inputs. Ordinary two-thread
+refinement varied on 25/46 inputs. `--thread 2 --threadit 0` repeated consistently
+but differed from the one-thread result on 24/46; `--thread 2 --threadit 1`
+matched all one-thread goldens in 92/92 runs. Detailed phylogenetics found
+meaningful topology and resolution sensitivity, including a deep supported
+split disappearing, without independent evidence establishing which threading
+configuration is biologically more accurate. These are finite workload checks.
+
+See the [experimental methods](paper/round2-methods.md),
+[optimization harness](harness/round2/README.md) and
+[alignment/tree analysis harness](harness/round2/README-analysis.md) for commands,
+provenance, metrics, figures and inspectable tree exports. Build privately with
+GCC and `-O3 -march=native -ffp-contract=off` for the tested VM arithmetic class;
+other architectures have not received new runtime validation in this round.
 
 ## Historical results (opt8 and earlier)
 

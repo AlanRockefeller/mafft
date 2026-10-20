@@ -417,7 +417,11 @@ bootstrap or branch-support analysis was performed. Representative raw
 [B](../../round2/raxml-zdku/B-seed88311/inference.raxml.bestTree) and
 [C](../../round2/raxml-zdku/C-seed88311/inference.raxml.bestTree) best trees
 and the [complete comparisons](../../round2/raxml-zdku/comparisons.json)
-are available for inspection.
+are available for inspection. The
+[deep-split audit](../../round2/raxml-zdku/deep-split-sensitivity.json)
+records presence, branch lengths and hashes for every search. A reversibly
+quoted [A tree with original labels](../../round2/raxml-zdku/A-seed88311/original-labels.nwk)
+is also available, with corresponding readable trees in every B/C search directory.
 
 Thus the selected alignments' deep-split difference and larger RF variation
 are not confined to IQ-TREE's search implementation. All four paired

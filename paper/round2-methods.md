@@ -60,7 +60,9 @@ variable and parsimony-informative sites are retained.
 The primary fixed model is GTR+F+G4, IQ-TREE 2.0.7, one inference thread, explicitly
 recorded random seeds and complete taxon validation. Broad screening can use the documented
 `--fast` ML search; normal search and support analyses are separate stages and are not pooled
-as identical methods. Every comparison holds inference settings and seed fixed within stage.
+as identical methods. Between-alignment comparisons hold inference settings and
+seed fixed within stage. Fixed-alignment search controls deliberately vary only
+the recorded seed; separate same-seed reruns check process-level repeatability.
 Identical stable-ID alignments with identical settings and seed share a recorded computation;
 different seeds on one fixed alignment are independent search controls, never silently reused.
 
