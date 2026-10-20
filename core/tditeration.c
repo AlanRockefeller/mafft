@@ -13,6 +13,27 @@
 #ifndef MAFFT_REJECT_MEMO
 #define MAFFT_REJECT_MEMO 0
 #endif
+#if MAFFT_REJECT_MEMO
+extern TLS int mafft_reject_memo_falign_safe;
+static int reject_memo_symmetric_scores( void )
+{
+	int i, j;
+	/* The inherited intergroup cache uses unordered row-pair keys.  Ensure
+	 * rebuilding a branch cannot expose a direction-dependent cached score.
+	 * constants() allocates at least 128 character rows for guarded DNA. */
+	if( !amino_dis_consweight_multi ) return( 0 );
+	for( i=0; i<0x80; i++ )
+	{
+		if( !amino_dis_consweight_multi[i] ) return( 0 );
+		for( j=0; j<=i; j++ )
+			if( !isfinite(amino_dis_consweight_multi[i][j]) ||
+			    !isfinite(amino_dis_consweight_multi[j][i]) ||
+			    memcmp( &amino_dis_consweight_multi[i][j],
+			            &amino_dis_consweight_multi[j][i], sizeof(double) ) ) return( 0 );
+	}
+	return( 1 );
+}
+#endif
 #ifndef MAFFT_REJECT_MEMO_TRACE
 #define MAFFT_REJECT_MEMO_TRACE 0
 #endif
@@ -441,14 +462,16 @@ static void *athread( void *arg )
 	uint64_t memo_epoch = 1, *memo_stamp = NULL;
 	uint64_t memo_tail_checked_epoch = 0;
 	double *memo_score = NULL;
-	unsigned long memo_hits = 0, memo_misses = 0;
+	unsigned long memo_hits = 0, memo_misses = 0, memo_unsafe = 0;
 	int memo_accepted = 0;
+	int memo_attempt_safe = 1;
 	int memo_tail_verified = 0, memo_take_hit = 0, memo_scanpos;
 	int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
 		parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
 		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
+		kobetsubunkatsu == 1 && outgap == 1 && !trywarp &&
 		!rnakozo && !nkozo && RNAscoremtx != 'r' && specificityconsideration == 0.0 && ntarget == njob &&
-		!scoreout && !FULLSCORE && !DEBUG && !RECORD;
+		!scoreout && !FULLSCORE && !DEBUG && !RECORD && reject_memo_symmetric_scores();
 	if( memo_enabled )
 	{
 		memo_stamp = calloc( (size_t)nbranch, sizeof(*memo_stamp) );
@@ -746,7 +769,7 @@ static void *athread( void *arg )
 			{
 				pthread_mutex_unlock( targ->mutex );
 #if MAFFT_REJECT_MEMO
-				if( memo_enabled ) fprintf( stderr, "\nREJECT_MEMO hits=%lu misses=%lu\n", memo_hits, memo_misses );
+				if( memo_enabled ) fprintf( stderr, "\nREJECT_MEMO hits=%lu misses=%lu unsafe=%lu\n", memo_hits, memo_misses, memo_unsafe );
 				free( memo_stamp ); free( memo_score );
 #endif
 				igs_cache_free( igscache );
@@ -843,6 +866,7 @@ static void *athread( void *arg )
 #endif
 #if MAFFT_REJECT_MEMO
 			memo_accepted = 0;
+			memo_attempt_safe = 1;
 			if( memo_take_hit )
 			{
 				tscore = memo_score[branchpos];
@@ -1107,7 +1131,14 @@ static void *athread( void *arg )
 							D__align( n_dis_consweight_multi, mseq1, mseq2, effarr1, effarr2, clus1, clus2, alloclen, constraint, &impmatchdouble, NULL, NULL, NULL, NULL, subgenerationpt, subgenerationatfirst, &chudanres, 1, 1 );
 						
 						else
+						{
 							Falign_localhom( whichmtx, scoringmatrices, n_dis_consweight_multi, mseq1, mseq2, effarr1, effarr2, eff1s, eff2s, clus1, clus2, alloclen, constraint, &impmatchdouble, gapmap1, gapmap2, subgenerationpt, subgenerationatfirst, &chudanres );
+#if MAFFT_REJECT_MEMO
+							/* Preserve an unsafe result across any yarinaoshi retry.
+							 * Identity/skip attempts without a call remain safe. */
+							memo_attempt_safe = memo_attempt_safe && mafft_reject_memo_falign_safe;
+#endif
+						}
 //						fprintf( stderr, "##### impmatch = %f\n", impmatch );
 						if( chudanres && parallelizationstrategy == BAATARI2 )
 						{
@@ -1332,10 +1363,19 @@ static void *athread( void *arg )
 
 
 #if MAFFT_REJECT_MEMO
-			if( memo_enabled && !memo_accepted && isfinite(tscore) )
+			if( memo_enabled && !memo_accepted )
 			{
-				memo_score[branchpos] = tscore;
-				memo_stamp[branchpos] = memo_epoch;
+				if( memo_attempt_safe && isfinite(tscore) )
+				{
+					memo_score[branchpos] = tscore;
+					memo_stamp[branchpos] = memo_epoch;
+				}
+				else
+				{
+					/* Never retain an older stamp for an uncertain attempt. */
+					memo_stamp[branchpos] = 0;
+					if( !memo_attempt_safe ) memo_unsafe++;
+				}
 			}
 			memo_finish:
 #endif
