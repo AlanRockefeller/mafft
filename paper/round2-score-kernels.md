@@ -36,8 +36,10 @@ Experiment snapshots defaulted to rolling on, self shortcut off and zero-extensi
 specialization off; `MAFFT_KB_SCORE_ONLY`, `MAFFT_KB_SELF_SCORE` and
 `MAFFT_KB_ZERO_EXT` select controlled comparisons. Final promoted defaults and
 the selected build are separate from those historical snapshots. Commit `91146f2`
-enables all three by default for **7.526-opt8-dikarya3**. It retains ordinary
-profile stack-buffer removal disabled because that experiment showed no gain.
+enabled all three by default for **7.526-opt8-dikarya3**. The current selected
+**7.526-opt8-dikarya4** source at `9d963ee` retains those defaults and the later
+guard hardening. It also retains ordinary profile stack-buffer removal disabled
+because that experiment showed no gain.
 
 ## Differential evidence
 
@@ -135,10 +137,11 @@ the same sanitizers. These post-timing checks are retained in
 `../round2/score-guard-check-02`. Direct helper tests do not
 claim that the upstream scalar algorithms support arbitrary nonfinite/extreme
 parameters; public scalar initializers still need separate review for INT_MIN
-offset. The final tracked build passed 612 option/format comparisons, six long
-alignment comparisons, 35 placement comparisons, 36 sanitizer fixtures and two
-real-input sanitizer comparisons. Additional thread-zero and noniterative
-two-thread fixtures passed 144 and 72 comparisons, respectively. These compare
+offset. The earlier tracked dikarya3 build and the corrected dikarya4 build each
+passed 612 option/format comparisons, six long alignment comparisons, 35 placement
+comparisons, 36 sanitizer fixtures and two real-input sanitizer comparisons.
+Additional dikarya3 thread-zero and noniterative two-thread fixtures passed 144
+and 72 comparisons, respectively. These compare
 complete outputs against frozen original opt8 or the verified release as
 specified in the retained run metadata. Final whole-corpus timing is separate.
 

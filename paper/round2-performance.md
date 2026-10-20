@@ -46,7 +46,7 @@ The previous 100-file result remains historical context:
 
 Those denominators are **not** used to calculate this round's incremental gains.
 Multiplying that historical 1.336x by component or development ratios would not
-constitute a fresh paired opt8-versus-dikarya3 measurement.
+constitute a fresh paired opt8-versus-dikarya4 measurement.
 
 ## Machine, workload and measurement discipline
 
@@ -88,7 +88,7 @@ GCC's existing C99/pthread definitions. Fast math, reassociation and reduced sco
 precision are excluded. Exactness means every byte of single-thread alignment
 stdout, including names, order, direction markers, gaps and formatting, against
 the frozen production-compatible opt8 golden for the same options. Diagnostic
-`VERSION` may identify dikarya3; CLUSTAL's `ALIGNMENT_VERSION` remains opt8.
+`VERSION` identifies the measured release; CLUSTAL's `ALIGNMENT_VERSION` remains opt8.
 
 Full methods and resource definitions are in [round2-methods.md](round2-methods.md).
 Paths beginning `round2/` and `bench/` below refer to private sibling directories
@@ -388,8 +388,12 @@ A separate default-off residue-map cache prototype is preserved on branch
 identity; per-call pins protect aliased IDs. Persistent requested storage is
 capped at 16 MiB per worker, excluding temporary fallbacks and allocator
 overhead. Review added release hooks outside DP allocation guards, including
-the D path. This experiment has no executed differential or performance result
-yet and is not included in dikarya4.
+the D path. The first checker-generation attempt failed before compilation
+because its C signature parser did not accept inline comments. That parser was
+corrected and passed seven focused Python fixtures. Source `f8d8fe6` is frozen
+separately; its native differential checks are queued after all timed release
+measurements. This experiment has no executed native differential or performance
+result yet and is not included in dikarya4.
 
 ## Compiler research and rejected alternatives
 
@@ -474,26 +478,29 @@ RSS high-water fields are not reinterpreted as individual-job peaks.
 
 The final selected policy is GCC 13.3 ordinary `-O3`, with rolling score-only,
 identity, zero-extension specialization, direct scoring, partial raw-row reuse,
-dense six-mers and ordinary raw-row reuse enabled. The standalone ordinary stack
-buffer remains off. Commit `91146f2` contains those defaults and diagnostic
-version **7.526-opt8-dikarya3**. `ALIGNMENT_VERSION` remains `7.526-opt8` so version
-labels inside alignment formats do not themselves alter the byte oracle. A
-fresh Git archive builds privately with the ordinary safe compiler flags:
+dense six-mers, ordinary raw-row reuse and guarded terminal rejected-branch reuse
+enabled. The standalone ordinary stack buffer remains off. Commit `9d963ee`
+contains these defaults, consistent diagnostic stamps for
+**7.526-opt8-dikarya4**, and the build preflight. The earlier source at `91146f2`
+remains independently preserved as dikarya3. `ALIGNMENT_VERSION` remains
+`7.526-opt8` so version labels inside alignment formats do not themselves alter
+the byte oracle. Archive the selected tracked commit as described in the
+[build instructions](../harness/round2/README.md), then build privately:
 
 ```sh
 python3 harness/round2/build.py --source /absolute/final/source \
-  --output /absolute/new/private/build --cc gcc \
+  --output /absolute/new/private/build --jobs 1 --cc gcc \
   --flags '-O3 -march=native -ffp-contract=off -g'
 
 python3 harness/round2/paired.py \
   --manifest /absolute/bench/production-corpus.json --data /absolute/bench/data \
   --golden /absolute/bench/golden/production-t1 --partition all --rounds 1 --cpu 0 \
   --build dikarya2=/absolute/frozen/dikarya2/bin/mafft \
-  --build dikarya3=/absolute/new/private/build/install/bin/mafft \
+  --build dikarya4=/absolute/new/private/build/install/bin/mafft \
   --output /absolute/new/paired-results
 ```
 
-Use new output directories and stop competing computation before timing. The
+Use new output directories and wait for a quiet machine before timing. The
 paired runner stores commands, input/output/golden hashes, installed-file hashes,
 versions, strategy, per-job CPU/wall/RSS and process-group execution results. Its
 resume checks reject changed plans or prior failed/changed records. Build metadata
@@ -504,9 +511,9 @@ retained. An unrelated production phylogenetic job delayed the final measurement
 its processes were neither stopped nor changed. Sanitizer and scientific tree
 runtimes collected during that load are excluded from isolated speedup claims.
 
-`release-preservation-audit.json` verifies all **90** build-relevant tracked source
+The preserved dikarya3 `release-preservation-audit.json` verifies all **90** build-relevant tracked source
 files against commit `91146f2`, the current worktree, the archived source and the
-build's source copy. It also verifies the private installed-file manifest, all
+build's source copy as recorded at that checkpoint. It also verifies the private installed-file manifest, all
 100 original input hashes, all 100 frozen goldens, the production opt8 binary
 manifest and the independently copied opt8 manifest. The reproducing tool is
 `harness/round2/release_audit.py`. A disassembly scan of all 32 release ELF helpers
