@@ -30,13 +30,22 @@ def main():
     ap.add_argument('--output',type=Path,required=True);ap.add_argument('--manifest',type=Path,required=True)
     ap.add_argument('--pairwise',action='store_true');args=ap.parse_args()
     args.output.mkdir(parents=True,exist_ok=False)
-    runs=[]
+    runs=[];sources=[];builds=set()
     for p in args.runs:
+        metadata_path=p.parent/'experiment.json'
+        metadata=json.loads(metadata_path.read_text())
+        build=(metadata['binary'],metadata['version'],metadata['launcher_sha256'])
+        builds.add(build)
+        sources.append({'runs':str(p.resolve()),'runs_sha256':sha256_file(p),
+                        'experiment':str(metadata_path.resolve()),'experiment_sha256':sha256_file(metadata_path),
+                        'binary':build[0],'version':build[1],'launcher_sha256':build[2]})
         for line in p.read_text().splitlines():
             r=json.loads(line)
             if r['returncode']:raise ValueError('Failed run in study')
+            if (r['binary'],r['version'])!=build[:2]:raise ValueError('Run differs from recorded MAFFT build')
             if sha256_file(r['alignment'])!=r['output_sha256']:raise ValueError('Recorded alignment hash changed')
             r['source_log']=str(p.resolve());runs.append(r)
+    if len(builds)!=1:raise ValueError('Analyze different MAFFT builds separately')
     manifest={f['file']:f for f in json.loads(args.manifest.read_text())['files']}
     groups=defaultdict(list)
     for r in runs:groups[r['input_sha256']].append(r)
@@ -64,6 +73,8 @@ def main():
                 'at_least_five_replicates':len(cs)>=5,
                 'wall_seconds':summary(r['wall'] for r in cs),
                 'cpu_seconds':summary(r['cpu'] for r in cs),
+                'timing_contention':{'flagged_runs':sum(r.get('contention',{}).get('contention_flag') is True for r in cs),
+                                     'unknown_runs':sum(r.get('contention',{}).get('contention_flag') is None for r in cs)},
                 'max_rss_kib':max(r['resources']['rss_kib'] for r in cs),
                 'width':summary(m['candidate']['width'] for m in metrics),
                 'gap_fraction':summary(m['candidate']['gap_fraction'] for m in metrics),
@@ -97,6 +108,7 @@ def main():
                          'median_of_input_median_f1':statistics.median(v['homology_f1']['median'] for v in vals),
                          'minimum_f1':min(v['homology_f1']['min'] for v in vals)}
     result={'unique_raw_input_hashes':len(rows),'alignment_runs':len(runs),'aggregates':aggregate,'datasets':rows,
+            'sources':sources,'timing_interpretation':'Scientific alignment repetitions can overlap production work. Their wall and CPU times are descriptive; clean quiet-gated measurements determine performance recommendations. Missing contention observations are not treated as quiet.',
             'interpretation':'Wilson intervals describe counts of distinct input files; taxon/sequence overlap may reduce biological independence. Repeated alignment runs are never independent datasets. Observed reproducibility is a finite test, not a proof for all inputs.'}
     write_json(args.output/'summary.json',result);write_json(args.output/'metric-index.json',allmetrics)
     with (args.output/'datasets.tsv').open('x') as out:
