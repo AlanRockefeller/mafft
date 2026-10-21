@@ -19,6 +19,8 @@ import random
 import statistics
 import sys
 
+import isolated_batch as batch
+
 FULL = ('production', 'two_threads', 'two_jobs', 'selective', 'refine_one')
 ISOLATED = ('one_job', 'two_threads', 'selective', 'refine_one')
 PILOT = ('two_threads', 'two_jobs', 'selective', 'refine_one')
@@ -168,8 +170,54 @@ class Validator:
                 raise ValueError('Frozen golden changed: ' + name)
             if self.e.digest(resolve(name, resolve(m['data'], root))) != f['sha256']:
                 raise ValueError('Original input changed: ' + name)
+        if m.get('schema') == batch.SCHEMA:
+            self.batch_experiment(root, m)
         self.metadata[root] = m
         return root, m
+
+    def batch_experiment(self, root, m):
+        """Check the prospective short cohort and its independently frozen evidence."""
+        if (m.get('protocol') != batch.SCHEMA or m['rounds'] != batch.ROUNDS or
+                m['paired_rounds'] != batch.ROUNDS or m['native_repeats_per_round'] != batch.REPLICATES or
+                m['native_repeats_per_input'] != batch.REPLICATES * batch.ROUNDS or
+                m['selected_policies'] != list(batch.POLICIES) or len(m['files']) != 1 or
+                m['policy_order_by_round'] != [batch.policy_order(r) for r in range(batch.ROUNDS)] or
+                m['selection_contention_source'] != batch.SELECTION_FIELD):
+            raise ValueError('Short-input batch protocol changed')
+        config = m['quiet_window']
+        if (config.get('enabled') is not True or config.get('max_busy_cores') != batch.CEILING or
+                config.get('max_scientific_cores') != .05):
+            raise ValueError('Short-input batch quiet ceilings changed')
+        priority = m['priority']
+        if (priority['driver_at_measurement'], priority['gnu_time_inherits_driver_nice'],
+                priority['native_nice_increment'], priority['expected_native_nice']) != (10, 10, 10, 19):
+            raise ValueError('Short-input batch priority protocol changed')
+        eligible = m['eligibility']
+        runs_path, plan_path = resolve(eligible['runs'], root), resolve(eligible['experiment'], root)
+        if (self.e.digest(runs_path) != eligible['full_corpus_runs_sha256'] or
+                self.e.digest(plan_path) != eligible['full_corpus_experiment_sha256']):
+            raise ValueError('Frozen full-corpus eligibility evidence changed')
+        plan = self.e.document(plan_path)
+        if plan['manifest_sha256'] != self.e.digest(self.manifest_path):
+            raise ValueError('Eligibility full corpus used another manifest')
+        build, means, short = batch.eligibility(self.e.document(self.manifest_path), plan,
+                                               self.e.lines(runs_path), eligible['build'])
+        name = m['files'][0]['file']
+        if (name not in short or eligible['strict_threshold_seconds'] != batch.SHORT_SECONDS or
+                eligible['metric'] != 'mean A wall across all frozen corpus rounds' or
+                eligible['input_mean_A_wall_seconds'] != means[name] or eligible['eligible_short_inputs'] != short):
+            raise ValueError('Input is outside the prespecified short full-corpus cohort')
+        if any(build[k] != m[k] for k in ('launcher_sha256', 'installed_file_sha256', 'version')):
+            raise ValueError('Batch differs from the frozen eligibility native build')
+        if self.e.digest('/usr/bin/time') != m['gnu_time_sha256']:
+            raise ValueError('GNU-time binary changed')
+        harness = m['harness_source_at_startup']
+        if set(harness) != {'isolated_batch', 'throughput', 'quiet', 'alignments'}:
+            raise ValueError('Batch harness provenance is incomplete')
+        for record in harness.values():
+            retained = resolve(record['retained_copy'], root)
+            if not retained.is_relative_to(root / 'harness') or self.e.digest(retained) != record['sha256']:
+                raise ValueError('Retained batch harness source changed')
 
     def policy(self, path, policy, rnd, names):
         path = Path(path).resolve()
@@ -177,6 +225,8 @@ class Validator:
             raise ValueError('Duplicate/reused selected summary: ' + str(path))
         self.used.add(path)
         root, m = self.experiment(path)
+        if m.get('schema') == batch.SCHEMA:
+            return self.batch_policy(path, policy, rnd, names, root, m)
         s = self.e.document(path)
         config, concurrency = POLICIES[policy]
         if (s['policy'], s['round'], s['config'], s['concurrency']) != (policy, rnd, config, concurrency):
@@ -269,6 +319,67 @@ class Validator:
                 row[prefix + '_' + k + '_seconds'] = s[key][k]
         return row, runs, s['queue_order']
 
+    def batch_policy(self, path, policy, rnd, names, root, m):
+        if policy not in batch.POLICIES or names != [m['files'][0]['file']] or rnd not in range(batch.ROUNDS):
+            raise ValueError('Invalid selected batch input/policy/round')
+        name = names[0]; f = self.files[name]
+        s, runs = self.e.document(path), self.e.lines(path.parent / 'runs.jsonl')
+        batch.validate_batch_summary(s, runs, name, policy, rnd)
+        chosen = s[batch.SELECTION_FIELD]
+        if (chosen.get('available') is not True or chosen.get('contention_flag') is not False or
+                chosen.get('external_attribution_valid') is not True):
+            raise ValueError('Selected batch is contended or its contention is unknown')
+        if (s['quiet_window'].get('ready') is not True or s['quiet_window'].get('settings') != m['quiet_window'] or
+                self.e.document(path.parent / 'quiet-window.json') != s['quiet_window']):
+            raise ValueError('Batch quiet-window records disagree or are not ready')
+        config = POLICIES[policy][0]
+        for r in runs:
+            if (r['input_sha256'] != f['sha256'] or r['threads'] != int(FLAGS[config][1]) or
+                    r['recorded_production_threads'] != f['production_threads']):
+                raise ValueError('Batch run input/thread identity changed')
+            source = resolve(name, resolve(m['data'], root))
+            expected = ['nice', '-n', '10', 'taskset', '-c', '0,1', str(resolve(m['binary'], root)),
+                        *FLAGS[config], *f['production_options'], str(source)]
+            if r['argv'] != expected:
+                raise ValueError('Batch command differs from production options')
+            alignment = resolve(r['alignment'], path.parent)
+            if alignment != path.parent / f"replicate-{r['replicate']:03d}" / name / 'alignment.fasta':
+                raise ValueError('Batch replicate reuses another result directory')
+            if not alignment.stat().st_size or self.e.digest(alignment) != r['output_sha256']:
+                raise ValueError('Batch alignment result changed or is empty')
+            if (r['golden_sha256'] != self.golden[name] or
+                    r['matches_A'] is not (r['output_sha256'] == self.golden[name])):
+                raise ValueError('Batch golden match is inconsistent')
+            resources = alignment.parent / 'resources.json'
+            self.e.digest(resources)
+            if resource_record(resources) != r['resources']:
+                raise ValueError('Batch GNU-time resource file differs from its run')
+            finite(r['resources']['rss_kib'], 'batch per-job RSS')
+            if self.e.digest(alignment.parent / 'stderr.txt') != r['stderr_sha256']:
+                raise ValueError('Batch stderr changed')
+        if s['matches_A'] != sum(r['matches_A'] for r in runs):
+            raise ValueError('Batch golden match count changed')
+        for key, field in [('service_latency_seconds', 'service_seconds'), ('queue_seconds', 'queue_seconds'),
+                           ('response_latency_seconds', 'response_seconds')]:
+            for k, expected in stats([r[field] for r in runs]).items():
+                equal_number(s[key][k], expected, 'batch ' + key + '.' + k)
+        equal_number(s['cpu_per_job_seconds'], s['cpu_total_seconds']/batch.REPLICATES, 'batch GNU CPU/job')
+        equal_number(s['jobs_per_hour'], batch.REPLICATES*3600/s['makespan_seconds'], 'batch descriptive jobs/hour')
+        equal_number(s['max_per_job_rss_mib'], max(r['resources']['rss_kib'] for r in runs)/1024, 'batch GNU RSS')
+        finite(s['peak_sampled_process_tree_rss_mib'], 'batch sampled RSS')
+        row = {k: s[k] for k in ['policy', 'round', 'jobs', 'makespan_seconds', 'jobs_per_hour',
+               'cpu_per_job_seconds', 'child_cpu_per_job_seconds', 'max_per_job_rss_mib',
+               'peak_sampled_process_tree_rss_mib', 'matches_A']}
+        row.update(protocol=batch.SCHEMA, paired_rounds=batch.ROUNDS, native_repeats_per_round=batch.REPLICATES,
+                   selection_contention_source=batch.SELECTION_FIELD,
+                   short_threshold_seconds=m['eligibility']['strict_threshold_seconds'],
+                   eligibility_full_corpus_runs_sha256=m['eligibility']['full_corpus_runs_sha256'],
+                   eligibility_full_corpus_experiment_sha256=m['eligibility']['full_corpus_experiment_sha256'],
+                   distinct_input_hashes=1, summary=str(path), summary_sha256=self.e.digest(path),
+                   serial_jobs_flagged=sum(r['contention']['contention_flag'] is True for r in runs),
+                   worker_jobs_without_individual_attribution=0)
+        return row, runs, s['queue_order']
+
 
 def campaign(row, base, validator, policies, expected_names=None):
     root = row_path(row, base)
@@ -285,7 +396,59 @@ def campaign(row, base, validator, policies, expected_names=None):
             results.append((result, runs)); orders.append(order)
         if any(order != orders[0] for order in orders[1:]):
             raise ValueError('Policies within a pilot/isolated round used different input orders')
+    if m.get('schema') == batch.SCHEMA:
+        status = validator.e.document(root / 'STATUS.json')
+        summaries = [validator.e.document(Path(result['summary'])) for result, _ in results]
+        if status.get('finished') is not True or status.get('accepted') is not True or not batch.clean_batch_set(summaries):
+            raise ValueError('Selected batch needs the complete clean eight-window set')
+        by_key = {(s['round'], s['policy']): s for s in summaries}
+        ordered = [by_key[(r, p)] for r in range(batch.ROUNDS) for p in batch.policy_order(r)]
+        for first, second in zip(ordered, ordered[1:]):
+            if (first['cpu_stat_after']['monotonic'] > second['cpu_stat_before']['monotonic'] or
+                    first['rusage_children_after']['pid'] != second['rusage_children_before']['pid'] or
+                    first['rusage_children_after']['monotonic'] > second['rusage_children_before']['monotonic']):
+                raise ValueError('Batch policy rotation overlaps or mixes parent processes')
     return names, results
+
+
+def isolated_input_rows(name, results, input_sha256):
+    """Average technical replicates within each round, then weight both rounds equally."""
+    rows = []
+    for policy in ISOLATED:
+        groups = sorted([(result, runs) for result, runs in results if result['policy'] == policy],
+                        key=lambda group: group[0]['round'])
+        if len(groups) != 2 or [result['round'] for result, _ in groups] != [0, 1]:
+            raise ValueError('Isolated input needs both paired rounds')
+        counts = {len(runs) for _, runs in groups}
+        if len(counts) != 1 or next(iter(counts)) not in (1, batch.REPLICATES):
+            raise ValueError('Unequal or unsupported within-round replicate counts')
+        is_batch = all(result.get('protocol') == batch.SCHEMA for result, _ in groups)
+        if is_batch is not (next(iter(counts)) == batch.REPLICATES):
+            raise ValueError('Batch counts/protocol disagree')
+        rr = [r for _, runs in groups for r in runs]
+        hashes = sorted({r['output_sha256'] for r in rr})
+        first = groups[0][0]
+        rows.append({'input': name, 'input_sha256': input_sha256, 'policy': policy, 'config': POLICIES[policy][0],
+            'protocol': batch.SCHEMA if is_batch else 'legacy-isolated-n1-two-rounds',
+            'repeats': len(rr), 'native_repeats_per_input': len(rr), 'paired_rounds': 2,
+            'native_repeats_per_round': len(groups[0][1]),
+            'averaging': 'arithmetic mean within each round, then arithmetic mean of the two round means',
+            'mean_service_seconds': statistics.mean(statistics.mean(r['service_seconds'] for r in runs) for _, runs in groups),
+            'min_service_seconds': min(r['service_seconds'] for r in rr), 'max_service_seconds': max(r['service_seconds'] for r in rr),
+            'mean_cpu_seconds': statistics.mean(statistics.mean(r['cpu'] for r in runs) for _, runs in groups),
+            'cpu_accounting_source': 'Original per-job GNU time user+system, unchanged',
+            'mean_child_tree_cpu_seconds': statistics.mean(result['child_cpu_per_job_seconds'] for result, _ in groups) if is_batch else None,
+            'child_tree_cpu_scope': 'Policy waited child-tree CPU divided by 20, including GNU time; diagnostic only' if is_batch else None,
+            'mean_per_job_rss_mib': statistics.mean(statistics.mean(r['resources']['rss_kib']/1024 for r in runs) for _, runs in groups),
+            'max_per_job_rss_mib': max(r['resources']['rss_kib']/1024 for r in rr),
+            'matches_A': sum(r['matches_A'] for r in rr), 'distinct_output_hashes': len(hashes),
+            'serial_jobs_flagged': sum(r['contention']['contention_flag'] is True for r in rr),
+            'repeatable_across_native_runs': len(hashes) == 1, 'output_hashes': hashes,
+            'selection_contention_source': batch.SELECTION_FIELD if is_batch else 'contention (original summed GNU CPU)',
+            'short_threshold_seconds': first['short_threshold_seconds'] if is_batch else None,
+            'eligibility_full_corpus_runs_sha256': first['eligibility_full_corpus_runs_sha256'] if is_batch else None,
+            'eligibility_full_corpus_experiment_sha256': first['eligibility_full_corpus_experiment_sha256'] if is_batch else None})
+    return rows
 
 
 def write_table(path, rows):
@@ -323,19 +486,7 @@ def aggregate(args):
             raise ValueError('Duplicate/unknown selected isolated input')
         seen.add(name)
         _, results = campaign(selected, base, validator, ISOLATED, [name])
-        for policy in ISOLATED:
-            rr = [runs[0] for result, runs in results if result['policy'] == policy]
-            hashes = sorted({r['output_sha256'] for r in rr})
-            isolated.append({'input': name, 'input_sha256': validator.files[name]['sha256'], 'policy': policy,
-                'config': POLICIES[policy][0], 'repeats': 2,
-                'mean_service_seconds': statistics.mean(r['service_seconds'] for r in rr),
-                'min_service_seconds': min(r['service_seconds'] for r in rr), 'max_service_seconds': max(r['service_seconds'] for r in rr),
-                'mean_cpu_seconds': statistics.mean(r['cpu'] for r in rr),
-                'mean_per_job_rss_mib': statistics.mean(r['resources']['rss_kib'] / 1024 for r in rr),
-                'max_per_job_rss_mib': max(r['resources']['rss_kib'] / 1024 for r in rr),
-                'matches_A': sum(r['matches_A'] for r in rr), 'distinct_output_hashes': len(hashes),
-                'serial_jobs_flagged': sum(r['contention']['contention_flag'] is True for r in rr),
-                'repeatable_in_two_runs': len(hashes) == 1, 'output_hashes': hashes})
+        isolated.extend(isolated_input_rows(name, results, validator.files[name]['sha256']))
     if seen != set(pilot_names):
         raise ValueError('Isolated selection does not cover the frozen pilot/latency input set')
     by_config = []
@@ -343,14 +494,16 @@ def aggregate(args):
         rows = [r for r in isolated if r['policy'] == policy]
         latency = stats([r['mean_service_seconds'] for r in rows])
         by_config.append({'policy': policy, 'config': POLICIES[policy][0], 'input_files': len(rows),
-            'distinct_input_hashes': len({r['input_sha256'] for r in rows}), 'measured_runs': 2 * len(rows),
+            'distinct_input_hashes': len({r['input_sha256'] for r in rows}),
+            'measured_runs': sum(r['native_repeats_per_input'] for r in rows), 'paired_rounds': 2,
+            'native_repeats_per_input': {r['input']: r['native_repeats_per_input'] for r in rows},
             'mean_file_mean_latency_seconds': latency['sum'] / len(rows),
             'median_file_mean_latency_seconds': latency['median'], 'p95_file_mean_latency_seconds': latency['p95'],
             'mean_file_mean_cpu_seconds': statistics.mean(r['mean_cpu_seconds'] for r in rows),
             'max_per_job_rss_mib': max(r['max_per_job_rss_mib'] for r in rows),
             'matches_A': sum(r['matches_A'] for r in rows),
             'serial_jobs_flagged': sum(r['serial_jobs_flagged'] for r in rows),
-            'inputs_repeatable_in_two_runs': sum(r['repeatable_in_two_runs'] for r in rows)})
+            'inputs_repeatable_across_native_runs': sum(r['repeatable_across_native_runs'] for r in rows)})
     pilot_rows = [result for result, _ in pilot]
     ranges = []
     for policy in PILOT:
@@ -362,24 +515,32 @@ def aggregate(args):
             row[metric + '_min'] = min(r[metric] for r in rows)
             row[metric + '_max'] = max(r[metric] for r in rows)
         ranges.append(row)
-    return {'schema': 'mafft-round2-scheduling-summary-v1', 'manifest': str(validator.manifest_path),
+    return {'schema': 'mafft-round2-scheduling-summary-v2', 'manifest': str(validator.manifest_path),
         'manifest_sha256': e.digest(validator.manifest_path), 'production_files': len(validator.files),
         'distinct_production_input_hashes': len({f['sha256'] for f in validator.files.values()}),
         'native_build_and_source': validator.identity, 'golden_sha256': validator.golden,
         'full_policies': sorted(full, key=lambda r: FULL.index(r['policy'])), 'full_planned_queue_order': orders[0],
         'isolated_per_input': isolated, 'isolated_by_config': by_config, 'pilot_rounds': pilot_rows, 'pilot_ranges': ranges,
         'selected_latency_inputs': pilot_names,
+        'paired_rounds': 2,
+        'native_repeats_per_input': {r['input']: r['native_repeats_per_input'] for r in isolated if r['policy'] == ISOLATED[0]},
+        'isolated_averaging': 'Within-round replicate means, then two-round means; each input has equal weight in the latency summary.',
+        'selection_contention_sources': sorted({r['selection_contention_source'] for r in isolated}),
+        'short_batch_threshold_seconds': batch.SHORT_SECONDS,
+        'short_batch_eligibility_full_corpus_runs_sha256': sorted({r['eligibility_full_corpus_runs_sha256'] for r in isolated if r['eligibility_full_corpus_runs_sha256']}),
+        'short_batch_eligibility_full_corpus_experiment_sha256': sorted({r['eligibility_full_corpus_experiment_sha256'] for r in isolated if r['eligibility_full_corpus_experiment_sha256']}),
         'distinct_latency_input_hashes': len({validator.files[name]['sha256'] for name in pilot_names}),
         'selection_ledgers': {'full': full_prov, 'isolated': isolated_prov, 'pilot': pilot_prov},
         'source_and_result_sha256': e.hashes,
         'interpretation': {
             'selection': 'Consume explicit ledger selections only; never choose by speed. Unselected attempts and deferrals remain in provenance.',
             'workload': f"Full replay retains every production filename, including repeated copies of raw hashes ({len(validator.files)} jobs versus {len({f['sha256'] for f in validator.files.values()})} hashes). No deduplication changes throughput denominators.",
-            'latency': f'The frozen selected pilot/latency subset ({len(pilot_names)} inputs) has exactly two isolated repeats per input/configuration. Aggregate latency gives each production filename one vote after averaging its two repeats; it is not the full-corpus latency distribution.',
-            'arrival': 'Saturated backlog: all jobs arrive at zero. Service, queue delay and response are distinct; jobs/hour is jobs divided by policy makespan.',
-            'contention': 'Selections use explicitly uncontended policy aggregates. Transient serial-job flags are retained and counted, not a reason to redefine the prospective selection rule. Concurrent-worker per-job attribution includes the other measured worker; only the policy aggregate establishes observed external quiet. Host-side interference is not ruled out.',
+            'latency': f'The frozen selected pilot/latency subset ({len(pilot_names)} inputs) has two paired isolated rounds per input/configuration. Prospectively short inputs use 20 native invocations in each round; other inputs retain one per round. Average within each round, then average both rounds; each production filename receives one vote. Native replicates are technical repeats, not independent biological datasets; this is not the full-corpus latency distribution.',
+            'arrival': 'Full/pilot throughput uses a saturated backlog with all jobs arriving at zero. Isolated measurements launch one invocation at a time; new short batches record queue=0 and response=service. Batch descriptive jobs/hour is not sustained throughput.',
+            'contention': 'Selections use explicitly uncontended policy aggregates. The new short protocol uses the separately named RUSAGE_CHILDREN policy delta, including GNU time, without subtracting observer CPU; original GNU CPU, raw aggregate contention and all per-job flags are retained. Long inputs and full/pilot runs retain original GNU-based selection. All eight batch policy/round windows must pass together. Host-side interference is not ruled out.',
+            'cpu': 'Mean CPU comparisons retain original GNU user+system for every input. The separate child-tree CPU diagnostic includes GNU time and is available only for short batches; it is not substituted into mean_cpu_seconds.',
             'memory': 'GNU-time per-job peak RSS and sampled simultaneous process-group RSS are different statistics. The sampled concurrent maximum is not an exact peak.',
-            'outputs': 'A/F must match frozen A bytes. B/C and production B jobs can change outputs; two-repeat hash stability is finite evidence, not a universal guarantee or a biological-accuracy conclusion.',
+            'outputs': 'A/F must match frozen A bytes. B/C and production B jobs can change outputs; hash stability over the recorded 2 or 40 native invocations is finite evidence, not a universal guarantee or a biological-accuracy conclusion.',
             'uncertainty': 'Two-round ranges are descriptive controls. No statistical timing-noise confidence interval or independent biological replication is claimed.'}}
 
 

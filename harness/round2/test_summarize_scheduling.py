@@ -150,7 +150,10 @@ class SchedulingSummaryTests(unittest.TestCase):
             b = [r for r in result['isolated_per_input'] if r['config'] == 'B']
             self.assertTrue(all(r['distinct_output_hashes'] == 2 and r['matches_A'] == 0 for r in b))
             c = [r for r in result['isolated_per_input'] if r['config'] == 'C']
-            self.assertTrue(all(r['repeatable_in_two_runs'] and r['matches_A'] == 0 for r in c))
+            self.assertTrue(all(r['repeatable_across_native_runs'] and r['matches_A'] == 0 for r in c))
+            self.assertEqual(result['schema'], 'mafft-round2-scheduling-summary-v2')
+            self.assertTrue(all(r['native_repeats_per_input'] == 2 and r['paired_rounds'] == 2
+                                for r in result['isolated_per_input']))
             self.assertTrue(all(r['matches_A'] == 2 for r in result['isolated_per_input'] if r['config'] in ['A', 'F']))
 
     def test_mixed_recorded_build_or_source_is_rejected(self):
