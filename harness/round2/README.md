@@ -1,7 +1,12 @@
 # Round 2 experiments
 
 Use a private artifact directory, retain the original goldens and stop competing
-builds or experiments before timing. None of these drivers installs MAFFT.
+builds or experiments before timing. Experiment drivers use private prefixes.
+
+The separate [production deployment script](DEPLOY.md) stages the audited build
+under a versioned prefix and supports atomic activation and rollback. It is a
+read-only dry run unless invoked with `--apply` and an explicit production
+entrypoint.
 
 The dikarya4 validation source is frozen at Git commit `9d963ee`. To rebuild
 that exact source without using existing object files:

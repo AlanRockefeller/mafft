@@ -86,6 +86,10 @@ provenance, metrics, figures and inspectable tree exports. Build privately with
 GCC and `-O3 -march=native -ffp-contract=off` for the tested VM arithmetic class;
 other architectures have not received new runtime validation in this round.
 
+The [production deployment script](harness/round2/DEPLOY.md) verifies the audited
+Dikarya4 bundle, checks golden alignments and supports atomic activation and
+rollback. It defaults to a read-only dry run and requires an explicit entrypoint.
+
 ## Historical results (opt8 and earlier)
 
 Speedup over stock MAFFT 7.526 built the same way on the same machine, wall time, `--thread 1`
