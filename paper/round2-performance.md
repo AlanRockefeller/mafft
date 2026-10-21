@@ -367,6 +367,15 @@ whole-corpus estimate. The development result retains its three flagged jobs;
 `khx6` and `jqh7` have a separate three-round confirmation plan. Results are
 `reject-memo-v5-idle-{development,high-reuse}-analysis`.
 
+The separate three-round `khx6`/`jqh7` confirmation is now complete: all
+**12/12** outputs matched, with zero flagged or unknown jobs. Across the two
+inputs, mean CPU seconds per pass were 9.680 for dikarya3 and 9.683 for memo
+(0.9997x); wall seconds were 9.993 and 9.961 (1.0031x). Neither input had a
+material regression. This is an effectively neutral two-input confirmation,
+not an independent repetition of the complete development workload; it does
+not replace the original flagged measurements. Results are in
+`reject-memo-v5-idle-confirmation/analysis`.
+
 This evidence, the dependency argument and differential/sanitizer checks support
 selecting the guarded code for **dikarya4**. The common macro is defined in
 `mltaln.h` so worker and Falign agree; `-DMAFFT_REJECT_MEMO=0` remains an ablation.

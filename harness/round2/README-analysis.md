@@ -470,6 +470,27 @@ excluded or changed inputs. The selected stage execution starts are neither
 user submission times nor the entire production arrival stream. Log clock
 timestamps have no specified timezone; only relative intervals are used.
 
+`performance_figures.py` combines the completed paired analyses and validated
+scheduling summary into three standalone figures, each in SVG/PDF/PNG, plus six
+plotting tables and a hash manifest. It checks matching input/hash cohorts,
+frozen goldens, manifests and candidate installations before plotting. Matplotlib
+is imported only during rendering; use the isolated figure environment and run
+after native timing finishes:
+
+```sh
+python3 harness/round2/performance_figures.py \
+  --dikarya2-analysis /private/dikarya4-r2-performance-analysis \
+  --opt8-analysis /private/dikarya4-r2-opt8-analysis \
+  --scheduling-analysis /private/dikarya4-r2-scheduling-analysis \
+  --output /private/new-performance-figures
+```
+
+The speedup panels separate production filenames from distinct input hashes.
+The scheduling figure uses the full backlog; isolated latency uses only the
+selected subset's two-repeat file means. Contention and exact-output counts
+remain visible, and no repeat range or workload-mix interval is displayed as a
+timing-noise confidence interval. Existing output directories are refused.
+
 After isolated and saturated native measurements finish, `trace_replay.py`
 projects fixed worker policies onto those observed start intervals. The simple
 queue model separates service, waiting and response time and reports its error
