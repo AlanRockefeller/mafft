@@ -83,6 +83,13 @@ interval. The first-clean-set rule conditions results on the observed quiet gate
 it must be stated alongside all retained attempts. Batch jobs/hour is descriptive
 and must not be used as the sustained production throughput result.
 
+The observed full two-job replay had a signed global-minus-GNU CPU residual of
+−28.17 seconds over 416.68 seconds. That is larger than endpoint rounding alone.
+The new counter does not resolve such disagreement between VM/global and process
+accounting, and can make a negative residual more negative. Passing the recorded
+counter filter is an observational criterion, not proof of physical CPU
+isolation. Signed residuals and original flags must remain visible.
+
 `test_isolated_batch.py` contains synthetic-only fixtures for the precision
 difference, invalid/mixed child counters, exact replicate identities and ordering,
 unchanged GNU fields, complete eight-window selection, priority handling, strict
@@ -106,3 +113,11 @@ Primary references:
   shows the integer centisecond formatting of `%U` and `%S`. This source version
   explains the representation issue; the installed GNU time binary is separately
   identified by SHA-256 rather than claimed to be this source release.
+- The [official GNU time 1.9 source archive](https://ftp.gnu.org/pub/gnu/time/time-1.9.tar.gz)
+  also confirms this formatting in `src/time.c` (lines 530–538), using integer
+  `TV_MSEC/10`; `src/resuse.h` defines `TV_MSEC` through integer microsecond-to-
+  millisecond conversion. The upstream archive SHA-256 is
+  `fbacf0c81e62429df3e33bda4cee38756604f18e01d977338e23306a3e3b521e`.
+  Installed package metadata identifies `time 1.9-0.2build1`; matching upstream
+  version does not assert a bit-identical unpatched build. The local executable
+  is separately hashed in every batch experiment.

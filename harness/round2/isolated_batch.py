@@ -33,6 +33,7 @@ PRIMARY_SOURCES = {
     'linux_getrusage': 'https://www.man7.org/linux/man-pages/man2/getrusage.2.html',
     'gnu_time_format': 'https://www.gnu.org/software/time/manual/html_node/Format-String.html',
     'gnu_source_centisecond_formatting': 'https://sources.debian.org/src/time/1.7-21/time.c',
+    'gnu_1_9_official_source_archive': 'https://ftp.gnu.org/pub/gnu/time/time-1.9.tar.gz',
 }
 LIMITATIONS = [
     'RUSAGE_CHILDREN is a process-wide CPU accumulator for terminated, waited-for children; '

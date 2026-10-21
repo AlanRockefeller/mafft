@@ -314,6 +314,12 @@ class Validator:
         row.update(distinct_input_hashes=len({r['input_sha256'] for r in runs}), summary=str(path), summary_sha256=self.e.digest(path))
         row.update(serial_jobs_flagged=sum(r['contention']['contention_flag'] is True for r in runs),
                    worker_jobs_without_individual_attribution=sum(r['contention']['contention_flag'] is None for r in runs))
+        row.update(policy_raw_cpu_residual_seconds=c.get('global_busy_minus_job_cpu_seconds_raw'),
+                   policy_external_busy_cores_estimate=c.get('external_busy_cores_estimate'),
+                   policy_global_busy_seconds=c.get('global_busy_seconds'),
+                   policy_accounted_job_cpu_seconds=c.get('accounted_job_cpu_seconds'),
+                   observer_cpu_seconds=s.get('observer_cpu_seconds'),
+                   observer_cpu_cores=s.get('observer_cpu_cores'))
         for key, prefix in [('service_latency_seconds', 'service'), ('queue_seconds', 'queue'), ('response_latency_seconds', 'response')]:
             for k in ['median', 'p95']:
                 row[prefix + '_' + k + '_seconds'] = s[key][k]
@@ -537,7 +543,8 @@ def aggregate(args):
             'workload': f"Full replay retains every production filename, including repeated copies of raw hashes ({len(validator.files)} jobs versus {len({f['sha256'] for f in validator.files.values()})} hashes). No deduplication changes throughput denominators.",
             'latency': f'The frozen selected pilot/latency subset ({len(pilot_names)} inputs) has two paired isolated rounds per input/configuration. Prospectively short inputs use 20 native invocations in each round; other inputs retain one per round. Average within each round, then average both rounds; each production filename receives one vote. Native replicates are technical repeats, not independent biological datasets; this is not the full-corpus latency distribution.',
             'arrival': 'Full/pilot throughput uses a saturated backlog with all jobs arriving at zero. Isolated measurements launch one invocation at a time; new short batches record queue=0 and response=service. Batch descriptive jobs/hour is not sustained throughput.',
-            'contention': 'Selections use explicitly uncontended policy aggregates. The new short protocol uses the separately named RUSAGE_CHILDREN policy delta, including GNU time, without subtracting observer CPU; original GNU CPU, raw aggregate contention and all per-job flags are retained. Long inputs and full/pilot runs retain original GNU-based selection. All eight batch policy/round windows must pass together. Host-side interference is not ruled out.',
+            'contention': 'Selections use policy aggregates passing the prespecified counter filter. The new short protocol uses the separately named RUSAGE_CHILDREN policy delta, including GNU time, without subtracting observer CPU; original GNU CPU, raw aggregate contention and all per-job flags are retained. Long inputs and full/pilot runs retain original GNU-based selection. All eight batch policy/round windows must pass together. Passing the filter does not prove physical CPU isolation or rule out host interference.',
+            'signed_cpu_residual': 'Global busy minus job CPU is exported before clamping. A negative residual is a disagreement between the global and accumulated process counters, not evidence of zero external work. Large negative residuals cannot be explained by endpoint centisecond rounding alone; no cause is established here and the original flags/selections remain unchanged.',
             'cpu': 'Mean CPU comparisons retain original GNU user+system for every input. The separate child-tree CPU diagnostic includes GNU time and is available only for short batches; it is not substituted into mean_cpu_seconds.',
             'memory': 'GNU-time per-job peak RSS and sampled simultaneous process-group RSS are different statistics. The sampled concurrent maximum is not an exact peak.',
             'outputs': 'A/F must match frozen A bytes. B/C and production B jobs can change outputs; hash stability over the recorded 2 or 40 native invocations is finite evidence, not a universal guarantee or a biological-accuracy conclusion.',

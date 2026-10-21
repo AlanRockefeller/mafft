@@ -106,6 +106,22 @@ at startup. The old policy attempts, pause/resume boundary records and
 `rss-observer-v2-check` retain this protocol correction. Paired-corpus runs do
 not use this repeated RSS sampler, so their timings are unaffected by the change.
 
+Scheduling provenance also records effective priority: the coordinator and GNU
+time had niceness 10, while native MAFFT descendants had niceness 19 because
+the command's `nice -n 10` adds to the inherited value. This priority was
+preserved during the scheduling continuation. Absolute rates describe this
+measured policy and background environment, not a guarantee for a default-
+priority production service. A further limitation appeared in the full two-job
+replay: global busy time was 691.73 seconds versus 719.90 accumulated GNU job CPU
+seconds, a signed residual of **−28.17 seconds** over 416.68 seconds. The original
+filter retains that value and clamps its external-work estimate to zero, as
+specified before measurement. This counter disagreement is larger than endpoint
+rounding and does **not** prove absence of external work. Its cause is unresolved.
+Signed residuals are exported with policy results; passing the counter filter is
+an observational screen rather than proof of physical CPU isolation. The mixed-
+workload repeats provide an additional check without pretending to remove this
+VM accounting limitation.
+
 The selected arithmetic class is `-O3 -march=native -ffp-contract=off -g` with
 GCC's existing C99/pthread definitions. Fast math, reassociation and reduced score
 precision are excluded. Exactness means every byte of single-thread alignment
