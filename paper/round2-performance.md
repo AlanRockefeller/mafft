@@ -6,9 +6,9 @@ Selected version for final validation: **7.526-opt8-dikarya4**.
 **This is an interim performance report.** Component experiments and the earlier
 dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
 sanitizer builds and their checks have also passed. The fresh three-build,
-100-file paired pass is complete; its timing confirmations, repeated development
-and FFT comparisons, final profiles and production scheduling recommendation
-remain to be finalized. The corpus ratios below describe that measured pass,
+100-file paired pass and the repeated development and FFT comparisons are
+complete; timing confirmations, final profiles and the production scheduling
+recommendation remain to be finalized. The corpus ratios below describe that measured pass,
 with timing flags retained. No production deployment is claimed here.
 Phylogenetic findings belong in the
 [separate threading study](round2-phylogenetics.md).
@@ -142,8 +142,16 @@ therefore leave the measured corpus maximum nearly unchanged from dikarya2;
 these are per-job maxima, not sampled simultaneous memory under concurrency.
 
 Artifacts are `dikarya4-r2-corpus`, `dikarya4-r2-performance-analysis` and
-`dikarya4-r2-opt8-analysis`. Repeated development/FFT comparisons, final
-profiles and scheduling results are still separate pending stages.
+`dikarya4-r2-opt8-analysis`. Repeated development/FFT comparisons are reported
+below; final profiles and scheduling results are separate pending stages.
+
+Two further paired rounds over the 12 development inputs produced **48/48**
+golden-identical outputs. The per-pass means were 62.255 versus 56.055 CPU
+seconds (**1.111x**) and 64.062 versus 57.902 wall seconds (**1.106x**).
+All 12 inputs improved in mean CPU time. The retained timing flags were 3/24
+dikarya2 and 6/24 dikarya4 jobs, with no unknown flags. This corroborates the
+development gain without treating repeat runs as new holdout inputs. Evidence:
+`dikarya4-r2-development-analysis`.
 
 ## Remeasured starting profile
 
@@ -317,7 +325,25 @@ All 20 alignments matched. The new ordinary variant was 1.094x faster than
 dikarya2 in CPU time here. Dense on/off differed by only about 0.4%, so it is not
 assigned a meaningful FFT-NS-i gain from this experiment. This follow-up supports
 improvement on the actual FFT-NS-i input while preserving the unfavorable earlier
-measurement. The final stack-off selected configuration remains to be measured.
+measurement.
+
+The fresh selected dikarya4 build, with the stack-only change disabled, now has
+a separate three-round, three-build interleaved comparison of both production
+FFT strategies. Every one of its **18** outputs matched the frozen golden.
+The following are per-job means over those three rounds, not sums pooled with
+the earlier component experiments:
+
+| Input / strategy | opt8 CPU seconds | dikarya2 CPU seconds | dikarya4 CPU seconds | CPU speedup vs dikarya2 / opt8 | Wall speedup vs dikarya2 / opt8 |
+|---|---:|---:|---:|---:|---:|
+| `buh4`, FFT-NS-2 | 7.730 | 8.027 | 5.753 | 1.395x / 1.344x | 1.409x / 1.348x |
+| `t4lr`, FFT-NS-i | 5.227 | 5.270 | 4.780 | 1.103x / 1.093x | 1.116x / 1.099x |
+
+The FFT-NS-2 timing flags were 2/3 opt8, 1/3 dikarya2 and 0/3 dikarya4; all
+FFT-NS-i runs were unflagged, and neither input had unknown flags. These results
+resolve the previous FFT regression on the two tested production inputs while
+preserving the earlier results and all flagged observations. They do not
+establish a speedup for every possible FFT workload. Evidence:
+`dikarya4-r2-fft-analysis` and `dikarya4-r2-opt8-fft-analysis`.
 
 ## Additional refinement reuse audit
 
