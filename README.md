@@ -55,12 +55,14 @@ read the single-thread result as a byte-identity guarantee for threaded refineme
 
 The `perf/dikarya-round2` branch currently reports `7.526-opt8-dikarya4`. It adds
 rolling score-only DP, a guarded identical-sequence score shortcut, zero-extension
-traceback specialization, exact raw-profile reuse, direct gap-aware pair scoring
+traceback specialization, exact raw-profile reuse, direct gap-aware pair scoring,
 immutable six-mer histograms and guarded reuse of terminal rejected refinement
-attempts. Component measurements and correctness checks
-are recorded in the [performance report](paper/round2-performance.md); final
-whole-corpus paired timing, profiles and scheduling measurements are pending a
-quiet VM window. There is no final incremental speedup or deployment claim yet.
+attempts. The first fresh three-build corpus pass matched all 300 golden outputs.
+Dikarya4 measured 1.084x wall and 1.089x CPU speedups over dikarya2, and 1.450x
+wall speedup over frozen opt8. The [performance report](paper/round2-performance.md)
+retains timing flags and per-file results. Confirmations, repeated comparisons,
+profiles and scheduling measurements are still running through the quiet gate;
+the final production recommendation remains pending. No deployment is claimed.
 Additional refinement-reuse experiments remain isolated until their validation
 and controlled measurements support inclusion.
 
