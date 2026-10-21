@@ -94,12 +94,18 @@ isolation. Signed residuals and original flags must remain visible.
 difference, invalid/mixed child counters, exact replicate identities and ordering,
 unchanged GNU fields, complete eight-window selection, priority handling, strict
 cohort/provenance checks and mixed-protocol equal-input averaging/export. It
-launches no native programs. A separate scheduled native smoke test is still
-required to check actual descendant CPU propagation and driver artifacts on this
-VM before any new measurement campaign is started.
+launches no native programs.
 
-The new source and fixtures were written without executing tests or workloads;
-the coordinating agent owns the serialized validation and measurement schedule.
+The coordinating agent validated this protocol at a serialized boundary after
+the sustained and repeated-pilot queues completed. All 18 batch/aggregation
+mocked tests passed. A real GNU-time child with a normally waited grandchild
+confirmed propagation of both generations' CPU into the parent counter, and
+20 fresh single-thread MAFFT invocations exercised the actual collector with
+20/20 golden-identical outputs and all children reaped. These smoke records
+explicitly have `quiet_window.ready=false` and cannot be selected as timing
+measurements. Commands, raw resources, source hashes and the owned-process
+boundary proof are preserved in `round2/isolated-batch-v1-check` outside the
+Git tree. The coordinating agent owns the serialized measurement schedule.
 
 Primary references:
 

@@ -487,7 +487,11 @@ python3 harness/round2/performance_figures.py \
 
 The speedup panels separate production filenames from distinct input hashes.
 The scheduling figure uses the full backlog; isolated latency uses only the
-selected subset's two-repeat file means. Contention and exact-output counts
+selected subset's equally weighted file means over two paired rounds. Ordinary
+inputs have one invocation per round; prospectively selected subsecond inputs
+have 20 fresh sequential invocations per round. Native counts remain explicit
+(two or 40 per input/configuration), rather than giving short inputs 20 times
+the weight. Contention and exact-output counts
 remain visible, and no repeat range or workload-mix interval is displayed as a
 timing-noise confidence interval. Existing output directories are refused.
 
@@ -574,11 +578,16 @@ python3 harness/round2/summarize_scheduling.py \
 ```
 
 The new output contains full-policy, isolated-per-input/configuration and
-two-round pilot TSVs, plus JSON provenance. Latency averages the two isolated
-runs per selected input before giving each filename one vote; this 12-input
-subset is separate from the full 100-job distribution. Full throughput retains
+two-round pilot TSVs, plus JSON provenance. The v2 schema supports the original
+one-invocation-per-round sets and the prospective
+[short-input batch protocol](isolated-batch-protocol.md). It validates the
+frozen eligibility cohort, all 20 fresh invocations, normally reaped children,
+raw GNU records and the separate child-CPU contention calculation. Latency
+first averages native invocations within each round, then the two rounds, before
+giving each filename one vote. This 12-input subset is separate from the full
+100-job distribution. Full throughput retains
 all production filenames, including the repeated raw inputs. Queue delay,
 service latency, response latency, per-job GNU-time peak RSS and sampled
 concurrent process-group RSS remain separate. B/C timing can accompany changed
-alignments. Two-repeat stability and two-round ranges do not establish universal
+alignments. Finite native-repeat stability and two-round ranges do not establish universal
 determinism, a timing-noise confidence interval or biological accuracy.

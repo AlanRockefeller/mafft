@@ -108,6 +108,27 @@ GNU time records CPU and per-job peak RSS; process-group RSS is sampled for conc
 aggregate memory and labelled as a sampled maximum. External shared-VM activity cannot be
 fully controlled and no physical-host counter/frequency claim is made.
 
+The 12-input isolated cohort has two paired rounds. The original long-input
+protocol uses one invocation per policy/round. The frozen full-corpus candidate
+times prospectively identify two pilot inputs below one second; these use
+20 fresh sequential invocations per policy/round under the separate
+[short-input protocol](../harness/round2/isolated-batch-protocol.md). Means give
+each input equal weight. Original GNU CPU values and contention flags remain
+visible. Only the new short-input selection uses the parent's cumulative
+waited-child CPU delta, avoiding repeated GNU centisecond display truncation;
+it includes GNU time itself and never subtracts observer CPU. All eight batch
+windows must pass. Mocked and actual descendant-accounting/collector checks
+passed at a boundary before this campaign started.
+
+Full-queue selection retains the first complete pass under the prespecified
+counter filter, including every rejected attempt. Global and process CPU
+disagreed in the two-job replay (a signed residual of -28.17 seconds); the
+original clamping rule remains visible and does not establish physical CPU
+isolation. Recorded niceness was 10 for the coordinator/GNU time and 19 for
+native descendants. Rates describe this measured environment. A production
+recommendation assumes the two CPUs are available to the alignment scheduler;
+observed starts omit downstream phylogenetic competition.
+
 Observed-stage-start projections are separate models, not native arrival-time
 measurements. Each policy records its service-time source and affected inputs
 with flagged or unknown individual contention observations, separately for the
