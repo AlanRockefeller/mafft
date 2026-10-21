@@ -1,15 +1,17 @@
 # Round 2: further exact MAFFT speedups on the Dikarya VM
 
 Research dates: 2026-10-19–21. Starting version: **7.526-opt8-dikarya2**.
-Selected version for final validation: **7.526-opt8-dikarya4**.
+Final selected version: **7.526-opt8-dikarya4**.
 
-**This is an interim performance report.** Component experiments and the earlier
-dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
-sanitizer builds and their checks have also passed. The fresh three-build,
-100-file paired pass and the repeated development and FFT comparisons are
-complete, as are the timing confirmations and final profiles. The production
-scheduling recommendation remains to be finalized. The corpus ratios below describe that measured pass,
-with timing flags retained. No production deployment is claimed here.
+The fresh 100-file comparison measured **1.084x wall / 1.089x CPU speedups over
+dikarya2**, and **1.450x wall speedup over frozen opt8**. All 300 outputs across
+the three builds matched the original single-thread goldens. Repeated
+development/FFT comparisons, timing confirmations, final software profiles,
+five full-corpus scheduling policies and the 12-input latency study are complete.
+Two independent one-thread jobs gave the highest measured backlog throughput;
+`--thread 2 --threadit 1` reduced mean isolated latency by 14.77% while matching
+every golden in its 100-run latency cohort. Timing flags and VM accounting
+limitations remain explicit. Production executables and settings are unchanged.
 Phylogenetic findings belong in the
 [separate threading study](round2-phylogenetics.md).
 
@@ -164,6 +166,12 @@ seconds (0.21%). Neither crosses the prespecified conjunction of >5% and
 The complete per-file values and timing flags remain in
 `dikarya4-r2-{performance,opt8}-analysis/per-input.tsv`.
 
+Wall time improved on 98/100 files. The two increases were `15nk`, 3.172 to
+3.283 seconds (+3.50%), and `inr8`, 3.624 to 3.635 (+0.31%); neither crosses
+the same >5% and >50 ms conjunction. Both observations were unflagged. These
+single-pass differences are descriptive rather than demonstrated systematic
+regressions.
+
 Pre-job quiet checks did not eliminate transient background activity. There
 were **11/100 opt8, 12/100 dikarya2 and 18/100 dikarya4 flagged measurements**,
 with zero unknown flags. All remain in the totals above. The flagged/uncertain
@@ -180,7 +188,7 @@ these are per-job maxima, not sampled simultaneous memory under concurrency.
 
 Artifacts are `dikarya4-r2-corpus`, `dikarya4-r2-performance-analysis` and
 `dikarya4-r2-opt8-analysis`. Repeated development/FFT comparisons are reported
-below; scheduling results are a separate pending stage.
+below; scheduling results are reported separately from these exact-output ratios.
 
 The union of flagged dikarya2/dikarya4 cases contained **24 distinct inputs**.
 Their separate three-round confirmation completed **144/144** golden-identical
@@ -241,7 +249,7 @@ commands and golden hashes are in `dikarya4-r2-profiles`.
 
 ## Selected exact transformations
 
-The following are selected for final integration and validation. Their evidence
+The following are integrated in the selected release. Their evidence
 has different scopes; a kernel ratio is not a whole-program speedup.
 
 ### Rolling score-only DP and exact identity shortcut
@@ -270,7 +278,8 @@ Details, proofs and test commands are in [round2-score-kernels.md](round2-score-
 
 A shared inline row body receives an explicit constant-zero extension argument
 when the original extension is zero. This eliminates five vector arithmetic
-operations per cell while retaining strict comparisons, tie priority, offsets,
+operations per SIMD inner-loop iteration (eight cells on this AVX2 build), while
+retaining strict comparisons, tie priority, offsets,
 traceback tags and endpoints. Full-fill CPU speedups were 1.069–1.153x for the
 longer shapes, and 1.032x at 64x64. The generic shared-body refactor alone was
 within about 0.7% of the original. `Lfill_kb` text grew from 6,673 to 8,089 bytes,
@@ -281,7 +290,8 @@ conversion, widens bound arithmetic and avoids `abs(INT_MIN)` and
 negation-overflow risks inside that guard. Inherited public scalar initializers
 still need separate review before claiming support for INT_MIN offset/penalty
 parameters. Its focused sanitizer checks passed; frozen component
-timings precede that hardening, so final integrated timing remains necessary.
+timings precede that hardening; the fresh integrated corpus pass above measures
+the guarded release.
 
 ### Fused common-gap filtering and pair scoring
 
@@ -349,7 +359,8 @@ A 32-double automatic `scarr` buffer was also exact: the original calloc zeros
 are unused because `scarr_fill` assigns every element. It showed no standalone
 development gain and is **not selected**. The final choice enables ordinary reuse
 with the stack-buffer flag off. The measured ordinary variant above had both
-enabled; that precise final combination still requires its final paired run.
+enabled; the precise final combination is now measured in the fresh corpus,
+development and FFT comparisons above.
 
 ### Immutable byte histograms for DNA six-mers
 
@@ -510,7 +521,7 @@ All 90 outputs matched goldens. Each round favored reuse in both screens;
 no input crossed the prespecified material-regression threshold. The high-reuse
 set establishes a useful restricted improvement, not an unbiased holdout or
 whole-corpus estimate. The development result retains its three flagged jobs;
-`khx6` and `jqh7` have a separate three-round confirmation plan. Results are
+`khx6` and `jqh7` have a separate three-round confirmation reported below. Results are
 `reject-memo-v5-idle-{development,high-reuse}-analysis`.
 
 The separate three-round `khx6`/`jqh7` confirmation is now complete: all
@@ -604,6 +615,141 @@ Other major decisions:
 | Additional dynamic duplicate realignment cache | Production specificity setting did not execute the proposed calls; rejected by path inspection rather than implementing an unused optimization. |
 | Prefix/suffix/substring DP reuse | Audit of 97 raw input hashes finds substantial exact prefix structure, but matching substrings do not prove matching incoming affine states, endpoint/tie handling or striped layout. No unjustified block reuse implemented; measured structure is detailed below. |
 | More importance-band tuning | Prior 16/32-row bands and branchless bounds already regressed. Preserved the successful previous policy instead of repeating those failures. |
+
+## Measured two-CPU scheduling
+
+The final dikarya4 installation replayed all 100 production jobs in the same
+seeded order under five policies. The recorded production policy retains its
+54 one-thread and 46 two-thread requests. The other policies apply one setting
+to every job, retaining the original strategy and direction flags. All jobs
+arrive at time zero for this sustained-backlog experiment. Each selected full
+pass is the first complete attempt passing the prespecified aggregate counter
+filter; every unsuccessful attempt remains retained. The F policy's first pass
+was flagged at 0.2010 residual cores, and its second pass was selected. No pass
+was selected by speed. The CPU-accounting and niceness limitations above apply.
+
+| Policy | Makespan, seconds | Alignments/hour | GNU CPU seconds/job | Service median / p95, seconds | Sampled aggregate peak RSS, MiB | Matches one-thread goldens |
+|---|---:|---:|---:|---:|---:|---:|
+| Recorded production, serial requests | 558.82 | 644.2 | 6.733 | 4.366 / 12.283 | 173.47 | 83/100 |
+| B: one job, `--thread 2` | 495.26 | 726.9 | 7.968 | 3.798 / 11.672 | 173.57 | 64/100 |
+| Two A jobs, each `--thread 1`, pinned separately | **416.68** | **864.0** | 7.199 | 6.566 / 19.278 | 209.34 | **100/100** |
+| C: one job, `--thread 2 --threadit 0` | 453.72 | 793.4 | **5.427** | **3.679 / 9.414** | 147.90 | 56/100 |
+| F: one job, `--thread 2 --threadit 1` | 517.40 | 695.8 | 6.117 | 3.981 / 12.715 | **144.77** | **100/100** |
+
+These are full-corpus distributions under backlog and resource contention
+between the two owned A jobs. Service time is one job's execution interval;
+it excludes waiting. The two-job policy's response median/p95 was 189.29/407.11
+seconds, compared with B's 224.20/485.35 and recorded production's 253.06/544.30.
+Thus longer service times under two-job concurrency coexisted with shorter
+backlog response times and higher completed-job throughput. They do not show
+that an isolated one-thread request has worse latency. B and C often calculate
+different alignments, so their runtime ratios are not exact-output speedups.
+
+Two further rotated rounds over the prespecified mixed 12-input pilot also
+favored two independent A jobs. Their rates were 1,392.1–1,453.0 jobs/hour,
+versus B's 1,249.8–1,254.3, C's 1,164.8–1,188.5 and F's 993.8–1,011.7.
+All eight pilot windows passed the original counter filter. The pilot's
+workload is smaller and faster than the full corpus; these ranges are repeated
+measurements of the same inputs, not confidence intervals or a second 100-file
+replication. They support the observed ordering while retaining the unresolved
+global/process CPU disagreement. Original flags, signed CPU residuals, observer
+cost and all job records remain visible in `dikarya4-r2-throughput-*` and their
+append-only selection ledgers.
+
+### Isolated latency and output repeatability
+
+The frozen 12-input pilot/latency cohort contains 12 distinct raw hashes. It has
+two paired rounds per input/configuration. Ten inputs use one invocation per
+round; the two prospectively identified subsecond inputs (`6y9j`, `fcx9`) use
+20 fresh sequential invocations per round under the
+[validated short-input protocol](../harness/round2/isolated-batch-protocol.md).
+This totals **100 native runs per configuration, 400 overall**, not 100
+independent inputs. Means first average within each round, then the two rounds;
+each of the 12 inputs receives equal weight. The medians/p95 below describe
+those 12 input means, not the full production latency distribution.
+
+| Configuration | Mean service seconds | Median / p95 input-mean seconds | Mean GNU CPU seconds | Inputs repeatable in these runs | Native outputs matching A |
+|---|---:|---:|---:|---:|---:|
+| A, `--thread 1` | 4.307 | 3.855 / 7.889 | 4.152 | 12/12 | 100/100 |
+| B, `--thread 2` | **2.879** | **2.452 / 5.634** | 4.779 | 6/12 | 87/100 |
+| C, `--thread 2 --threadit 0` | 3.091 | 3.143 / 6.470 | **3.721** | 12/12 | 88/100 |
+| F, `--thread 2 --threadit 1` | 3.671 | 3.558 / 6.835 | 4.285 | 12/12 | 100/100 |
+
+F reduced mean latency by **14.77%** (1.173x), median by 7.71% and p95 by
+13.36% relative to A. It was faster on 11/12 input means. The exception was
+`ghy3`, 2.296 to 2.377 seconds (+3.52%, +80.7 ms), with two unflagged runs
+per setting; this is not evidence of a systematic regression. Tiny-file gains
+were modest: 3.04% on `6y9j` and 0.91% on `fcx9`. Mean GNU CPU increased
+3.19%, so the F benefit is lower latency rather than less CPU work.
+
+All eight windows in each selected input's set passed the protocol's
+prespecified filter. Long inputs retain original GNU-based selection; short
+batches use the separate waited-child counter without subtracting observer
+CPU. Original per-job GNU flags remain **11/100 A, 8/100 B, 10/100 C and 9/100 F**;
+passing a batch does not erase those records or establish physical isolation.
+All earlier attempts remain recorded, including `c30k` accepted on attempt 20
+and the short `6y9j` batch accepted on attempt 22 (after eight earlier
+single-invocation attempts). No results were selected by speed. Native-match
+fractions are technical-run counts, heavily weighted toward the two short
+inputs. Every native replicate matched A on 5/12 input files under B and
+6/12 under C, versus 12/12 under A/F. The [threading report](round2-phylogenetics.md) supplies the separate
+five-repeat, 46-input biological cohort and its build identity.
+
+Validated JSON, per-input/policy TSVs, runner/source hashes and selection ledgers
+are in [the scheduling summary](../../round2/dikarya4-r2-scheduling-analysis/summary.json).
+Finite hash repeatability is not a universal guarantee. In particular, C's
+repeatability does not make its different refinement implementation A-equivalent.
+
+### Observed starts and production policy
+
+The recovered history supplies 99 matching alignment-stage execution starts
+over approximately 5.1 days, with median separation about 18 minutes. One
+changed input (`eawn`) is explicitly excluded. These are selected stage starts,
+not user submissions or the complete production arrival stream. The separate
+[observed-start projection](../../round2/dikarya4-r2-observed-start-projections/summary.json)
+omits downstream IQ-TREE/other CPU use and reports flagged service observations
+and saturated calibration error. It is a sensitivity model, not measured
+interactive latency or a whole-pipeline capacity claim. All five policies have
+zero modeled waiting on these sparse selected starts. The independent-A-worker
+model predicts a saturated makespan of 314.26 seconds versus the measured
+416.68 (24.58% underprediction), showing why isolated service times cannot be
+treated as a calibrated concurrency model. Other policies' near-zero calibration
+errors mostly reflect summing their own measured serial service times.
+
+For a backlog with both guest CPUs available to MAFFT, use the selected strict
+GCC dikarya4 build with **two independent `--thread 1` jobs**, one per CPU. Its
+observed 864 alignments/hour is 18.86% above B and 34.11% above the recorded
+production-thread mix, with every A output preserved. Repeated pilot rounds
+support that ordering. The sampled aggregate RSS maximum was about 209 MiB.
+These rates describe the measured VM/priority and workload, not a production SLA.
+
+When one request has both CPUs available and latency matters, **`--thread 2
+--threadit 1` is the measured output-preserving alternative**. Its 12-input
+latency result supports that choice, subject to the small per-input exception
+above. Admission should share the two-CPU budget with downstream tree inference;
+two one-thread MAFFT jobs plus a running tree search were not the measured
+policy. Sparse observed starts mean that maximum backlog throughput need not
+be the normal interactive bottleneck. An adaptive choice between A and F is a
+reasonable implementation policy supported by their separate measurements;
+the adaptive scheduler itself has not been benchmarked or deployed.
+
+C is useful if a different, repeatable alignment baseline is acceptable; it is
+not a drop-in replacement for frozen A output. Ordinary B is not the preferred
+reproducible production setting. These recommendations concern speed and
+reproducibility: the phylogenetic study establishes sensitivity, not biological
+superiority of A or F. Production settings remain unchanged.
+
+The final figures are available as SVG/PDF/PNG, with six machine-readable
+plotting tables and a full hash manifest:
+
+- [Paired speedup distributions](../../round2/dikarya4-r2-performance-figures-v3/paired-speedup-distributions.svg).
+- [Full-corpus throughput and CPU cost](../../round2/dikarya4-r2-performance-figures-v3/sustained-scheduling.svg).
+- [Isolated selected-input median and p95](../../round2/dikarya4-r2-performance-figures-v3/isolated-selected-latency.svg).
+- [Figure and source provenance](../../round2/dikarya4-r2-performance-figures-v3/manifest.json).
+
+All 118 Python harness checks passed after the measurement campaign. Visual
+review prompted a legend-position correction only; its 12 figure checks passed
+again and all six numeric tables match the preserved earlier rendering exactly.
 
 ## Correctness and memory evidence
 
@@ -701,8 +847,10 @@ failures were configured to halt execution.
 The corrected tracked dikarya4 source (`9d963ee`) now independently passes the
 same **612** option/format comparisons, **six** long boundaries and **35**
 placements against frozen opt8, plus **36** sanitizer fixtures and **two** real
-sanitizer/golden checks. Its 76 harness tests passed; the scheduling aggregator
-subsequently passed nine separate mocked tests. These are verification counts,
+sanitizer/golden checks. Its 76 harness tests passed; subsequent scheduling and
+plotting checks brought the final Python discovery sweep to **118 passing
+tests**. The short-batch protocol also passed its real descendant-accounting
+and 20-invocation collector smoke before native measurements. These are verification counts,
 not independent datasets. The new private build is
 `dikarya4-r2-build/install/bin/mafft`, with a separate `dikarya4-r2-asan` build.
 
@@ -717,9 +865,11 @@ correctness runs are separate from the biological experiment and from timing.
 source copies, installed manifest, all 100 original inputs and goldens, and both
 original opt8 manifests. `dikarya4-r2-machine-code.json` reports zero FMA
 instructions across all 32 ELF helpers. The serialized native measurement
-campaign now waits automatically for the user-requested quiet window. Its
-three-build corpus comparison, confirmations, profiles, isolated jobs, sustained
-queues and observed-start projections have new versioned output paths.
+campaign waited automatically for the user-requested quiet windows and is now
+complete. Three-build corpus results, confirmations, profiles, isolated jobs,
+sustained queues and observed-start projections retain separate versioned
+outputs. The final preservation audit rechecks source, native files, inputs,
+goldens and both opt8 references after the campaign.
 
 | Required final deliverable | Status in this report |
 |---|---|
@@ -728,8 +878,8 @@ queues and observed-start projections have new versioned output paths.
 | Final per-file speedups/regressions and individual peak RSS | First pass complete; two small CPU regressions, no material regression; flags and repeats remain explicit |
 | Final selected-build profiles | Complete: three software CPU-clock profiles, all golden-identical, no lost samples |
 | Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Passed for fresh dikarya4, with earlier dikarya3 and guarded v5 evidence retained |
-| Two-vCPU latency/throughput/reproducibility scheduling comparison | Pending; separate threading study |
-| Production binary, thread and concurrency recommendation | Pending; no production settings changed |
+| Two-vCPU latency/throughput/reproducibility scheduling comparison | Complete: five full100 policies, two mixed-pilot rounds and 400 isolated native runs on 12 distinct inputs |
+| Production binary, thread and concurrency recommendation | Two A jobs for backlog; F when both CPUs are free and isolated latency matters; no production settings changed |
 
 Private evidence directories include `candidate1-dev`, `candidate2-dev`,
 `rowcache-stage-benchmark`, `fft-components`, `ordinary-stage`,

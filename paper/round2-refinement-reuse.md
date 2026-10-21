@@ -151,12 +151,20 @@ criterion, reduced the three deliberately selected high-reuse inputs' CPU total
 per pass from 25.417 to 22.090 seconds (**1.151x**), with 18/18 exact outputs and
 zero contention flags. All three rounds favored reuse. Development averaged
 57.727 versus 55.797 CPU seconds (**1.035x**), retaining three flagged jobs among
-72; those two affected inputs have a separate confirmation plan. Earlier v4
+72. A separate three-round confirmation of those two affected inputs passed
+12/12 golden outputs with zero flagged or unknown jobs. Its mean CPU total per
+pass was 9.680 versus 9.683 seconds, an effectively neutral result that neither
+replaces the earlier records nor repeats the entire development screen. Earlier v4
 screens retain their contention caveat and are not the selection evidence.
 
 The guarded implementation is selected for dikarya4 on this restricted measured
-gain plus its exactness evidence. Its final fresh tracked builds, corpus timing,
-profiles and scheduling measurements remain pending. The high-reuse set was
+gain plus its exactness evidence. Fresh tracked source `9d963ee` and its strict
+release/sanitizer builds passed final validation. The rotating three-build
+corpus pass produced 300/300 golden-identical outputs, with dikarya4 taking
+625.116 wall seconds versus dikarya2's 677.839; this 1.084x gain includes all
+selected round-2 changes and does not isolate the memo. Final software profiles
+and the full scheduling/isolated-latency campaign are complete. Their separate
+results are reported in [the performance report](round2-performance.md). The high-reuse set was
 purposefully selected and does not estimate the whole-corpus gain. See the
 [v5 development](../../round2/reject-memo-v5-idle-development-analysis/summary.json)
 and [high-reuse](../../round2/reject-memo-v5-idle-high-reuse-analysis/summary.json)

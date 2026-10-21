@@ -108,7 +108,8 @@ matrix tests, per-lane fallback, cleanup, shape calibration and golden compariso
 ## Static review and remaining limits
 
 Stored assembly confirms that zero-extension loops eliminate five vector
-arithmetic operations per cell. `Lfill_kb` text grows from 6,673 to 8,089 bytes
+arithmetic operations per SIMD inner-loop iteration (eight cells on this AVX2
+build). `Lfill_kb` text grows from 6,673 to 8,089 bytes
 (21.2%); instruction-cache effects remain a compiler/layout tradeoff. A future
 exact experiment could replace the final stop-tag select with
 `ij | (clamp & 3)`, since preceding tags are in {0,1,2}. It has not been implemented

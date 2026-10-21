@@ -2,9 +2,10 @@
 
 The completed study finds reproducibility and downstream topology effects, but
 no established biological accuracy ranking among threading configurations.
-Ordinary two-thread MAFFT varied across repeated commands on 25/46 production
-inputs. Disabling threaded refinement was repeatable on all 46 inputs but
-changed the one-thread result on 24. Keeping one refinement worker
+With the `candidate2` study build, ordinary two-thread MAFFT varied across
+repeated commands on 25/46 production inputs. Disabling threaded refinement
+was repeatable on all 46 inputs but changed the one-thread result on 24.
+Keeping one refinement worker
 (`--thread 2 --threadit 1`) matched every one-thread golden in 92/92 runs.
 
 Five selected inputs received repeated default IQ-TREE searches and 15 support
@@ -14,9 +15,12 @@ small: some strongly supported splits disappeared from another raw tree, and
 support filtering changed the resolution of deep relationships. In particular,
 `zdku` lost a 100/100-supported 70|71 bipartition in the selected B and C trees.
 The sparse independent protein-locus evidence does not determine which result
-is more accurate. Isolated performance and scheduling recommendations remain
-separate, pending measurements; this report does not nominate an eventual
-release binary or change production settings.
+is more accurate. The later selected dikarya4 build has now completed a separate
+single-thread full-corpus performance comparison, preserving all golden outputs.
+Completed scheduling measurements favor two independent one-thread jobs for a
+backlog, and F's one-worker refinement as an isolated latency option.
+These are conditional recommendations for the measured two-CPU budget; no
+production settings have changed.
 
 ## Workload, configurations and experimental units
 
@@ -454,9 +458,8 @@ four inputs, producing respectively 5, 3, 4 and 4 distinct outputs; C was
 repeatable within each input and differed from A on all four. These
 [later-build results](../../round2/final-threading-check-analysis/summary.json)
 are a separate build cohort and add no new biological datasets or inferred
-trees. The recorded launcher reports `v7.526-opt8-dikarya3`; this checked build
-is not assumed to be the eventual release while further exact optimization
-and performance validation proceed.
+trees. The recorded launcher reports `v7.526-opt8-dikarya3`; these checks belong
+to the earlier build cohort, preceding the selected dikarya4 implementation.
 
 The subsequently selected dikarya4 source (`9d963ee`) also received a separate
 F-only check: twice on all 46 inputs, **92/92 outputs matched A goldens**.
@@ -466,13 +469,32 @@ in 90 runs with 3,172 reused attempts; no new trees were inferred from this
 check. This later source cohort adds no independent biological datasets and
 does not establish a two-worker outcome distribution for dikarya4.
 
+The selected dikarya4 installation also completed a fresh, separately controlled
+three-build single-thread pass over **100 production filenames representing
+97 distinct input hashes**. Its total wall time was **625.116 seconds**, versus
+**677.839 seconds** for rebuilt dikarya2 and **906.203 seconds** for frozen opt8:
+observed speedups of **1.084x** and **1.450x**, respectively. **All 300 outputs
+(100 per build) matched the frozen single-thread goldens.** The
+[dikarya2 comparison](../../round2/dikarya4-r2-performance-analysis/summary.json)
+and [opt8 comparison](../../round2/dikarya4-r2-opt8-analysis/summary.json) are two
+views of that same pass, sharing its 100 dikarya4 jobs within the 300 total
+executions. Transient contention flags remain in those totals
+(opt8 11/100, dikarya2 12/100, dikarya4 18/100; no unknown flags), with separate
+confirmations documented in the [performance report](round2-performance.md).
+These measurements establish the observed single-thread speed gain and exact
+alignment preservation on this workload. They add no inferred trees or
+independent biological datasets, and do not transfer candidate2's measured B/C
+outcome frequencies to the final build. The completed scheduling measurements
+below remain a separate performance cohort.
+
 The [MAFFT threading documentation](https://mafft.ddbj.nig.ac.jp/alignment/software/multithreading.html)
 recommends `--threadit 0` for reproducible refinement. Our A–C differences are
 consistent with the source distinction: A enters a one-worker plus coordinator
 refinement path, whereas C enters a separate serial implementation. F retains
 the A-style refinement path while allowing earlier stages to use two threads.
-Its byte equivalence is well supported on this workload, but no universal
-reproducibility guarantee or isolated speed advantage follows from these tests.
+Its byte equivalence is well supported on this workload. The separate scheduling
+experiment below measures latency and throughput; the finite correctness checks
+do not give a universal reproducibility guarantee.
 
 [The final figure manifest](../../round2/final-figures/figure-manifest.json)
 records 51 standard plot files in SVG/PDF/PNG and nine selected SVG/PDF
@@ -505,6 +527,112 @@ the analyzed alignment, IQ-TREE report and provenance. For example, the
 is directly inspectable. Artifact links assume the preserved workspace's
 sibling `round2` directory; large data and immutable results remain outside Git.
 
+## Final-build scheduling and production recommendation
+
+The final dikarya4 installation completed five sustained policies over the same
+**100 filenames / 97 distinct input hashes**, retaining all strategy and direction
+flags. The recorded production policy keeps its original 54 one-thread and 46
+two-thread requests. Each pass starts with the entire backlog available. These
+are fresh final-build performance observations, separate from candidate2's
+46-input repeated-alignment and phylogenetic cohorts.
+
+| Sustained policy | Makespan, seconds | Alignments/hour | CPU seconds/job | Sampled concurrent peak RSS, MiB | Exact A-byte matches |
+|---|---:|---:|---:|---:|---:|
+| Recorded production, one job at a time | 558.82 | 644.2 | 6.733 | 173.47 | 83/100 |
+| B: one two-thread job | 495.26 | 726.9 | 7.968 | 173.57 | 64/100 |
+| Two A jobs, one thread and one pinned CPU each | **416.68** | **864.0** | 7.199 | 209.34 | **100/100** |
+| C: one job, `--thread 2 --threadit 0` | 453.72 | 793.4 | **5.427** | 147.90 | 56/100 |
+| F: one job, `--thread 2 --threadit 1` | 517.40 | 695.8 | 6.117 | 144.77 | **100/100** |
+
+Two A jobs completed 18.9% more alignments/hour than B and 24.2% more than F in
+this pass. Their per-job service median/p95 was longer, 6.566/19.278 seconds,
+while backlog response median/p95 was shorter, 189.29/407.11 seconds versus
+B's 224.20/485.35. Service excludes waiting; response includes it. The two-job
+policy therefore improves this backlog's throughput and response alongside
+longer service-time summaries. Sampled aggregate RSS is an observed simultaneous
+process-group sum, distinct from a per-job peak and from an exact memory bound.
+
+Two rotated rounds on the same selected 12-input pilot also favored two A jobs:
+1,392.1–1,453.0 alignments/hour, versus B's 1,249.8–1,254.3, C's
+1,164.8–1,188.5 and F's 993.8–1,011.7. These are repeated measurements of a
+smaller, faster workload. Their ranges are descriptive controls, not confidence
+intervals or two additional independent production corpora.
+
+The isolated latency experiment used the same **12 distinct inputs**, two
+paired rounds and four configurations. Ten inputs had one invocation per
+round; the prospectively subsecond `6y9j` and `fcx9` inputs had 20 per round.
+Thus each configuration has **100 native invocations**, and the complete
+isolated experiment has **400**, while each input receives equal summary weight.
+Invocation times are averaged within a round, then across its two rounds;
+the table's mean, median and p95 are across the 12 resulting file means.
+
+| Isolated configuration | Equal-input mean latency, seconds | Median / p95 of file means, seconds | Equal-input mean CPU, seconds | Exact A-byte matches, native invocations | Inputs with one observed output hash |
+|---|---:|---:|---:|---:|---:|
+| A: `--thread 1` | 4.30724 | 3.85547 / 7.88890 | 4.15219 | 100/100 | 12/12 |
+| B: `--thread 2` | 2.87874 | 2.45199 / 5.63350 | 4.77906 | 87/100 | 6/12 |
+| C: `--thread 2 --threadit 0` | 3.09093 | 3.14290 / 6.46973 | 3.72146 | 88/100 | 12/12 |
+| F: `--thread 2 --threadit 1` | 3.67097 | 3.55818 / 6.83466 | 4.28479 | 100/100 | 12/12 |
+
+The native match denominators include 40 repetitions of each subsecond input;
+they are not percentages of files. Every repeat matched A on 12/12 inputs for
+A/F, 5/12 for B and 6/12 for C. All 12 C inputs were repeatable within these
+recorded repetitions, including six whose output consistently differed from A.
+Hash stability over two or 40 executions is finite evidence. It does not change
+the candidate2 study's separate five-repeat denominators or establish biological
+accuracy.
+
+F reduced the equal-input mean isolated latency by **14.77%** relative to A,
+with **3.19% more mean CPU time**. It was faster on 11 of the 12 file means;
+`ghy3` was 3.5% slower (2.377 versus 2.296 seconds), and `fcx9` improved by only
+0.9%. Two rounds do not establish that these small per-file differences are
+systematic. B had lower mean latency but introduced output variation; C was
+repeatable here while changing half the selected inputs' A results.
+
+Selected policy windows passed their prospectively defined aggregate CPU-counter
+filters; attempts were selected by those rules, not speed. Transient per-job
+flags remain in the summaries. The two concurrent A workers do not have separate
+external-contention attribution, and disagreements between global and accumulated
+process CPU counters remain documented. Subsecond batches use a separately named
+child-tree CPU filter while retaining GNU CPU values for the table above.
+Passing these filters does not prove physical isolation or exclude host activity.
+The [complete scheduling summary](../../round2/dikarya4-r2-scheduling-analysis/summary.json),
+[full-policy table](../../round2/dikarya4-r2-scheduling-analysis/full-policies.tsv)
+and [isolated per-input table](../../round2/dikarya4-r2-scheduling-analysis/isolated-per-input.tsv)
+retain counts, provenance, original flags, signed residuals and selection ledgers.
+The [sustained-policy figure](../../round2/dikarya4-r2-performance-figures-v3/sustained-scheduling.svg),
+[isolated-latency figure](../../round2/dikarya4-r2-performance-figures-v3/isolated-selected-latency.svg)
+and [figure manifest](../../round2/dikarya4-r2-performance-figures-v3/manifest.json)
+provide standalone SVG/PDF/PNG exports and machine-readable plotting tables.
+
+A separate [observed-start projection](../../round2/dikarya4-r2-observed-start-projections/summary.json)
+retained 99 selected execution-start records, excluding `eawn` because its
+current input no longer matched the frozen original hash. Every policy had
+zero modeled waiting at those timestamps. Execution starts are not submission
+timestamps or a complete arrival stream, so this does not establish zero
+production queues. The fixed two-worker service model also underpredicted the
+measured saturated makespan by 24.6% (314.26 versus 416.68 seconds). Its projections
+omit dynamic slowdown and other pipeline work and use service observations with
+retained contention flags; they are sensitivity calculations rather than
+measured latency guarantees. The native backlog and isolated experiments supply
+the production evidence.
+
+The recommended policy for the measured VM is:
+
+1. With a backlog and a two-CPU allocation available, run **two independent
+   dikarya4 A jobs**, each using `--thread 1` and one CPU as in the measurement.
+   This gave the best tested sustained throughput and preserved all A bytes.
+2. For a lone latency-sensitive job with both CPUs free, consider **dikarya4 F**,
+   `--thread 2 --threadit 1`. It preserved the measured A output while reducing
+   average isolated latency; retain input-specific exceptions and A when the
+   second CPU is unavailable.
+
+C was repeatable in the measured repetitions while frequently changing A's
+alignment. B's lower isolated latency comes with measured output
+variation. Neither observation establishes that their trees are biologically
+better or worse. The scheduling recommendation is based on available CPU budget,
+latency versus backlog throughput and the required output-reproducibility
+contract. No production binary, thread flag or concurrency setting was changed.
+
 The completed evidence supports controlling reproducibility when downstream
 analyses must be repeatable or must reproduce the established one-thread
 alignment. It does not establish that A is biologically more accurate, that B
@@ -519,6 +647,6 @@ single fixed substitution model, and second-program sensitivity on only one
 selected input without RAxML-NG bootstrap support. Support-aware disagreement
 can reflect alignment, search and
 support-estimation sensitivity together. Broader taxonomic/biological accuracy
-claims would require suitable additional independent evidence. Choosing among
-A, F and concurrent independent one-thread jobs for production still requires
-the separately controlled latency, throughput, CPU and memory measurements.
+claims would require suitable additional independent evidence. The completed
+timing experiments support a conditional A/F scheduling policy on this VM; they
+do not establish universal byte equivalence or a biological accuracy ranking.

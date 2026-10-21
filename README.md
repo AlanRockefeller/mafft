@@ -60,11 +60,15 @@ immutable six-mer histograms and guarded reuse of terminal rejected refinement
 attempts. The first fresh three-build corpus pass matched all 300 golden outputs.
 Dikarya4 measured 1.084x wall and 1.089x CPU speedups over dikarya2, and 1.450x
 wall speedup over frozen opt8. The [performance report](paper/round2-performance.md)
-retains timing flags and per-file results. Confirmations, repeated comparisons,
-profiles and scheduling measurements are still running through the quiet gate;
-the final production recommendation remains pending. No deployment is claimed.
-Additional refinement-reuse experiments remain isolated until their validation
-and controlled measurements support inclusion.
+retains timing flags and per-file results. Confirmations, repeated comparisons
+and final profiles are complete. Full-corpus and repeated-pilot scheduling
+measurements favor two independent one-thread jobs for sustained throughput
+(864 alignments/hour versus 727 for two-thread jobs on this VM). For isolated
+latency, `--thread 2 --threadit 1` reduced the 12-input mean by 14.77%, with
+100/100 golden-identical outputs. Both choices require an available CPU budget;
+the reports retain VM accounting limits and per-input exceptions. Production
+settings remain unchanged. The
+additional residue-map cache remains an isolated, unselected prototype.
 
 The [threading and phylogenetics study](paper/round2-phylogenetics.md) completed
 610 alignment runs on all 46 originally two-threaded inputs. Ordinary two-thread
