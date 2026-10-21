@@ -7,8 +7,8 @@ Selected version for final validation: **7.526-opt8-dikarya4**.
 dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
 sanitizer builds and their checks have also passed. The fresh three-build,
 100-file paired pass and the repeated development and FFT comparisons are
-complete; timing confirmations, final profiles and the production scheduling
-recommendation remain to be finalized. The corpus ratios below describe that measured pass,
+complete, as are the timing confirmations and final profiles. The production
+scheduling recommendation remains to be finalized. The corpus ratios below describe that measured pass,
 with timing flags retained. No production deployment is claimed here.
 Phylogenetic findings belong in the
 [separate threading study](round2-phylogenetics.md).
@@ -130,8 +130,8 @@ The complete per-file values and timing flags remain in
 Pre-job quiet checks did not eliminate transient background activity. There
 were **11/100 opt8, 12/100 dikarya2 and 18/100 dikarya4 flagged measurements**,
 with zero unknown flags. All remain in the totals above. The flagged/uncertain
-dikarya2-versus-dikarya4 cases receive separate three-round confirmations;
-these are pending and will not replace the original pass. The 5,000-replicate
+dikarya2-versus-dikarya4 cases received separate three-round confirmations,
+reported below without replacing the original pass. The 5,000-replicate
 input-hash-cluster resampling interval is 1.075–1.103 for CPU and 1.070–1.100
 for wall speedup, describing workload-mix resampling, **not VM timing-noise
 confidence bounds**.
@@ -143,7 +143,18 @@ these are per-job maxima, not sampled simultaneous memory under concurrency.
 
 Artifacts are `dikarya4-r2-corpus`, `dikarya4-r2-performance-analysis` and
 `dikarya4-r2-opt8-analysis`. Repeated development/FFT comparisons are reported
-below; final profiles and scheduling results are separate pending stages.
+below; scheduling results are a separate pending stage.
+
+The union of flagged dikarya2/dikarya4 cases contained **24 distinct inputs**.
+Their separate three-round confirmation completed **144/144** golden-identical
+outputs. Per-pass means were 152.920 versus 141.867 CPU seconds (**1.078x**)
+and 156.926 versus 145.675 wall seconds (**1.077x**). Every input improved in
+mean CPU time, with no material regression. All **19/72 dikarya2 and 22/72
+dikarya4 timing flags** remain included, with no unknown flags; these are not
+described as 144 uncontended timings. This confirms the direction of the gain
+on the selected uncertainty cases, rather than creating a new random holdout
+or removing the original corpus flags. Evidence:
+`dikarya4-r2-confirmation/analysis`.
 
 Two further paired rounds over the 12 development inputs produced **48/48**
 golden-identical outputs. The per-pass means were 62.255 versus 56.055 CPU
@@ -166,8 +177,30 @@ For the 1,042-sequence `buh4` FFT-NS-2 job, `naivepairscorefast` accounted for
 29.85%, ordinary profile alignment 27.67% and six-mer comparison 14.06%.
 These measurements justified separate FFT scoring work instead of assuming that
 the local-pair DP kernel dominated every strategy. Artifacts are
-`round2/profile-baseline-{bpfd,gopv,buh4}.*`. Final selected-build profiles are
-**pending**; the starting percentages are not presented as the new bottleneck mix.
+`round2/profile-baseline-{bpfd,gopv,buh4}.*`.
+
+The selected dikarya4 build was subsequently profiled with the same software
+event (`cpu-clock:u`, 499 Hz), one MAFFT thread and CPU 0 affinity after the
+quiet gate. All three outputs matched their goldens, and each report recorded
+zero lost samples. The samples identify remaining targets; they are not new
+runtime comparisons or hardware-counter measurements.
+
+| Input | Integer DP fill, dikarya2 → dikarya4 | Importance filling | Ordinary profile alignment | Partial profile alignment |
+|---|---:|---:|---:|---:|
+| `bpfd` | 30.11% → 31.33% | 13.52% → 12.37% | 9.89% → 7.91% | 7.97% → 7.55% |
+| `gopv` | 31.64% → 35.17% | 13.33% → 11.29% | 8.65% → 7.73% | 10.76% → 11.51% |
+
+The dominant integer symbol is still the full-history `Lfill_kb` path; callers
+that need local-homology traceback cannot simply use the new score-only path.
+On `buh4`, `naivepairscorefast` now accounts for 23.98%, ordinary `A__align`
+35.43% and `G__align11` 8.59%. The distance-matrix caller containing inlined
+six-mer work accounts for 2.41%; that is a caller share, not an isolated six-mer
+kernel measurement. A function's share can rise as other work becomes faster,
+so these percentages do not establish an absolute regression in ordinary
+alignment. The remaining promising targets are exact reductions of full-history
+DP and importance filling, and FFT ordinary-profile/scoring work. The three
+profiles are illustrative rather than corpus-weighted. Raw samples, text reports,
+commands and golden hashes are in `dikarya4-r2-profiles`.
 
 ## Selected exact transformations
 
@@ -654,9 +687,9 @@ queues and observed-start projections have new versioned output paths.
 | Required final deliverable | Status in this report |
 |---|---|
 | Final tracked source/defaults/version and binary provenance | Dikarya4 source `9d963ee`, fresh builds and preservation/instruction audits passed; earlier dikarya3 preserved at `91146f2` |
-| Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Complete: all 300 golden outputs; measured dikarya2-to-dikarya4 1.084x wall / 1.089x CPU; timing confirmations pending |
+| Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Complete: all 300 golden outputs; measured dikarya2-to-dikarya4 1.084x wall / 1.089x CPU; separate 144-job confirmations also complete |
 | Final per-file speedups/regressions and individual peak RSS | First pass complete; two small CPU regressions, no material regression; flags and repeats remain explicit |
-| Final selected-build profiles | Pending |
+| Final selected-build profiles | Complete: three software CPU-clock profiles, all golden-identical, no lost samples |
 | Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Passed for fresh dikarya4, with earlier dikarya3 and guarded v5 evidence retained |
 | Two-vCPU latency/throughput/reproducibility scheduling comparison | Pending; separate threading study |
 | Production binary, thread and concurrency recommendation | Pending; no production settings changed |
