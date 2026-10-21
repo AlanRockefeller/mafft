@@ -81,13 +81,28 @@ def source_hashes(source):
         if path.is_file() and (path.suffix in extensions or path.name=='Makefile')}}
 
 def proc_rss(groups):
+    """Sample current process-group RSS without opening every foreign stat file.
+
+    Query membership afresh: neither a PID nor a proc-directory inode is a
+    process-generation identifier. A denied/unsupported query falls back to
+    the previous stat parser. Membership and statm remain separate reads, with
+    the same exit/PID-reuse race and per-entry error handling as before.
+    """
     total=0
-    for d in Path('/proc').iterdir():
-        if not d.name.isdigit():continue
-        try:
-            st=(d/'stat').read_text(); f=st[st.rfind(')')+2:].split()
-            if int(f[2]) in groups:total+=int((d/'statm').read_text().split()[1])*os.sysconf('SC_PAGE_SIZE')
-        except (OSError,ValueError,IndexError):pass
+    with os.scandir('/proc') as entries:
+        for entry in entries:
+            if not entry.name.isdigit():continue
+            try:
+                try:
+                    pgrp=os.getpgid(int(entry.name))
+                except OSError:
+                    with open(entry.path+'/stat') as source:st=source.read()
+                    fields=st[st.rfind(')')+2:].split()
+                    pgrp=int(fields[2])
+                if pgrp in groups:
+                    with open(entry.path+'/statm') as source:resident=source.read().split()[1]
+                    total+=int(resident)*os.sysconf('SC_PAGE_SIZE')
+            except (OSError,ValueError,IndexError):pass
     return total
 
 def summary(values):
@@ -156,6 +171,7 @@ def main():
         'quiet_window':quiet_config,
         'arrival_model':'All jobs arrive at t=0, saturated backlog; queue latency and service time reported separately. Not a replay of observed arrival timestamps.',
         'rss_definition':'Sampled sum of RSS for active child process groups; sample interval 0.2 seconds. GNU time RSS is a separate per-job maximum.',
+        'rss_membership_method':'os.getpgid per numeric os.scandir(/proc) entry; original stat-parser fallback on OSError; no persistent membership cache. Same statm resident-page sum and 0.2-second interval.',
         'seed':args.seed})
     for rnd in range(args.rounds):
         jobs=files.copy();random.Random(args.seed+rnd).shuffle(jobs)

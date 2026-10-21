@@ -195,6 +195,15 @@ child jobs. This identifies sampling and bookkeeping cost absent from GNU job
 CPU. It is a diagnostic only: the harness does not subtract it from contention,
 alter quiet thresholds or change which prospective attempt is accepted.
 
+RSS sampling still runs every 0.2 seconds and sums resident pages from `statm`
+for the registered process groups. It enumerates `/proc` with `os.scandir` and
+queries each numeric PID's current group using `os.getpgid`, avoiding a `stat`
+file read for every unrelated process. An `OSError` falls back to the original
+`stat` parser. No PID/inode membership cache is retained: proc inode numbers
+are not permanent process-generation identifiers. The sampler retains its
+existing non-atomic membership/read behavior when processes exit or PIDs are
+reused; the mocked fixtures cover membership changes, fallback and read races.
+
 The mocked runner checks launch no scientific jobs:
 
 ```sh
