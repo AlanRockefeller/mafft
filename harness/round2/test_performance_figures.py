@@ -106,6 +106,22 @@ class Fixture:
     def prepare(self):
         return figures.prepare(self.root / 'v2', self.root / 'opt8', self.root / 'scheduling')
 
+    def mixed_scheduling(self):
+        path = self.root / 'scheduling/summary.json'
+        value = json.loads(path.read_text()); value['schema'] = 'mafft-round2-scheduling-summary-v2'
+        for row in value['isolated_per_input']:
+            repeats = 40 if row['input'] == 'a' else 2
+            row.update(repeats=repeats, paired_rounds=2, native_repeats_per_input=repeats)
+            if row['config'] in ('A', 'F'): row['matches_A'] = repeats
+            if row['config'] == 'A' and row['input'] == 'a': row['serial_jobs_flagged'] = 37
+        for row in value['isolated_by_config']:
+            records = [r for r in value['isolated_per_input'] if r['policy'] == row['policy']]
+            row.update(measured_runs=sum(r['repeats'] for r in records),
+                       matches_A=sum(r['matches_A'] for r in records),
+                       serial_jobs_flagged=sum(r['serial_jobs_flagged'] for r in records))
+        save(path, value)
+        return path, value
+
 
 class PerformanceFigureTests(unittest.TestCase):
     def test_import_does_not_import_matplotlib(self):
@@ -123,7 +139,8 @@ class PerformanceFigureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Fixture(Path(temporary)); result = fixture.prepare()
             self.assertEqual(result['counts'], {'production_filenames': 3, 'distinct_production_input_hashes': 2,
-                                              'selected_latency_filenames': 2, 'distinct_selected_latency_input_hashes': 2})
+                                              'selected_latency_filenames': 2, 'distinct_selected_latency_input_hashes': 2,
+                                              'native_isolated_runs_per_configuration': 4})
             self.assertEqual(len(result['tables']['per-file-speedups']), 6)
             self.assertEqual(len(result['tables']['unique-input-speedups']), 4)
             copies = next(row for row in result['tables']['unique-input-speedups']
@@ -137,6 +154,40 @@ class PerformanceFigureTests(unittest.TestCase):
             self.assertEqual((concurrent['unknown_job_flags'], concurrent['policy_contention_flag']), (3, False))
             self.assertFalse(any(path.endswith('runs.jsonl') for path in result['sources']))
             self.assertEqual(len(result['tables']['isolated-input-latency']), 8)
+
+    def test_mixed_protocol_keeps_native_counts_and_equal_input_weights(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Fixture(Path(temporary)); fixture.mixed_scheduling(); result = fixture.prepare()
+            self.assertEqual(result['counts']['native_isolated_runs_per_configuration'], 42)
+            row = next(r for r in result['tables']['isolated-config-latency'] if r['config'] == 'A')
+            self.assertEqual(row['measured_runs'], 42)
+            self.assertEqual(row['matches_A'], 42)
+            self.assertEqual(row['serial_jobs_flagged'], 37)
+            self.assertEqual(row['median_file_mean_latency_seconds'], 2)
+
+    def test_mixed_protocol_rejects_inconsistent_rounds_or_native_counts(self):
+        for failure in ['rounds', 'count', 'configuration_count', 'aggregate_count']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                fixture = Fixture(Path(temporary)); path, value = fixture.mixed_scheduling()
+                row = value['isolated_per_input'][0]
+                if failure == 'rounds': row['paired_rounds'] = 1
+                if failure == 'count': row['native_repeats_per_input'] = 2
+                if failure == 'configuration_count':
+                    row = next(r for r in value['isolated_per_input'] if r['input'] == 'a' and r['config'] == 'B')
+                    row.update(repeats=2, native_repeats_per_input=2)
+                if failure == 'aggregate_count': value['isolated_by_config'][0]['measured_runs'] = 4
+                save(path, value)
+                with self.assertRaisesRegex(ValueError, 'repeat counts|counts differ|denominator'):
+                    fixture.prepare()
+
+    def test_mixed_protocol_a_or_f_requires_every_native_golden_match(self):
+        for config in ['A', 'F']:
+            with self.subTest(config=config), tempfile.TemporaryDirectory() as temporary:
+                fixture = Fixture(Path(temporary)); path, value = fixture.mixed_scheduling()
+                next(r for r in value['isolated_per_input'] if r['input'] == 'a' and r['config'] == config)['matches_A'] = 39
+                save(path, value)
+                with self.assertRaisesRegex(ValueError, 'deterministic A/F'):
+                    fixture.prepare()
 
     def test_mixed_manifest_build_or_golden_is_rejected(self):
         for failure in ['manifest', 'build', 'golden']:

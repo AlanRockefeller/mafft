@@ -9,7 +9,8 @@ installation. Native binaries are not opened or executed by this tool.
 
 Matplotlib is imported only by main, after validation. Every output directory and
 file is new. ECDF observations are paired-round file means or distinct-hash means;
-isolated latency percentiles describe the selected subset's two-repeat file means.
+isolated latency percentiles describe the selected subset's two-round file means,
+retaining each input's actual native repetition count.
 No round ranges or workload-bootstrap intervals are plotted as timing-noise CIs.
 """
 from __future__ import annotations
@@ -208,8 +209,9 @@ def prepare(dikarya2_analysis, opt8_analysis, scheduling_analysis):
                     load_performance(opt8_analysis, 'opt8-comparison', sources)]
     path = summary_path(scheduling_analysis)
     scheduling = sources.document(path)
-    if scheduling['schema'] != 'mafft-round2-scheduling-summary-v1':
+    if scheduling['schema'] not in ('mafft-round2-scheduling-summary-v1', 'mafft-round2-scheduling-summary-v2'):
         raise ValueError('Unsupported scheduling summary schema')
+    mixed_protocol = scheduling['schema'] == 'mafft-round2-scheduling-summary-v2'
     inputs = {row['input']: row['input_sha256'] for row in performances[0]['rows']}
     candidates = {performance['summary']['candidate'] for performance in performances}
     if len(candidates) != 1 or performances[0]['summary']['reference'] == performances[1]['summary']['reference']:
@@ -272,13 +274,20 @@ def prepare(dikarya2_analysis, opt8_analysis, scheduling_analysis):
     keys = [(row['input'], row['policy']) for row in per_input]
     if len(keys) != len(set(keys)) or set(keys) != expected:
         raise ValueError('Isolated latency cohort is incomplete or duplicated')
+    native_counts = {}
     for row in per_input:
-        if row['input_sha256'] != inputs[row['input']] or row['repeats'] != 2 or row['config'] != CONFIGS[row['policy']]:
+        repeats = count(row['repeats'], 'isolated native repeats')
+        if row['input_sha256'] != inputs[row['input']] or repeats not in ((2, 40) if mixed_protocol else (2,)) or row['config'] != CONFIGS[row['policy']]:
             raise ValueError('Isolated latency identity/repeats disagree')
+        if mixed_protocol and (row.get('paired_rounds') != 2 or row.get('native_repeats_per_input') != repeats):
+            raise ValueError('Isolated paired rounds/native repeat counts disagree')
+        if row['input'] in native_counts and native_counts[row['input']] != repeats:
+            raise ValueError('Isolated native counts differ across configurations')
+        native_counts[row['input']] = repeats
         positive(row['mean_service_seconds'], 'isolated latency')
-        if count(row['matches_A'], 'isolated golden matches') > 2 or count(row['serial_jobs_flagged'], 'isolated flagged jobs') > 2:
-            raise ValueError('Isolated per-input counts exceed two repeats')
-        if row['config'] in ('A', 'F') and row['matches_A'] != 2:
+        if count(row['matches_A'], 'isolated golden matches') > repeats or count(row['serial_jobs_flagged'], 'isolated flagged jobs') > repeats:
+            raise ValueError('Isolated per-input counts exceed native repeats')
+        if row['config'] in ('A', 'F') and row['matches_A'] != repeats:
             raise ValueError('Isolated deterministic A/F output mismatch')
     by_config = {row['policy']: row for row in scheduling['isolated_by_config']}
     if set(by_config) != set(ISOLATED) or len(by_config) != len(scheduling['isolated_by_config']):
@@ -287,7 +296,7 @@ def prepare(dikarya2_analysis, opt8_analysis, scheduling_analysis):
     for policy in ISOLATED:
         row = dict(by_config[policy]); records = [r for r in per_input if r['policy'] == policy]
         values = [r['mean_service_seconds'] for r in records]
-        if row['input_files'] != len(selected) or row['measured_runs'] != 2 * len(selected) or row['config'] != CONFIGS[policy]:
+        if row['input_files'] != len(selected) or row['measured_runs'] != sum(r['repeats'] for r in records) or row['config'] != CONFIGS[policy]:
             raise ValueError('Isolated aggregate denominator/configuration disagrees')
         if row['distinct_input_hashes'] != len({inputs[name] for name in selected}):
             raise ValueError('Isolated aggregate hash denominator disagrees')
@@ -311,7 +320,8 @@ def prepare(dikarya2_analysis, opt8_analysis, scheduling_analysis):
                        'isolated-input-latency': per_input, 'contention': contention},
             'counts': {'production_filenames': files, 'distinct_production_input_hashes': hashes,
                        'selected_latency_filenames': len(selected),
-                       'distinct_selected_latency_input_hashes': scheduling['distinct_latency_input_hashes']}}
+                       'distinct_selected_latency_input_hashes': scheduling['distinct_latency_input_hashes'],
+                       'native_isolated_runs_per_configuration': sum(native_counts.values())}}
 
 
 def write_table(path, rows):
@@ -387,10 +397,12 @@ def render(plt, result, save):
     labels = ['A: thread 1', 'B: thread 2', 'C: thread 2\nthreadit 0', 'F: thread 2\nthreadit 1']
     ax.set_xticks(positions, labels); ax.set_yscale('log'); ax.set_ylabel('Service time (seconds, log scale)')
     ax.set_xlim(-.5, len(rows) - .5); ax.grid(axis='y', alpha=.2); ax.legend(frameon=False, loc='upper left')
-    ax.set_title(f"{candidate} isolated latency: selected {counts['selected_latency_filenames']} inputs, two runs per input/configuration")
+    repeat_labels = '/'.join(str(n) for n in sorted({r['repeats'] for r in tables['isolated-input-latency']}))
+    ax.set_title(f"{candidate}: isolated latency across {counts['selected_latency_filenames']} inputs\n"
+                 f"Two paired rounds; {repeat_labels} native runs per input/configuration")
     fig.subplots_adjust(top=.88, bottom=.28, left=.12, right=.96)
     flagged = sum(row['serial_jobs_flagged'] for row in rows)
-    fig.text(.06, .115, 'Median/p95 are across two-repeat file means, not confidence intervals or full-corpus latency percentiles.\n'
+    fig.text(.06, .115, 'Median/p95 use equally weighted two-round input means, not full-corpus percentiles or confidence intervals.\n'
              f"This subset has {counts['distinct_selected_latency_input_hashes']} distinct input hashes; serial-job flags retained: {flagged}.\n"
              'A/F require exact A-byte matches; B/C output hashes and finite repeatability remain in the plotting tables.', fontsize=9)
     save(fig, 'isolated-selected-latency')
@@ -436,7 +448,7 @@ def main():
         plt.close(figure)
 
     render(plt, result, save)
-    manifest = {'schema': 'mafft-round2-performance-figures-v1', 'command': sys.argv,
+    manifest = {'schema': 'mafft-round2-performance-figures-v2', 'command': sys.argv,
         'generator_sha256': generator_hash, 'analysis_summaries': result['analysis_summaries'],
         'matplotlib_version': matplotlib.__version__, 'counts': result['counts'],
         'input_files_sha256': result['sources'], 'output_files_sha256': outputs,
@@ -449,7 +461,7 @@ def main():
         'interpretation': {
             'provenance': 'Consumed summaries, TSVs and paired/full-policy experiments are hashed. Native identity is compared using recorded installation hashes; binaries and full raw run logs are not rehashed by this plotting tool. Retained build audits establish source/binary correspondence.',
             'units': 'Production filenames, distinct original-input hashes and the selected isolated-latency subset are separate panels/tables. No dataset or replicate counts are pooled.',
-            'repeat_handling': 'File wall/CPU values average paired rounds; distinct-hash points average filename copies’ times before taking the ratio. Isolated medians/p95 describe two-repeat file means. No round ranges or workload-bootstrap intervals are timing-noise confidence intervals.',
+            'repeat_handling': 'File wall/CPU values average paired rounds; distinct-hash points average filename copies’ times before taking the ratio. Isolated medians/p95 weight input means equally across two paired rounds; actual native repeats (2 or 40 per input/configuration) remain explicit. No round ranges or workload-bootstrap intervals are timing-noise confidence intervals.',
             'contention': 'All completed paired observations are retained. Explicit flagged/unknown counts are exported. Scheduling policy aggregates must be explicitly uncontended; transient serial flags remain counted. Two concurrent workers lack per-job external attribution; their aggregate policy is used. Host interference is not ruled out.',
             'outputs': 'A/F match frozen A bytes in these observations. B/C and recorded two-thread jobs may change outputs. Timing and finite hash repeatability do not establish biological or universal production superiority.'}}
     with (args.output / 'manifest.json').open('x', encoding='utf-8') as stream:
