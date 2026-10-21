@@ -187,6 +187,14 @@ terminate only measured child groups, which remain registered for RSS sampling
 through cleanup. A failed throughput experiment is preserved and requires a new
 output directory.
 
+The startup manifest also records the running Python version, executable and
+SHA-256 hashes of `throughput.py`, `quiet.py` and `alignments.py`. Each policy
+reports `observer_cpu_seconds` and `observer_cpu_cores`: one process CPU interval
+covering all Python runner threads around the global CPU snapshots, excluding
+child jobs. This identifies sampling and bookkeeping cost absent from GNU job
+CPU. It is a diagnostic only: the harness does not subtract it from contention,
+alter quiet thresholds or change which prospective attempt is accepted.
+
 The mocked runner checks launch no scientific jobs:
 
 ```sh

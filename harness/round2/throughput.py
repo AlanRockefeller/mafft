@@ -17,9 +17,12 @@ import random
 import signal
 import statistics
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+import alignments as alignment_harness
+import quiet as quiet_harness
 from alignments import CONFIGS, FORMAT, digest, write_json, run_process_group, read_resources
 from quiet import add_arguments as add_quiet_arguments, settings as quiet_settings, cpu_snapshot, busy_delta, wait_for_quiet
 
@@ -129,6 +132,10 @@ def main():
         version=(version_out.read()+version_err.read()).decode('utf-8',errors='replace')
     binary_hashes=installed_hashes(args.binary)
     golden_hashes={f['file']:digest(args.golden/f['file']) for f in files}
+    harness_source={name:{'path':str(path.resolve()),'sha256':digest(path)}
+                    for name,path in [('throughput.py',Path(__file__)),
+                                      ('quiet.py',Path(quiet_harness.__file__)),
+                                      ('alignments.py',Path(alignment_harness.__file__))]}
     launcher_prefix_lines=[]
     with args.binary.open('rb') as launcher:
         if launcher.read(2)==b'#!':
@@ -139,6 +146,8 @@ def main():
         'argv':os.sys.argv,'binary':str(args.binary),'launcher_sha256':digest(args.binary),'version':version,
         'installed_file_sha256':binary_hashes,'launcher_prefix_assignments':launcher_prefix_lines,
         'supplied_source_snapshot':supplied_source,
+        'harness_source_at_startup':harness_source,
+        'python_executable':sys.executable,'python_version':sys.version,
         'source_note':'The supplied frozen source is hashed; compiler flags and binary/source correspondence require retained build provenance.',
         'manifest':str(args.manifest.resolve()),'manifest_sha256':digest(args.manifest),'files':files,
         'data':str(args.data.resolve()),'golden':str(args.golden.resolve()),'golden_sha256':golden_hashes,
@@ -166,6 +175,7 @@ def main():
                     with lock:current=groups.copy()
                     peak=max(peak,proc_rss(current));stop.wait(.2)
                 peaks.append(peak)
+            observer_cpu_before=time.process_time()
             policy_cpu_before=cpu_snapshot();clock=time.monotonic();mon=threading.Thread(target=monitor);mon.start()
             def worker(slot):
                 while not cancelled.is_set():
@@ -215,9 +225,13 @@ def main():
             finally:stop.set();mon.join()
             elapsed=time.monotonic()-clock
             policy_cpu_after=cpu_snapshot()
+            observer_cpu_seconds=time.process_time()-observer_cpu_before
             totals={'policy':pol,'round':rnd,'config':conf,'concurrency':concurrency,'jobs':len(results),'makespan_seconds':elapsed,'jobs_per_hour':len(results)*3600/elapsed,'cpu_per_job_seconds':sum(x['cpu'] for x in results)/len(results),'cpu_total_seconds':sum(x['cpu'] for x in results),'service_latency_seconds':summary(x['service_seconds'] for x in results),'response_latency_seconds':summary(x['response_seconds'] for x in results),'queue_seconds':summary(x['queue_seconds'] for x in results),'peak_sampled_process_tree_rss_mib':max(peaks)/2**20,'max_per_job_rss_mib':max(x['resources']['rss_kib'] for x in results)/1024,'matches_A':sum(x['matches_A'] for x in results),'queue_order':[f['file'] for f in jobs]}
             totals.update(quiet_window=quiet_check,cpu_stat_before=policy_cpu_before,cpu_stat_after=policy_cpu_after,
                           contention=busy_delta(policy_cpu_before,policy_cpu_after,totals['cpu_total_seconds'],max_busy_cores=quiet_config['max_busy_cores']))
+            totals.update(observer_cpu_seconds=observer_cpu_seconds,
+                          observer_cpu_cores=observer_cpu_seconds/elapsed,
+                          observer_cpu_definition='Policy-wide Python process CPU, including all runner threads and excluding child jobs, bracketing the global CPU snapshots. Cores use the policy makespan as denominator. Diagnostic only; never subtracted from contention or used for quiet-window acceptance.')
             write_json(outdir/'summary.json',totals)
             write_json(args.output/'STATUS.json',{'phase':'policy_complete','round':rnd,'policy':pol,'complete':len(results),'total':len(files),'contention':totals['contention']})
             print(json.dumps(totals),flush=True)
