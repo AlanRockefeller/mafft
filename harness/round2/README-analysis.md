@@ -509,8 +509,10 @@ repeated FFT-NS-i refiner invocations and rejection of multiple-worker traces.
 
 `refinement_semantics.py` compares optional experimental `REFINE_SEMANTIC` and
 `REFINE_MASTER` traces from actual memo-off/on processes built from the same
-source. It preserves all raw score bits and checks complete original-order
-intermediate rows at every acceptance. Missing traces, malformed row blocks,
+source. It compares post-attempt score and gain bits and checks complete
+original-order intermediate rows at every acceptance. For rejected attempts,
+the traced score follows restoration of `tscore = mscore`; it is not the
+discarded candidate objective. Missing traces, malformed row blocks,
 different commands/inputs and wholly inactive cache guards cannot pass as an
 active-reuse validation. Traced executions are correctness experiments and are
 excluded from timing claims. The isolated `experiment/rejected-branch-memo`
