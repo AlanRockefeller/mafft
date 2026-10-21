@@ -85,6 +85,27 @@ Shared setup-window checks and statistics replays are excluded from speed claims
 VM/background activity remains a source of noise; CPU and wall results are both
 reported, without treating a few repeats as a confidence interval.
 
+The scheduling runner separately records its own Python process CPU. Its first
+three isolated pilot attempts (24 policy runs, none accepted) exposed **0.062–
+0.069 observer CPU cores** and were all flagged. We preserved those results and
+paused only the waiting orchestrator, allowing its current child to finish
+naturally. At that boundary the RSS sampler was changed from reading/parsing
+every `/proc/PID/stat` to fresh `getpgid` queries, with the original parser as
+an error fallback. This uses the kernel's current process-group identifier,
+without a PID/inode membership cache; see the
+[Linux interface definition](https://man7.org/linux/man-pages/man2/setpgid.2.html).
+The `statm` RSS sum and 0.2-second sampling wait are retained. Fifteen mocked
+checks passed, and **120/120** paired readings on stable, owned process groups
+matched exactly. In that diagnostic, sampler-only process CPU fell from
+11.7–12.0 ms to 0.72–0.79 ms per call (15.3–16.4x). This is an instrumentation
+result, not a MAFFT speedup. The same orchestrator then resumed before any
+scheduling cohort had been accepted. Quiet limits, contention arithmetic and
+the first-complete-uncontended selection rule are unchanged; observer CPU is
+never subtracted from acceptance calculations. Exact runner hashes are stored
+at startup. The old policy attempts, pause/resume boundary records and
+`rss-observer-v2-check` retain this protocol correction. Paired-corpus runs do
+not use this repeated RSS sampler, so their timings are unaffected by the change.
+
 The selected arithmetic class is `-O3 -march=native -ffp-contract=off -g` with
 GCC's existing C99/pthread definitions. Fast math, reassociation and reduced score
 precision are excluded. Exactness means every byte of single-thread alignment
