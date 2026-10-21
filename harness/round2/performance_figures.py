@@ -396,7 +396,7 @@ def render(plt, result, save):
             ax.annotate(f'{value:.2f}', (x + shift, value), xytext=(0, 9), textcoords='offset points', ha='center', fontsize=9)
     labels = ['A: thread 1', 'B: thread 2', 'C: thread 2\nthreadit 0', 'F: thread 2\nthreadit 1']
     ax.set_xticks(positions, labels); ax.set_yscale('log'); ax.set_ylabel('Service time (seconds, log scale)')
-    ax.set_xlim(-.5, len(rows) - .5); ax.grid(axis='y', alpha=.2); ax.legend(frameon=False, loc='upper left')
+    ax.set_xlim(-.5, len(rows) - .5); ax.grid(axis='y', alpha=.2); ax.legend(frameon=False, loc='lower left')
     repeat_labels = '/'.join(str(n) for n in sorted({r['repeats'] for r in tables['isolated-input-latency']}))
     ax.set_title(f"{candidate}: isolated latency across {counts['selected_latency_filenames']} inputs\n"
                  f"Two paired rounds; {repeat_labels} native runs per input/configuration")
