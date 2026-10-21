@@ -1,13 +1,15 @@
 # Round 2: further exact MAFFT speedups on the Dikarya VM
 
-Research dates: 2026-10-19–20. Starting version: **7.526-opt8-dikarya2**.
+Research dates: 2026-10-19–21. Starting version: **7.526-opt8-dikarya2**.
 Selected version for final validation: **7.526-opt8-dikarya4**.
 
 **This is an interim performance report.** Component experiments and the earlier
 dikarya3 tracked build/regression sweep are complete. Fresh dikarya4 release and
-sanitizer builds and their checks have also passed. The final 100-file paired
-benchmark, final profiles and production scheduling recommendation remain to be
-finalized. No final whole-corpus speedup or production deployment is claimed here.
+sanitizer builds and their checks have also passed. The fresh three-build,
+100-file paired pass is complete; its timing confirmations, repeated development
+and FFT comparisons, final profiles and production scheduling recommendation
+remain to be finalized. The corpus ratios below describe that measured pass,
+with timing flags retained. No production deployment is claimed here.
 Phylogenetic findings belong in the
 [separate threading study](round2-phylogenetics.md).
 
@@ -94,6 +96,54 @@ Full methods and resource definitions are in [round2-methods.md](round2-methods.
 Paths beginning `round2/` and `bench/` below refer to private sibling directories
 outside this Git tree. Raw inputs, alignments, binaries, learned profiles and logs
 are intentionally not committed.
+
+## Fresh full-corpus comparison
+
+The corrected tracked dikarya4 build completed a rotating/reversing three-build
+pass over all 100 inputs. **All 300 outputs matched the frozen opt8 goldens**,
+including all 100 from the selected dikarya4 installation. These are fresh
+measurements of the independently frozen opt8, rebuilt dikarya2 and dikarya4;
+historical timings are not used as denominators.
+
+| Workload | opt8 wall seconds | dikarya2 wall seconds | dikarya4 wall seconds | dikarya2 / dikarya4 | opt8 / dikarya4 |
+|---|---:|---:|---:|---:|---:|
+| Development, 12 files | 104.976 | 63.821 | 57.151 | 1.117x | 1.837x |
+| Holdout, 78 files | 640.636 | 489.915 | 451.202 | 1.086x | 1.420x |
+| Difficult, 10 files | 160.591 | 124.103 | 116.763 | 1.063x | 1.375x |
+| All 100 production jobs | 906.203 | 677.839 | 625.116 | **1.084x** | **1.450x** |
+
+Total CPU seconds were **884.09 / 659.86 / 606.04**, respectively: dikarya4 is
+**1.089x** faster than dikarya2 in CPU time (8.16% reduction), and **1.459x**
+faster than opt8 (31.45% reduction). The 97-distinct-input supplement gives
+1.088x CPU and 1.083x wall speedups over dikarya2. The strict 75-hash holdout
+excluding all development hashes gives 1.088x CPU and 1.085x wall speedups.
+Thus the observed gain is not confined to the development partition or repeated
+copies of the same original input.
+
+CPU time improved on 97 files, was unchanged on one and increased on two:
+`15nk` rose from 3.08 to 3.16 seconds (2.60%) and `wv1e` from 9.40 to 9.42
+seconds (0.21%). Neither crosses the prespecified conjunction of >5% and
+>50 ms regression. Every opt8-versus-dikarya4 CPU comparison favored dikarya4.
+The complete per-file values and timing flags remain in
+`dikarya4-r2-{performance,opt8}-analysis/per-input.tsv`.
+
+Pre-job quiet checks did not eliminate transient background activity. There
+were **11/100 opt8, 12/100 dikarya2 and 18/100 dikarya4 flagged measurements**,
+with zero unknown flags. All remain in the totals above. The flagged/uncertain
+dikarya2-versus-dikarya4 cases receive separate three-round confirmations;
+these are pending and will not replace the original pass. The 5,000-replicate
+input-hash-cluster resampling interval is 1.075–1.103 for CPU and 1.070–1.100
+for wall speedup, describing workload-mix resampling, **not VM timing-noise
+confidence bounds**.
+
+The largest individual GNU-time peak RSS was on `2x7u`: 122.87 MiB opt8,
+101.78 MiB dikarya2 and 101.91 MiB dikarya4. The additional round-2 changes
+therefore leave the measured corpus maximum nearly unchanged from dikarya2;
+these are per-job maxima, not sampled simultaneous memory under concurrency.
+
+Artifacts are `dikarya4-r2-corpus`, `dikarya4-r2-performance-analysis` and
+`dikarya4-r2-opt8-analysis`. Repeated development/FFT comparisons, final
+profiles and scheduling results are still separate pending stages.
 
 ## Remeasured starting profile
 
@@ -578,8 +628,8 @@ queues and observed-start projections have new versioned output paths.
 | Required final deliverable | Status in this report |
 |---|---|
 | Final tracked source/defaults/version and binary provenance | Dikarya4 source `9d963ee`, fresh builds and preservation/instruction audits passed; earlier dikarya3 preserved at `91146f2` |
-| Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Pending |
-| Final per-file speedups/regressions and individual peak RSS | Pending |
+| Fresh 100-file opt8/dikarya2/dikarya4 paired comparison, all partitions | Complete: all 300 golden outputs; measured dikarya2-to-dikarya4 1.084x wall / 1.089x CPU; timing confirmations pending |
+| Final per-file speedups/regressions and individual peak RSS | First pass complete; two small CPU regressions, no material regression; flags and repeats remain explicit |
 | Final selected-build profiles | Pending |
 | Integrated alternate scoring/ambiguity/length/placement/output-format and sanitizer sweep | Passed for fresh dikarya4, with earlier dikarya3 and guarded v5 evidence retained |
 | Two-vCPU latency/throughput/reproducibility scheduling comparison | Pending; separate threading study |
