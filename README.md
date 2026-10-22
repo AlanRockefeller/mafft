@@ -50,7 +50,8 @@ So a two-thread job now finishes about 1.5x faster than a one-thread job, within
 stock's non-reproducible two-thread refinement, and 1.26x faster than the previous
 reproducible option (`--threadit 1`). The 97 L-INS-i inputs of the round-2 corpus matched
 their one-thread goldens with 2 threads, and the 11 development L-INS-i inputs with 2, 3 and 4
-threads under randomly injected delays. It uses about 8% more CPU than `--thread 1`, so for
+threads under randomly injected delays. Those goldens were frozen from opt8; a fresh build of
+stock MAFFT 7.526 with `--thread 1` reproduced all 100 of them byte for byte. It uses about 8% more CPU than `--thread 1`, so for
 a backlog of jobs, independent `--thread 1` jobs still give more alignments per hour.
 
 How it works, why it is exact, and its scope are in the

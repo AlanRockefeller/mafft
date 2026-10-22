@@ -160,6 +160,9 @@ All on the Dikarya VM with the strict GCC build; outputs compared byte for byte.
   one-thread path is unchanged; with `--thread 2` all 97 L-INS-i inputs matched, ordered
   mode active on all 97, no fallback.
 
+- **Corpus goldens against stock**: a fresh build of upstream MAFFT 7.526 (`0a2319b`, same
+  flags) with `--thread 1` reproduced all 100 frozen one-thread goldens byte for byte, so the
+  corpus results below are comparisons with stock output.
 - **Round-2 corpus, `--thread 2`**: 97/97 L-INS-i inputs identical to their frozen
   one-thread goldens, before and after ordered reuse was added; ordered mode was active on
   all 97 and the fallback never ran. The other three inputs (two FFT-NS-i `--auto` runs and
@@ -179,7 +182,8 @@ All on the Dikarya VM with the strict GCC build; outputs compared byte for byte.
 - **Latency runs above**: 139/139 in-scope (L-INS-i) runs under O identical to
   stock or golden output.
 
-Raw run records are in the private archive (`round2/dikarya5-evidence/`,
+Raw run records are in the private archive (`round2/dikarya5-evidence/`, stock corpus
+outputs in `round2/dikarya5-evidence/stock-corpus-t1/`,
 `round2/dikarya5-validation-t1/`, `round2/dikarya5-validation-t2/`, build
 `round2/dikarya5-build/`). The test hooks and the stress, fallback and family scripts are described in
 [the round-3 harness notes](../harness/round3/README.md).
