@@ -53,7 +53,7 @@ def audit_trace(text):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--runs', type=Path, required=True, help='Frozen paired corpus runs.jsonl')
+    p.add_argument('--runs', type=Path, required=True, help='Frozen harness/broadwell/bench.py runs.jsonl (traces in BUILD/rN/STEM.stderr)')
     p.add_argument('--build', default='candidate')
     p.add_argument('--output', type=Path, required=True)
     args = p.parse_args()

@@ -41,7 +41,7 @@ def main():
                         'binary':build[0],'version':build[1],'launcher_sha256':build[2]})
         for line in p.read_text().splitlines():
             r=json.loads(line)
-            if r['returncode']:raise ValueError('Failed run in study')
+            if r['returncode'] or r.get('completed') is False:raise ValueError('Failed run in study')
             if (r['binary'],r['version'])!=build[:2]:raise ValueError('Run differs from recorded MAFFT build')
             if sha256_file(r['alignment'])!=r['output_sha256']:raise ValueError('Recorded alignment hash changed')
             r['source_log']=str(p.resolve());runs.append(r)

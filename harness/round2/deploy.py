@@ -367,7 +367,7 @@ def configurations(record):
     return [c for c in THREADS if c != 'O' or ORDERED_OPTION in record['production_options']]
 
 
-def check_alignment(binary, args, files, golden, name, config, directory):
+def check_alignment(binary, args, files, golden, name, config, directory, checks):
     directory.mkdir()
     local = directory / 'input.fasta'
     shutil.copyfile(args.data / name, local)
@@ -377,6 +377,7 @@ def check_alignment(binary, args, files, golden, name, config, directory):
     run(command, directory / 'run', args.timeout)
     if sha(directory / 'run/stdout') != golden[name]:
         raise ValueError('Golden mismatch: ' + name + ' configuration ' + config)
+    checks.append(name + ' ' + config)
 
 
 def active(path, target, release_command):
@@ -494,13 +495,14 @@ def deploy(args):
         sync_dir(transactions)
         print('Deployment record: ' + str(transaction / 'deployment.json'), file=sys.stderr, flush=True)
         activation_attempted = False
+        checks = []
         try:
             check_restoration(args.entrypoint, before, transaction)
             check_version(release_command, transaction / 'pre-version', args.timeout)
             for name in selected:
                 for config in configurations(files[name]):
                     check_alignment(release_command, args, files, golden, name, config,
-                                    transaction / ('pre-' + name + '-' + config))
+                                    transaction / ('pre-' + name + '-' + config), checks)
             # Recheck before activation, after potentially long validation.
             verify_release(final, manifest, sources)
             if snapshot(args.entrypoint) != before:
@@ -510,7 +512,8 @@ def deploy(args):
             sync_dir(args.entrypoint.parent)
             atomic_link(args.entrypoint, target)
             check_version(args.entrypoint, transaction / 'post-version', args.timeout)
-            check_alignment(args.entrypoint, args, files, golden, selected[0], 'A', transaction / 'post-alignment')
+            check_alignment(args.entrypoint, args, files, golden, selected[0], 'A', transaction / 'post-alignment',
+                            checks)
         except BaseException as error:
             reverted = 'not-activated'
             rollback_error = None
@@ -524,7 +527,7 @@ def deploy(args):
             if rollback_error:
                 raise RuntimeError(str(error) + '; automatic rollback: ' + rollback_error) from error
             raise
-        write_json(transaction / 'result.json', {'ok': True, 'utc': utc(), 'golden_checks': len(selected) * 2 + 1})
+        write_json(transaction / 'result.json', {'ok': True, 'utc': utc(), 'golden_checks': len(checks)})
         return dict(plan, result='activated and verified', deployment=str(transaction / 'deployment.json'),
                     rollback_command=[sys.executable, str(Path(__file__).resolve()), 'rollback', '--deployment',
                                       str(transaction / 'deployment.json'), '--apply'])
