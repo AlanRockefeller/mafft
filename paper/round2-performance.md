@@ -3,6 +3,14 @@
 Research dates: 2026-10-19–21. Starting version: **7.526-opt8-dikarya2**.
 Final selected version: **7.526-opt8-dikarya4**.
 
+*Deployment, added 2026-10-22:* dikarya4 became the Dikarya production build on
+2026-10-21 at 23:58 UTC (release `mafft-7.526-opt8-dikarya4-3b4a3d56383a`, built from
+`9d963ee` and installed with [the deployment script](../harness/round2/DEPLOY.md)).
+Statements below that production was unchanged describe the study period. An
+independent check on 56 later production inputs, against a fresh stock 7.526 build, is
+in the [main README](../README.md); the follow-up for multi-threaded runs is
+[ordered refinement](round3-ordered-refinement.md).
+
 > Paths beginning `round2/` name files in the private measurement archive kept on the
 > Dikarya host. The archive is not published: it holds production inputs, alignments and
 > trees. Numbers quoted here are taken from it; figures are in [`figures/round2`](figures/round2).

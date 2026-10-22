@@ -1,5 +1,9 @@
 # Deploy the audited Dikarya4 build
 
+This script deployed dikarya4 to Dikarya production on 2026-10-21. It is pinned to that
+build's hashes; deploying dikarya5 needs its own audited bundle and updated pins
+(`VERSION`, `BUILD_SHA`, `INSTALL_SHA` and the default `--build`).
+
 `deploy.py` installs the already validated **7.526-opt8-dikarya4** binary bundle.
 It uses Python 3.10+ and the studied Linux x86-64 AVX2 VM, without a compiler,
 network access or additional Python packages. It verifies the pinned build,
