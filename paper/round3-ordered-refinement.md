@@ -164,7 +164,7 @@ All on the Dikarya VM with the strict GCC build; outputs compared byte for byte.
   one `--maxiterate 0` run) took the stock paths as intended; one FFT-NS-i output differed,
   as stock two-thread FFT-NS-i does.
 - **Interleaving stress** (`-DMAFFT_ORDERED_TEST`, random delays at every copy and turn):
-  12 development inputs x 2, 3 and 4 workers, 33/33 identical.
+  11 development L-INS-i inputs x 2, 3 and 4 workers, 33/33 identical.
 - **Forced fallback**: `MAFFT_ORDERED_TEST_UNSAFE` = 1, 40 and 400 on four inputs; all 12
   runs reran with one worker and were identical.
 - **Other constrained strategies**: `--globalpair`, `--genafpair --ep 0` and `--localpair`

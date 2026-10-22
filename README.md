@@ -34,9 +34,8 @@ on every run. dikarya5 makes the refinement workers **commit their attempts in t
 single worker would**, recomputing the rare attempt whose starting alignment changed. The
 result is that, for DNA runs of L-INS-i, G-INS-i and E-INS-i (`--localpair`,
 `--globalpair`, `--genafpair` with `--maxiterate`), **`--thread N` produces exactly the
-`--thread 1` alignment**, which is
-itself byte-identical to stock MAFFT 7.526 with `--thread 1` — while refinement still uses
-every thread.
+`--thread 1` alignment**, which is itself byte-identical to stock MAFFT 7.526 with
+`--thread 1` — while refinement still uses every thread.
 
 On the Dikarya VM (two vCPUs), with every job given both CPUs:
 
@@ -50,7 +49,7 @@ On the Dikarya VM (two vCPUs), with every job given both CPUs:
 So a two-thread job now finishes about 1.5x faster than a one-thread job, within 4% of
 stock's non-reproducible two-thread refinement, and 1.26x faster than the previous
 reproducible option (`--threadit 1`). The 97 L-INS-i inputs of the round-2 corpus matched
-their one-thread goldens with 2 threads, and the 12 development inputs with 2, 3 and 4
+their one-thread goldens with 2 threads, and the 11 development L-INS-i inputs with 2, 3 and 4
 threads under randomly injected delays. It uses about 8% more CPU than `--thread 1`, so for
 a backlog of jobs, independent `--thread 1` jobs still give more alignments per hour.
 
