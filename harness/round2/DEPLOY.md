@@ -1,10 +1,10 @@
-# Deploy the audited Dikarya4 build
+# Deploy the audited Dikarya5 build
 
-This script deployed dikarya4 to Dikarya production on 2026-10-21. It is pinned to that
-build's hashes; deploying dikarya5 needs its own audited bundle and updated pins
-(`VERSION`, `BUILD_SHA`, `INSTALL_SHA` and the default `--build`).
+This script deployed dikarya4 to Dikarya production on 2026-10-21 and is now pinned to
+the **7.526-opt8-dikarya5** bundle (source tag `v7.526-opt8-dikarya5`). To deploy
+dikarya4 again, use this script as of commit `8933faa` (the dikarya4 source is tag `v7.526-opt8-dikarya4`).
 
-`deploy.py` installs the already validated **7.526-opt8-dikarya4** binary bundle.
+`deploy.py` installs the already validated **7.526-opt8-dikarya5** binary bundle.
 It uses Python 3.10+ and the studied Linux x86-64 AVX2 VM, without a compiler,
 network access or additional Python packages. It verifies the pinned build,
 installed-file, corpus and golden-manifest hashes before making changes.
@@ -14,7 +14,7 @@ The research records use `/opt/mafft-7.526-opt8/bin/mafft` and some historical
 opt5 paths; `command -v mafft` currently finds the distribution installation.
 The command below uses the recorded opt8 path explicitly.
 
-From the `mafft-round2` worktree, preview the deployment:
+From a worktree of this repository, preview the deployment:
 
 ```sh
 python3 harness/round2/deploy.py deploy \
@@ -32,7 +32,7 @@ sudo python3 harness/round2/deploy.py deploy \
   --entrypoint /opt/mafft-7.526-opt8/bin/mafft --apply
 ```
 
-Default artifacts are the sibling `round2/dikarya4-r2-build`,
+Default artifacts are the sibling `round2/dikarya5-build`,
 `bench/production-corpus.json`, `bench/data`, `bench/golden/production-t1` and
 `bench/golden.sha256`. Override their locations with `--build`, `--corpus`,
 `--data`, `--golden` and `--golden-manifest`. The bundle needs its `build.json`,
@@ -70,8 +70,10 @@ and byte-compares real golden outputs on four representative inputs:
 | `t4lr` | Direction adjustment and FFT-NS-i via `--auto` |
 | `icv1` | Accurate direction adjustment and the recorded noniterative strategy |
 
-Every input runs with A (`--thread 1`) and F (`--thread 2 --threadit 1`), keeping
-its recorded strategy and direction flags. For a full 200-job check, add
+Every input runs with A (`--thread 1`) and F (`--thread 2 --threadit 1`), and L-INS-i
+inputs (`--localpair`) also with O (plain `--thread 2`, ordered refinement), keeping
+its recorded strategy and direction flags. FFT-NS-i keeps stock two-thread refinement,
+so O is not compared with the golden there. For a full 200-job check, add
 `--validation full`. These are sequential correctness checks; their durations
 are not performance measurements. `--timeout` sets a per-command limit,
 defaulting to 600 seconds. A timed-out/interrupted validation kills only its
@@ -125,12 +127,15 @@ rollback to them may be needed. The script performs no garbage collection.
 Deployment passes caller arguments through. Configure the scheduler separately:
 
 - Backlog with two available CPUs: two independent `--thread 1` jobs.
-- A lone request with both CPUs free: `--thread 2 --threadit 1` is the measured
-  latency option preserving the tested one-thread outputs.
+- A lone request with both CPUs free: plain `--thread 2`. From dikarya5 its L-INS-i
+  refinement commits in one-worker order and gives the one-thread output, about 1.26x
+  faster than `--thread 2 --threadit 1`
+  ([round-3 report](../../paper/round3-ordered-refinement.md)). FFT-NS-i (`--auto` on
+  some inputs) still refines in completion order with two threads.
 - Include downstream tree searches in the same two-CPU budget.
 
 `--threadit 0` was repeatable in the study but changed some alignments relative
-to A. Ordinary `--thread 2` refinement was nondeterministic. The
+to A. Through dikarya4, ordinary `--thread 2` refinement was nondeterministic. The
 [performance report](../../paper/round2-performance.md) records the measured
 benefits and their limits; the
 [phylogenetic study](../../paper/round2-phylogenetics.md) does not rank biological

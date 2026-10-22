@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage the audited Dikarya4 build, verify it, then atomically activate MAFFT.
+"""Stage the audited Dikarya5 build, verify it, then atomically activate MAFFT.
 
 Dry-run by default. Requires Python 3.10+, Linux, and no third-party modules.
 The public entrypoint is explicit; pipeline arguments are passed through.
@@ -25,19 +25,21 @@ import time
 import uuid
 
 
-SOURCE_COMMIT = '9d963eebb5e5f8be7791a95bdf77e17a6ecb43c6'
-VERSION = 'v7.526-opt8-dikarya4 (2024/Apr/26)'
-BUILD_SHA = '10fca7cdcefd0d4a8c280358f1950237ded55f00b64fc5a9b7ae2d994478d948'
-INSTALL_SHA = '3b4a3d56383ac20373a82f2eb6d8f5e224c4fa31863b0032fada3f4e67d5201d'
+SOURCE_COMMIT = '9f3a58408f2036593e4907263f2fbcaa5241ea65'
+VERSION = 'v7.526-opt8-dikarya5 (2024/Apr/26)'
+BUILD_SHA = '680743b3060648b6c573b425bcef57607ecf9b631b1660efb90c0aa130fa9cbe'
+INSTALL_SHA = 'c81eb9794e1476a986ddfc6a21823b27a542c2f1d565fc873e56df7c04a94066'
 CORPUS_SHA = '65cb78000f3d7315bdef8906ba273317242a102b1e3c958b1f0e18bb1f1999b7'
 GOLDEN_SHA = 'c1313b0d4696313bbefc1a6b453654be32e6f73221557cd5b658fd11053ba444'
-RELEASE_NAME = 'mafft-7.526-opt8-dikarya4-' + INSTALL_SHA[:12]
+RELEASE_NAME = 'mafft-7.526-opt8-dikarya5-' + INSTALL_SHA[:12]
 SCHEMA = 'mafft-production-deployment-v1'
 SMOKE_INPUTS = ('1msv.fasta', 'buh4.fasta', 't4lr.fasta', 'icv1.fasta')
-THREADS = {'A': ['--thread', '1'], 'F': ['--thread', '2', '--threadit', '1']}
+THREADS = {'A': ['--thread', '1'], 'F': ['--thread', '2', '--threadit', '1'], 'O': ['--thread', '2']}
 STRATEGY_ALIASES = ('einsi', 'fftns', 'fftnsi', 'ginsi', 'linsi', 'nwns', 'nwnsi',
                     'mafft-einsi', 'mafft-fftns', 'mafft-fftnsi', 'mafft-ginsi',
                     'mafft-linsi', 'mafft-nwns', 'mafft-nwnsi', 'mafft-qinsi', 'mafft-xinsi')
+# Ordered two-thread refinement reproduces one-thread output only for L-INS-i-style runs.
+ORDERED_OPTION = '--localpair'
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 WORKSPACE = Path(__file__).resolve().parents[3]
 
@@ -361,6 +363,10 @@ def check_version(binary, directory, timeout):
         raise ValueError('Unexpected deployed version: ' + repr(text.strip()))
 
 
+def configurations(record):
+    return [c for c in THREADS if c != 'O' or ORDERED_OPTION in record['production_options']]
+
+
 def check_alignment(binary, args, files, golden, name, config, directory):
     directory.mkdir()
     local = directory / 'input.fasta'
@@ -492,7 +498,7 @@ def deploy(args):
             check_restoration(args.entrypoint, before, transaction)
             check_version(release_command, transaction / 'pre-version', args.timeout)
             for name in selected:
-                for config in THREADS:
+                for config in configurations(files[name]):
                     check_alignment(release_command, args, files, golden, name, config,
                                     transaction / ('pre-' + name + '-' + config))
             # Recheck before activation, after potentially long validation.
@@ -550,7 +556,7 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     d = sub.add_parser('deploy', help='Verify/stage the audited build and activate an explicit command')
     d.add_argument('--entrypoint', type=Path, required=True, help='The production mafft command to replace atomically')
-    d.add_argument('--build', type=Path, default=WORKSPACE / 'round2/dikarya4-r2-build')
+    d.add_argument('--build', type=Path, default=WORKSPACE / 'round2/dikarya5-build')
     d.add_argument('--releases-dir', type=Path, default=Path('/opt/mafft-releases'))
     d.add_argument('--corpus', type=Path, default=WORKSPACE / 'bench/production-corpus.json')
     d.add_argument('--data', type=Path, default=WORKSPACE / 'bench/data')
