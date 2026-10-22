@@ -86,10 +86,11 @@ The patching scripts below rewrite **scratch copies only**. Their internal check
 and statistics are not thread-safe: run a single-threaded checking executable. Do not apply
 them to production sources/binaries or run the full checking build with thread 2.
 
-- `../opt8/kb_check.py SCRATCH_CORE`: scalar offset-fill reference versus every striped DP
+- `harness/opt8/kb_check.py SCRATCH_CORE`: scalar offset-fill reference versus every striped DP
   score, resolved traceback offset, endpoint, and full traceback strings/offsets. Copy
   `l11_avx2.h` beside the scratch `Lalign11.c`. Compile with AVX2 and `MAFFT_POISON_TEST=1`.
-- `../opt5/checks/row_check.py`, `mcmatch_check.py`, and `../opt8/fillimp_check.py`: original versus
+- `harness/opt5/checks/row_check.py`, `harness/opt5/checks/mcmatch_check.py`, and
+  `harness/opt8/fillimp_check.py`: original versus
   new profile rows, profile scores and importance matrices. Read their CLI help/docstrings;
   these are checking builds, not performance builds.
 - `noalign_check.py SCRATCH_CORE`: original double score-only DP versus the fast path,

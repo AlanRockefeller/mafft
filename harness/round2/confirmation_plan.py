@@ -21,6 +21,12 @@ def select_rows(rows):
     return result
 
 
+def pinning_arguments(metadata):
+    """Repeat on the original CPU with the original per-job limit."""
+    return [arg for key in ('cpu', 'timeout') if key in metadata
+            for arg in ('--' + key, str(metadata[key]))]
+
+
 def quiet_arguments(metadata):
     """Keep the original prospective timing criterion in follow-up runs."""
     quiet = metadata.get('quiet_window')
@@ -60,7 +66,7 @@ def main():
                 '--build', source['reference'] + '=' + builds[source['reference']],
                 '--build', source['candidate'] + '=' + builds[source['candidate']],
                 '--files', *[r['input'] for r in selected], '--output', str(args.output / 'paired'),
-                *quiet_arguments(metadata)]},
+                *pinning_arguments(metadata), *quiet_arguments(metadata)]},
             {'label': 'summarize-confirmations', 'command': [
                 'python3', str(this / 'summarize_performance.py'), '--manifest', str(args.manifest),
                 '--runs', str(args.output / 'paired/runs.jsonl'), '--reference', source['reference'],

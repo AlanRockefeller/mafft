@@ -17,12 +17,17 @@ def main():
     p.add_argument("--partition", choices=["all", "development", "holdout", "difficult"], default="all")
     p.add_argument("--allow-partial", action="store_true")
     a = p.parse_args()
-    corpus = {s["file"]: s for s in json.loads(a.manifest.read_text())["files"]
+    manifest = {s["file"]: s for s in json.loads(a.manifest.read_text())["files"]}
+    corpus = {name: s for name, s in manifest.items()
               if a.partition == "all" or s["partition"] == a.partition}
     runs = collections.defaultdict(dict)
     for line in a.runs.read_text().splitlines():
         r = json.loads(line)
         if r["build"] not in (a.reference, a.candidate):
+            continue
+        if r["input"] not in manifest:
+            raise SystemExit(f"input not in manifest: {r['input']}")
+        if r["input"] not in corpus:
             continue
         if r["returncode"] or r.get("identical") is not True:
             raise SystemExit(f"failed or not checked against golden: {r['input']}, {r['build']}")
