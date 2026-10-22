@@ -1,9 +1,11 @@
 # Ordered multi-worker refinement
 
-Version **7.526-opt8-dikarya5** makes iterative refinement with more than one
-worker compute exactly the alignment of one worker. On the Dikarya VM this
-gives `--thread 2` the output of `--thread 1` (and of stock MAFFT 7.526 with
-`--thread 1`), while the refinement still uses both CPUs.
+Version **7.526-opt8-dikarya5** makes the iterative refinement of DNA L-INS-i, G-INS-i
+and E-INS-i runs (`--localpair`, `--globalpair`, `--genafpair` with `--maxiterate`)
+compute exactly the alignment of one worker when it uses more than one. On the Dikarya
+VM this gives `--thread 2` the output of `--thread 1` (and of stock MAFFT 7.526 with
+`--thread 1`), while the refinement still uses both CPUs. Other modes, including
+FFT-NS-i, protein and RNA, keep stock multi-worker refinement ([scope](#why-the-speculative-result-equals-the-one-worker-result)).
 
 ## Results
 
