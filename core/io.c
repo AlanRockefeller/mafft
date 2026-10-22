@@ -5434,9 +5434,9 @@ void clustalout_pointer( FILE *fp, int nseq, int maxlen, char **seq, char **name
 	if( namelen == -1 ) namelen = 15;
 	pos = 0;
 	if( comment == NULL )
-		fprintf( fp, "CLUSTAL format alignment by MAFFT (v%s)\n\n", VERSION );
+		fprintf( fp, "CLUSTAL format alignment by MAFFT (v%s)\n\n", ALIGNMENT_VERSION );
 	else
-		fprintf( fp, "CLUSTAL format alignment by MAFFT %s (v%s)\n\n", comment, VERSION );
+		fprintf( fp, "CLUSTAL format alignment by MAFFT %s (v%s)\n\n", comment, ALIGNMENT_VERSION );
 	
 	while( pos < maxlen )
 	{

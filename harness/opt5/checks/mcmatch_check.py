@@ -8,10 +8,11 @@ sig = 'static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )'
 assert s.count(sig) == 1
 s = s.replace(sig, 'static int mc_vec = 1;\nstatic void mc_match_impl( double *match, double **cpmx1, int i1, int lgth2 )')
 n = 0
-for pat in ('for( ; l+8<=nalphabets; l+=8 )', 'for( ; n+8<=gsize; n+=8 )'):
+for pat in ('for( ; l+8<=nalphabets; l+=8 )', 'for( ; n+8<=gsize; n+=8 )', 'for( ; n+4<=gsize; n+=4 )'):
     n += s.count(pat)
     s = s.replace(pat, pat.replace('for( ; ', 'for( ; mc_vec && '))
-assert n >= 4, n
+assert n >= 3, n
+s = s.replace('if( mcx_ok )', 'if( mc_vec && mcx_ok )')
 wrapper = r'''
 static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 {

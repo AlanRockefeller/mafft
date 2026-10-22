@@ -47,6 +47,33 @@
 #endif
 #endif
 
+/* Striped integer local fill, 8 lanes on AVX2. Override with 4 for experiments, or
+   0 for the established marker fill. Every width keeps the same recurrence and ties. */
+#ifndef MAFFT_AVX2_STRIPED
+#if defined(MAFFT_AVX2) && !defined(MAFFT_AVX512)
+#define MAFFT_AVX2_STRIPED 8
+#else
+#define MAFFT_AVX2_STRIPED 0
+#endif
+#endif
+#ifndef MAFFT_KB_NOIJP
+#if defined(MAFFT_AVX2) && !defined(MAFFT_AVX512) && MAFFT_AVX2_STRIPED
+#define MAFFT_KB_NOIJP 1
+#else
+#define MAFFT_KB_NOIJP 0
+#endif
+#endif
+#if defined(MAFFT_AVX512) || ( defined(MAFFT_AVX2) && MAFFT_AVX2_STRIPED )
+#define MAFFT_LSTRIPED 1
+#endif
+#ifndef MAFFT_FAST_NOALIGN
+#if defined(MAFFT_AVX2) && !defined(MAFFT_AVX512) && MAFFT_AVX2_STRIPED
+#define MAFFT_FAST_NOALIGN 1
+#else
+#define MAFFT_FAST_NOALIGN 0
+#endif
+#endif
+
 /* a*b+c rounded the way the stock build rounds it, for rewritten code that must stay
    bit-identical.  clang on arm64 contracts a*b+c into one fused (singly rounded) multiply-add;
    gcc with -std=c99 (the Makefile default) never contracts, and the x86-64 baseline has no FMA

@@ -14666,8 +14666,54 @@ double naiveHpairscore( int n1, int n2, char **seq1, char **seq2, double *eff1, 
 //	exit( 1 );
 }
 
+/* The score consumes an event stream, not the gap-filtered strings themselves.
+ * Removing a common-gap column leaves the active single-sequence gap run intact.
+ * Keep that state while skipping common gaps, and add each score/penalty in the
+ * same order as the historical materialize-then-score implementation.  In
+ * particular, adjacent gap runs on opposite sequences still cost two penalties.
+ * No alphabet, matrix-integrality, rounding-mode or sequence-length assumption
+ * is needed.  The zero setting retains the old implementation for A/B checks.
+ */
+#ifndef MAFFT_DIRECT_PAIRSCORE
+#define MAFFT_DIRECT_PAIRSCORE 1
+#endif
+
 double naivepairscorefast( char *seq1, char *seq2, int *skip1, int *skip2, int penal )
 {
+#if MAFFT_DIRECT_PAIRSCORE
+	double vali = 0.0;
+	int gap = 0, skipped1 = 0, skipped2 = 0;
+	for( ;; )
+	{
+		int skip = MIN( *skip1-skipped1, *skip2-skipped2 );
+		unsigned char c1, c2;
+		seq1 += skip; seq2 += skip;
+		skipped1 += skip; skipped2 += skip;
+		c1 = (unsigned char)*seq1++;
+		if( !c1 ) break;
+		c2 = (unsigned char)*seq2++;
+		if( c1 != '-' ) { skipped1 = 0; skip1++; }
+		else skipped1++;
+		if( c2 != '-' ) { skipped2 = 0; skip2++; }
+		else skipped2++;
+		if( c1 == '-' )
+		{
+			if( gap != 1 ) vali += (double)penal;
+			gap = 1;
+		}
+		else if( c2 == '-' )
+		{
+			if( gap != 2 ) vali += (double)penal;
+			gap = 2;
+		}
+		else
+		{
+			vali += (double)amino_dis[c1][c2];
+			gap = 0;
+		}
+	}
+	return( vali );
+#else
 	double  vali;
 	int len = strlen( seq1 );
 	char *s1, *s2;
@@ -14721,10 +14767,37 @@ double naivepairscorefast( char *seq1, char *seq2, int *skip1, int *skip2, int p
 	free( s2 );
 //	reporterr(       "###vali = %d\n", vali );
 	return( vali );
+#endif
 }
 
 double naivepairscore11_dynmtx( double **mtx, char *seq1, char *seq2, int penal )
 {
+#if MAFFT_DIRECT_PAIRSCORE
+	double vali = 0.0;
+	int gap = 0;
+	unsigned char c1, c2;
+	while( ( c1 = (unsigned char)*seq1++ ) )
+	{
+		c2 = (unsigned char)*seq2++;
+		if( c1 == '-' )
+		{
+			if( c2 == '-' ) continue;
+			if( gap != 1 ) vali += (double)penal;
+			gap = 1;
+		}
+		else if( c2 == '-' )
+		{
+			if( gap != 2 ) vali += (double)penal;
+			gap = 2;
+		}
+		else
+		{
+			vali += mtx[amino_n[c1]][amino_n[c2]];
+			gap = 0;
+		}
+	}
+	return( vali );
+#else
 	double  vali;
 	int len = strlen( seq1 );
 	char *s1, *s2, *p1, *p2;
@@ -14777,10 +14850,37 @@ double naivepairscore11_dynmtx( double **mtx, char *seq1, char *seq2, int penal 
 	free( s2 );
 //	reporterr(       "###vali = %d\n", vali );
 	return( vali );
+#endif
 }
 
 double naivepairscore11( char *seq1, char *seq2, int penal )
 {
+#if MAFFT_DIRECT_PAIRSCORE
+	double vali = 0.0;
+	int gap = 0;
+	unsigned char c1, c2;
+	while( ( c1 = (unsigned char)*seq1++ ) )
+	{
+		c2 = (unsigned char)*seq2++;
+		if( c1 == '-' )
+		{
+			if( c2 == '-' ) continue;
+			if( gap != 1 ) vali += (double)penal;
+			gap = 1;
+		}
+		else if( c2 == '-' )
+		{
+			if( gap != 2 ) vali += (double)penal;
+			gap = 2;
+		}
+		else
+		{
+			vali += (double)amino_dis[c1][c2];
+			gap = 0;
+		}
+	}
+	return( vali );
+#else
 	double  vali;
 	int len = strlen( seq1 );
 	char *s1, *s2, *p1, *p2;
@@ -14829,6 +14929,7 @@ double naivepairscore11( char *seq1, char *seq2, int penal )
 	free( s2 );
 //	reporterr(       "###vali = %d\n", vali );
 	return( vali );
+#endif
 }
 
 double naivepairscore( int n1, int n2, char **seq1, char **seq2, double *eff1, double *eff2, int penal )
@@ -16571,6 +16672,19 @@ static int makeresmap( char *seq, int *map )
 #ifndef FILLIMP_BAND
 #define FILLIMP_BAND 128
 #endif
+#ifndef MAFFT_FILLIMP_HOIST
+#define MAFFT_FILLIMP_HOIST 1
+#endif
+#ifndef MAFFT_FILLIMP_BRANCHLESS
+#define MAFFT_FILLIMP_BRANCHLESS 0
+#endif
+#ifndef MAFFT_FILLIMP_DIRECT_BYTES
+#if defined(MAFFT_AVX2) && !defined(MAFFT_AVX512) && (defined(__tune_haswell__) || defined(__tune_broadwell__))
+#define MAFFT_FILLIMP_DIRECT_BYTES 16777216
+#else
+#define MAFFT_FILLIMP_DIRECT_BYTES 0
+#endif
+#endif
 #if FILLIMP_BAND > 0
 typedef struct { int *p1, *p2; int n, cur; double segimp, w; } fillimp_seg;
 static int fillimp_banded( double **impmtx, double *base, size_t stride, int clus1, int clus2, int lgth1, double *eff1, double *eff2, double *eff1_kozo, double *eff2_kozo, double effijx, LocalHom ***localhom, char *swaplist, int *orinum1, int *orinum2, int *rowlo, int *rowhi, int **map1, int **map2, int *nres1, int *nres2 )
@@ -16582,6 +16696,11 @@ static int fillimp_banded( double **impmtx, double *base, size_t stride, int clu
 	LocalHom *tmpptr;
 
 	if( !rowlo || lgth1 < 1 ) return( 0 );
+#if MAFFT_FILLIMP_DIRECT_BYTES > 0
+	/* Small matrices are already cache resident; building band/segment lists can
+	   cost more than the direct walk. Retain banding for larger working sets. */
+	if( stride && (size_t)lgth1 <= (size_t)MAFFT_FILLIMP_DIRECT_BYTES / sizeof(double) / stride ) return( 0 );
+#endif
 	for( i=0; i<clus1; i++ )
 	{
 		swap = ( swaplist && swaplist[i] );
@@ -16641,15 +16760,28 @@ static int fillimp_banded( double **impmtx, double *base, size_t stride, int clu
 			fillimp_seg *sg = seg + blist[l];
 			int *p1 = sg->p1, *p2 = sg->p2, cnt = sg->n;
 			double segimp = sg->segimp, w = sg->w;
+#if MAFFT_FILLIMP_HOIST && !MAFFT_STOCK_FMA
+			/* A non-contracting build rounds this same product for every cell. Keep
+			   it rounded once here; the cell addition still has the original operands. */
+			double product = segimp * w;
+#endif
 			if( stride )
 			{
 				for( n = sg->cur; n < cnt && p1[n] < bend; n++ )
 				{
 					int k1 = p1[n], k2 = p2[n];
 					double *cell = base + (size_t)k1 * stride + k2;
+					#if MAFFT_FILLIMP_HOIST && !MAFFT_STOCK_FMA
+					*cell = product + *cell;
+					#else
 					*cell = MULADD( segimp, w, *cell );
+					#endif
+					#if MAFFT_FILLIMP_BRANCHLESS
+					rowlo[k1] = MIN(rowlo[k1],k2); rowhi[k1] = MAX(rowhi[k1],k2);
+					#else
 					if( k2 < rowlo[k1] ) rowlo[k1] = k2;
 					if( k2 > rowhi[k1] ) rowhi[k1] = k2;
+					#endif
 				}
 			}
 			else
@@ -16657,9 +16789,17 @@ static int fillimp_banded( double **impmtx, double *base, size_t stride, int clu
 				for( n = sg->cur; n < cnt && p1[n] < bend; n++ )
 				{
 					int k1 = p1[n], k2 = p2[n];
+					#if MAFFT_FILLIMP_HOIST && !MAFFT_STOCK_FMA
+					impmtx[k1][k2] = product + impmtx[k1][k2];
+					#else
 					impmtx[k1][k2] = MULADD( segimp, w, impmtx[k1][k2] );
+					#endif
+					#if MAFFT_FILLIMP_BRANCHLESS
+					rowlo[k1] = MIN(rowlo[k1],k2); rowhi[k1] = MAX(rowhi[k1],k2);
+					#else
 					if( k2 < rowlo[k1] ) rowlo[k1] = k2;
 					if( k2 > rowhi[k1] ) rowhi[k1] = k2;
+					#endif
 				}
 			}
 			sg->cur = n;

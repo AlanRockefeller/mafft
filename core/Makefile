@@ -364,7 +364,7 @@ defs.o : defs.c
 #A+++alignmm.o : SA+++alignmm.c $(HEADER)
 #	$(CC) $(MYCFLAGS) -c SA+++alignmm.c -o A+++alignmm.o
 
-Salignmm.o : Salignmm.c $(HEADER)
+Salignmm.o : Salignmm.c $(HEADER) rawrowcache.h
 	$(CC) $(MYCFLAGS) -c Salignmm.c 
 
 Dalignmm.o : Dalignmm.c $(HEADER)
@@ -376,7 +376,7 @@ MSalignmm.o : MSalignmm.c $(HEADER)
 partSalignmm.o : partSalignmm.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c partSalignmm.c  
 
-Lalign11.o : Lalign11.c $(HEADER)
+Lalign11.o : Lalign11.c $(HEADER) l11_avx2.h
 	$(CC) $(MYCFLAGS) -c Lalign11.c 
 
 genalign11.o : genalign11.c $(HEADER)
@@ -400,7 +400,7 @@ Lalignmm.o : Lalignmm.c $(HEADER)
 rna.o : rna.c $(HEADER)
 	$(CC) $(MYCFLAGS) -c rna.c 
 
-disttbfast.o : disttbfast.c $(HEADER) $(FFTHEADER)
+disttbfast.o : disttbfast.c dense_kmer.h $(HEADER) $(FFTHEADER)
 	$(CC) $(MYCFLAGS) -c disttbfast.c
 
 splitfromaln.o : splitfromaln.c $(HEADER) $(FFTHEADER) 
@@ -497,7 +497,7 @@ l11gpu_src.h : l11gpu.metal
 l11gpu_lib.h : l11gpu.metal mkmetallib.sh
 	sh ./mkmetallib.sh l11gpu.metal $@
 
-pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER)
+pairlocalalign.o : pairlocalalign.c $(HEADER) $(FFTHEADER) paircache.h
 	$(CC) $(MYCFLAGS) -c pairlocalalign.c
 
 pairlocalalignmain.o : pairlocalalignmain.c $(HEADER) $(FFTHEADER)
