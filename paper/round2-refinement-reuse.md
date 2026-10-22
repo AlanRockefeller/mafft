@@ -6,6 +6,10 @@ is now selected, enabled through a shared header switch, for dikarya4 validation
 on `perf/dikarya-round2`. The earlier dikarya3 source/build and every experimental
 snapshot remain available; no production setting or installation changed.
 
+> Paths beginning `round2/` name files in the private measurement archive kept on the
+> Dikarya host. The archive is not published: it holds production inputs, alignments and
+> trees. Numbers quoted here are taken from it.
+
 ## What is reused
 
 In the one-worker BAATARI2 implementation, a branch attempt rebuilds a candidate
@@ -47,7 +51,7 @@ rejection clears its stamp rather than leaving an older entry usable.
 These exclusions are deliberate. The inherited partial aligner can return for
 an empty block without assigning the caller's importance result. Its one-column
 path also reads gap scratch at index one, while gap-count rebuilding covers
-only `[0,length)`. The experiment does not initialize those old values or alter
+only `0,length)`. The experiment does not initialize those old values or alter
 their scoring behavior. It excludes their results from reuse. The `unsafe`
 counter records such rejected attempts, not accepted attempts or all blocks.
 
@@ -128,7 +132,7 @@ repeated candidate would again reject. All ten final alignments matched their fr
 goldens. The additional guards preserved all 508 hits in this subset; none of
 its rejected attempts used the short-block exclusion.
 
-See [the v5 semantic result](../../round2/reject-memo-v5-semantic-analysis/summary.json).
+See [the v5 semantic result (`round2/reject-memo-v5-semantic-analysis/summary.json`).
 The latest v5 source also passed all 100 full outputs and 612 option/format
 comparisons. Its active guard ran on 97 production jobs, with hits in 84:
 3,632 attempts were reused and 82,371 computed normally. These job-weighted
@@ -142,9 +146,9 @@ two- and three-column cases also exercised active hits while remaining exact.
 The extracted actual matrix guard passed 373 expectations in each of strict
 GCC and ASAN/UBSAN builds, covering symmetric/asymmetric values and zero signs,
 NaN/Inf, null rows and seeded mutations. Repeated backends are not independent
-data. See [the corpus validation summary](../../round2/reject-memo-v5-validation-summary.json),
-[sanitizer completion record](../../round2/memo-v5-sanitizer-finished.json) and
-[matrix-guard check](../../round2/reject-memo-v5-score-guard/manifest.json).
+data. See the corpus validation summary (`round2/reject-memo-v5-validation-summary.json`),
+sanitizer completion record (`round2/memo-v5-sanitizer-finished.json`) and
+matrix-guard check (`round2/reject-memo-v5-score-guard/manifest.json`).
 
 The later v5 three-round screen, under the prospectively calibrated idle-service
 criterion, reduced the three deliberately selected high-reuse inputs' CPU total
@@ -166,6 +170,6 @@ selected round-2 changes and does not isolate the memo. Final software profiles
 and the full scheduling/isolated-latency campaign are complete. Their separate
 results are reported in [the performance report](round2-performance.md). The high-reuse set was
 purposefully selected and does not estimate the whole-corpus gain. See the
-[v5 development](../../round2/reject-memo-v5-idle-development-analysis/summary.json)
-and [high-reuse](../../round2/reject-memo-v5-idle-high-reuse-analysis/summary.json)
+v5 development (`round2/reject-memo-v5-idle-development-analysis/summary.json`)
+and high-reuse (`round2/reject-memo-v5-idle-high-reuse-analysis/summary.json`)
 results, with every original record and prospective criterion retained.

@@ -3,6 +3,10 @@
 Research dates: 2026-10-19–21. Starting version: **7.526-opt8-dikarya2**.
 Final selected version: **7.526-opt8-dikarya4**.
 
+> Paths beginning `round2/` name files in the private measurement archive kept on the
+> Dikarya host. The archive is not published: it holds production inputs, alignments and
+> trees. Numbers quoted here are taken from it; figures are in [`figures/round2`](figures/round2).
+
 The fresh 100-file comparison measured **1.084x wall / 1.089x CPU speedups over
 dikarya2**, and **1.450x wall speedup over frozen opt8**. All 300 outputs across
 the three builds matched the original single-thread goldens. Repeated
@@ -696,7 +700,7 @@ inputs. Every native replicate matched A on 5/12 input files under B and
 five-repeat, 46-input biological cohort and its build identity.
 
 Validated JSON, per-input/policy TSVs, runner/source hashes and selection ledgers
-are in [the scheduling summary](../../round2/dikarya4-r2-scheduling-analysis/summary.json).
+are in the scheduling summary (`round2/dikarya4-r2-scheduling-analysis/summary.json`).
 Finite hash repeatability is not a universal guarantee. In particular, C's
 repeatability does not make its different refinement implementation A-equivalent.
 
@@ -706,7 +710,7 @@ The recovered history supplies 99 matching alignment-stage execution starts
 over approximately 5.1 days, with median separation about 18 minutes. One
 changed input (`eawn`) is explicitly excluded. These are selected stage starts,
 not user submissions or the complete production arrival stream. The separate
-[observed-start projection](../../round2/dikarya4-r2-observed-start-projections/summary.json)
+observed-start projection (`round2/dikarya4-r2-observed-start-projections/summary.json`)
 omits downstream IQ-TREE/other CPU use and reports flagged service observations
 and saturated calibration error. It is a sensitivity model, not measured
 interactive latency or a whole-pipeline capacity claim. All five policies have
@@ -742,10 +746,10 @@ superiority of A or F. Production settings remain unchanged.
 The final figures are available as SVG/PDF/PNG, with six machine-readable
 plotting tables and a full hash manifest:
 
-- [Paired speedup distributions](../../round2/dikarya4-r2-performance-figures-v3/paired-speedup-distributions.svg).
-- [Full-corpus throughput and CPU cost](../../round2/dikarya4-r2-performance-figures-v3/sustained-scheduling.svg).
-- [Isolated selected-input median and p95](../../round2/dikarya4-r2-performance-figures-v3/isolated-selected-latency.svg).
-- [Figure and source provenance](../../round2/dikarya4-r2-performance-figures-v3/manifest.json).
+- [Paired speedup distributions](figures/round2/paired-speedup-distributions.svg).
+- [Full-corpus throughput and CPU cost](figures/round2/sustained-scheduling.svg).
+- [Isolated selected-input median and p95](figures/round2/isolated-selected-latency.svg).
+- Figure and source provenance (`round2/dikarya4-r2-performance-figures-v3/manifest.json`).
 
 All 118 Python harness checks passed after the measurement campaign. Visual
 review prompted a legend-position correction only; its 12 figure checks passed

@@ -37,12 +37,19 @@
 
 
 
-#define VERSION "7.526-opt8-dikarya4"
+#define VERSION "7.526-opt8-dikarya5"
 /* Exact terminal no-gain refinement reuse. Both the worker and Falign must
  * see the same switch; -DMAFFT_REJECT_MEMO=0 retains the original work. */
 #ifndef MAFFT_REJECT_MEMO
 #define MAFFT_REJECT_MEMO 1
 #endif
+/* Multi-worker refinement that commits attempts in branch order, so it computes
+ * the one-worker alignment.  -DMAFFT_ORDERED_REFINE=0, or MAFFT_ORDERED_REFINE=0
+ * in the environment, retains the original completion-order commits. */
+#ifndef MAFFT_ORDERED_REFINE
+#define MAFFT_ORDERED_REFINE 1
+#endif
+#define MAFFT_FALIGN_SAFETY ( MAFFT_REJECT_MEMO || MAFFT_ORDERED_REFINE )
 /* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout. Preserve
    the designated opt8 reference's header byte-for-byte across this speedup. */
 #define ALIGNMENT_VERSION "7.526-opt8"

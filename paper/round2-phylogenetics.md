@@ -8,6 +8,10 @@ was repeatable on all 46 inputs but changed the one-thread result on 24.
 Keeping one refinement worker
 (`--thread 2 --threadit 1`) matched every one-thread golden in 92/92 runs.
 
+> Paths beginning `round2/` name files in the private measurement archive kept on the
+> Dikarya host. The archive is not published: it holds production inputs, alignments and
+> trees. Numbers quoted here are taken from it; figures are in [`figures/round2`](figures/round2).
+
 Five selected inputs received repeated default IQ-TREE searches and 15 support
 analyses. Their ten supported A–B/A–C comparisons had **zero incompatible pairs
 of strongly supported splits**. This does not imply that all changes were
@@ -65,8 +69,8 @@ even though many jobs are unchanged. Nominal Wilson intervals for 25/46 and
 24/46 are 0.402–0.678 and 0.381–0.659; purposeful selection and taxon overlap
 prevent interpreting these as calibrated population intervals for fungal ITS.
 
-The [complete alignment summary](../../round2/all-alignment-analysis/summary.json)
-and [per-file table](../../round2/all-alignment-analysis/datasets.tsv) retain
+The complete alignment summary (`round2/all-alignment-analysis/summary.json`)
+and per-file table (`round2/all-alignment-analysis/datasets.tsv`) retain
 widths, gap summaries, hashes, homology metrics and within-configuration
 comparisons. The five-replicate study detects more variable inputs than an
 earlier single two-thread pairing, as expected from its additional opportunities
@@ -74,8 +78,8 @@ to observe nondeterminism.
 
 The main biological experiment used the private `candidate2` build, whose
 launcher still reports `v7.526-opt8-dikarya2`. Its
-[source manifest](../../round2/candidate2-source.sha256.json),
-[build flags](../../round2/candidate2-build-flags.txt) and immutable run records
+source manifest (`round2/candidate2-source.sha256.json`),
+build flags (`round2/candidate2-build-flags.txt`) and immutable run records
 identify it more precisely than that version string. It is distinct from the
 frozen previous dikarya2 installation. Scientific-repeat runtimes have observed
 or unknown contention flags and are descriptive; they do not establish clean
@@ -173,10 +177,10 @@ after duplicate pruning and original short-edge collapse. The median of each
 file's median normalized RF was 0.054348. Fixed-A seed controls differed in
 9/11 inputs, with a corresponding median 0.163043. Fast search therefore adds
 substantial search variability. Its
-[corrected results](../../round2/pilot-fast-tree-analysis-v2/summary.json)
+corrected results (`round2/pilot-fast-tree-analysis-v2/summary.json`)
 are screening evidence rather than a causal estimate of alignment error.
 
-The [completed broad screen](../../round2/broad-fast-tree-analysis/summary.json)
+The completed broad screen (`round2/broad-fast-tree-analysis/summary.json`)
 found raw A–B differences in 19/46 inputs and A–C differences in 24/46.
 After original short-edge collapse and exact-duplicate pruning, those counts
 were 18/46 and 23/46; maximum normalized RF was 0.372807 and 0.381579.
@@ -198,8 +202,8 @@ C is repeatable and its five logical requests reuse one calculation.
 
 Within-B maximum normalized RF was respectively 0.16667, 0.13235, 0.21491,
 0.54455 and 0.31679. These pairwise comparisons are dependent within each input.
-The [full default-search summary](../../round2/normal-five-analysis/summary.json)
-and [comparison table](../../round2/normal-five-analysis/comparisons.tsv)
+The full default-search summary (`round2/normal-five-analysis/summary.json`)
+and comparison table (`round2/normal-five-analysis/comparisons.tsv`)
 retain all within- and between-configuration results.
 
 `ghy3` and `1msv` show alignment-associated variation exceeding the observed
@@ -214,7 +218,7 @@ Three seeds do not exhaust the possible tree-search variability.
 To test actual inference repeatability separately, the same A alignment and
 seed 73111 were run in new one-thread IQ-TREE processes for `1msv` and `8q2l`.
 Both produced byte-identical Newicks and RF0 against their original searches.
-These [two same-seed controls](../../round2/same-seed-tree-analysis/summary.json)
+These two same-seed controls (`round2/same-seed-tree-analysis/summary.json`)
 were genuinely rerun, not satisfied by queue reuse. They support finite
 repeatability under identical conditions while leaving distinct-seed search
 variability and untested inputs/models unresolved.
@@ -233,12 +237,12 @@ unrooted splits, not counts of independent biological relationships.
 | `8q2l` | 4 | 170 / 152 | 12 / 10 / 12 | 2 / 2 | 0 / 0 | 0.0042 / 0.2022 |
 | `zdku` | 1 | 78 / 60 | 42 / 37 / 39 | 13 / 13 | 0 / 0 | 0.0488 / 0.2020 |
 
-The [paired RF and quartet-resolution figure](../../round2/support-resolution-figures/support-resolution.svg)
+The [paired RF and quartet-resolution figure](figures/round2/support-resolution.svg)
 places normalized RF beside the percentage of all evaluated quartets resolved
 only in A, resolved only in B/C, or resolved incompatibly in both. It makes the
 approximately 20% resolution differences visible despite small normalized RF.
-The [underlying counts](../../round2/support-resolution-figures/support-resolution.tsv)
-and [manifest](../../round2/support-resolution-figures/manifest.json) preserve
+The underlying counts (`round2/support-resolution-figures/support-resolution.tsv`)
+and manifest (`round2/support-resolution-figures/manifest.json`) preserve
 denominators, exact/sampled panels, thresholds and source hashes without
 recomputing or resampling quartets.
 
@@ -292,10 +296,10 @@ shows why a threshold-only explanation must not be applied to every case:
 
 C's five identical alignment requests each reuse the one normal C inference;
 0/5 or 5/5 logical requests would not represent five independent searches.
-The [full split-stability table](../../round2/final-clade-stability/supported-split-stability.tsv)
+The full split-stability table (`round2/final-clade-stability/supported-split-stability.tsv`)
 includes stable-ID sides, complete original labels, source support, alignment
 counts and unique-job counts; its
-[summary](../../round2/final-clade-stability/summary.json) records the complete
+summary (`round2/final-clade-stability/summary.json`) records the complete
 cross-normal/support search signature and provenance.
 
 Exact duplicate pruning leaves the nonzero strong RF values unchanged for
@@ -305,8 +309,8 @@ taxa. These changes are therefore not all explained by redundant duplicate-tip
 resolutions. They remain model- and search-dependent ITS results.
 
 Shared-split support deltas are retained in
-[the support-change summary](../../round2/support-extended-changes/summary.json)
-and [signed per-split table](../../round2/support-extended-changes/shared-split-support.tsv).
+the support-change summary (`round2/support-extended-changes/summary.json`)
+and signed per-split table (`round2/support-extended-changes/shared-split-support.tsv`).
 Across the ten comparisons, median SH-aLRT changes on shared nonzero splits
 are all zero; median UFBoot changes are zero or +0.5. Individual changes can
 be much larger. These medians do not describe missing splits, establish a
@@ -314,7 +318,7 @@ systematic support increase/decrease, or supply independent biological
 replication. There is only one support-seed analysis per selected alignment;
 bootstrap/search uncertainty near cutoffs has not been separately replicated.
 Complete support comparisons are in
-[the five-input support results](../../round2/support-extended-analysis/summary.json).
+the five-input support results (`round2/support-extended-analysis/summary.json`).
 
 ## Independent biological evidence
 
@@ -348,14 +352,14 @@ the prespecified classical-bootstrap witness threshold >=95. Other path edges
 have labels 51 and 17. All are retained in the audit; no fresh four-tip
 bootstrap frequency is inferred by pruning.
 
-The [completed current-candidate audit](../../round2/biological-current-trees-v3/queue-quartet-summary.json)
+The completed current-candidate audit (`round2/biological-current-trees-v3/queue-quartet-summary.json`)
 finds the same raw quartet in **all 20 logical requests using 15 actual search
 jobs** for `1msv`: three fast-screen requests, 14 normal requests including
 search controls, and three support requests. These are repeated checks of
 **one matched quartet in one input**, not 20 biological confirmations. All
 three support-filtered ITS trees leave that quartet unresolved, so agreement
 of their raw topologies is not strong ITS support for the reference split.
-The [per-request table](../../round2/biological-current-trees-v3/queue-quartet-congruence.tsv)
+The per-request table (`round2/biological-current-trees-v3/queue-quartet-congruence.tsv`)
 keeps inference methods, configurations, replicates, seeds and reuse separate.
 
 The audited exact specimen counts are rpb2/tef1: `1msv` 4/3, `ghy3` 2/0 and
@@ -384,7 +388,7 @@ where ITS metadata/table use *A. fumosus*; these conflicts remain explicit.
 Another LSU candidate reuses an ITS-containing accession and would require
 annotated non-ITS extraction. TreeBASE attempts returned 404 and the queried
 publisher Figshare record had no downloadable files. No independent topology
-score is claimed. The [Albatrellus audit](../../round2/albatrellus-audit/audit.json)
+score is claimed. The Albatrellus audit (`round2/albatrellus-audit/audit.json`)
 preserves exact scope, voucher evidence and limitations.
 
 ## Separate RAxML-NG sensitivity check on `zdku`
@@ -395,7 +399,7 @@ searches used `GTR+F+G4`, one thread and one worker, four starting trees per
 search (`pars{2},rand{2}`), and likelihood convergence epsilon 0.1. A used
 seeds 88311, 88329 and 88341; B and C each used 88311 and 88329. All 141
 original taxa were retained during inference. The
-[experiment record](../../round2/raxml-zdku/experiment.json) records the
+experiment record (`round2/raxml-zdku/experiment.json`) records the
 executable/version/hash, source alignments and settings. These searches are
 kept separate from IQ-TREE results rather than pooled into that cohort.
 
@@ -417,14 +421,14 @@ bipartition `370c41447962b7c6` occurs in all three A trees and is absent
 from both B trees and both C trees**. Its 100/100 support refers to
 the earlier IQ-TREE A analysis, not to these RAxML-NG trees: no RAxML-NG
 bootstrap or branch-support analysis was performed. Representative raw
-[A](../../round2/raxml-zdku/A-seed88311/inference.raxml.bestTree),
-[B](../../round2/raxml-zdku/B-seed88311/inference.raxml.bestTree) and
-[C](../../round2/raxml-zdku/C-seed88311/inference.raxml.bestTree) best trees
-and the [complete comparisons](../../round2/raxml-zdku/comparisons.json)
+A (`round2/raxml-zdku/A-seed88311/inference.raxml.bestTree`),
+B (`round2/raxml-zdku/B-seed88311/inference.raxml.bestTree`) and
+C (`round2/raxml-zdku/C-seed88311/inference.raxml.bestTree`) best trees
+and the complete comparisons (`round2/raxml-zdku/comparisons.json`)
 are available for inspection. The
-[deep-split audit](../../round2/raxml-zdku/deep-split-sensitivity.json)
+deep-split audit (`round2/raxml-zdku/deep-split-sensitivity.json`)
 records presence, branch lengths and hashes for every search. A reversibly
-quoted [A tree with original labels](../../round2/raxml-zdku/A-seed88311/original-labels.nwk)
+quoted A tree with original labels (`round2/raxml-zdku/A-seed88311/original-labels.nwk`)
 is also available, with corresponding readable trees in every B/C search directory.
 
 Thus the selected alignments' deep-split difference and larger RF variation
@@ -444,11 +448,11 @@ to adjudicate this split.
 Frozen original opt8 controls used A once and B five times on `0uuv` and
 `1msv`. Both produced five different B outputs, all different from their
 matching A golden. These
-[original-binary controls](../../round2/original-threading-control-analysis/summary.json)
+original-binary controls (`round2/original-threading-control-analysis/summary.json`)
 confirm longstanding MAFFT behavior but cannot determine whether the fork
 changes the distribution of nondeterministic outcomes. They are not two
 additional independent datasets. Earlier frozen-dikarya2 quick trees are
-[preserved separately](../../round2/quick-phylo-analysis-v2/) and are not pooled
+preserved separately (`round2/quick-phylo-analysis-v2/`) and are not pooled
 with candidate2 tree replicates.
 
 A later `dikarya3` build was separately checked on `1msv`, `26et`, `8q2l`
@@ -456,14 +460,14 @@ and `ghy3`, with A1/B5/C5/F5 per input: **64 additional alignments**. All four
 A outputs and all 20 F outputs matched the frozen A goldens. B varied on all
 four inputs, producing respectively 5, 3, 4 and 4 distinct outputs; C was
 repeatable within each input and differed from A on all four. These
-[later-build results](../../round2/final-threading-check-analysis/summary.json)
+later-build results (`round2/final-threading-check-analysis/summary.json`)
 are a separate build cohort and add no new biological datasets or inferred
 trees. The recorded launcher reports `v7.526-opt8-dikarya3`; these checks belong
 to the earlier build cohort, preceding the selected dikarya4 implementation.
 
 The subsequently selected dikarya4 source (`9d963ee`) also received a separate
 F-only check: twice on all 46 inputs, **92/92 outputs matched A goldens**.
-The [fresh-build summary](../../round2/dikarya4-r2-refine-one-analysis/summary.json)
+The fresh-build summary (`round2/dikarya4-r2-refine-one-analysis/summary.json`)
 records no within-input F variation. Its guarded refinement reuse was active
 in 90 runs with 3,172 reused attempts; no new trees were inferred from this
 check. This later source cohort adds no independent biological datasets and
@@ -475,8 +479,8 @@ three-build single-thread pass over **100 production filenames representing
 **677.839 seconds** for rebuilt dikarya2 and **906.203 seconds** for frozen opt8:
 observed speedups of **1.084x** and **1.450x**, respectively. **All 300 outputs
 (100 per build) matched the frozen single-thread goldens.** The
-[dikarya2 comparison](../../round2/dikarya4-r2-performance-analysis/summary.json)
-and [opt8 comparison](../../round2/dikarya4-r2-opt8-analysis/summary.json) are two
+dikarya2 comparison (`round2/dikarya4-r2-performance-analysis/summary.json`)
+and opt8 comparison (`round2/dikarya4-r2-opt8-analysis/summary.json`) are two
 views of that same pass, sharing its 100 dikarya4 jobs within the 300 total
 executions. Transient contention flags remain in those totals
 (opt8 11/100, dikarya2 12/100, dikarya4 18/100; no unknown flags), with separate
@@ -496,34 +500,34 @@ Its byte equivalence is well supported on this workload. The separate scheduling
 experiment below measures latency and throughput; the finite correctness checks
 do not give a universal reproducibility guarantee.
 
-[The final figure manifest](../../round2/final-figures/figure-manifest.json)
+The final figure manifest (`round2/final-figures/figure-manifest.json`)
 records 51 standard plot files in SVG/PDF/PNG and nine selected SVG/PDF
 tanglegram comparisons, with all source hashes. Useful entry points are:
 
-* [Alignment variability and observed repeatability](../../round2/final-figures/alignment-variation.svg).
-* [Five-input default-search variation versus fixed-A seed controls](../../round2/final-figures/normal-five-analysis-de64bd78a1-9e5541-input_duplicate_representatives_zero_collapsed-search-controls.svg).
-* [Strong support-filtered topology variation](../../round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-strong_support-tree-variation.svg).
-* [Selected `zdku` A/B support-tree tanglegram](../../round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-tanglegram-02-zdku.fasta-B-r1.svg).
-* [Selected `8q2l` A/B support-tree tanglegram](../../round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-tanglegram-01-8q2l.fasta-B-r4.svg).
+* [Alignment variability and observed repeatability](figures/round2/alignment-variation.svg).
+* Five-input default-search variation versus fixed-A seed controls (`round2/final-figures/normal-five-analysis-de64bd78a1-9e5541-input_duplicate_representatives_zero_collapsed-search-controls.svg`).
+* Strong support-filtered topology variation (`round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-strong_support-tree-variation.svg`).
+* Selected `zdku` A/B support-tree tanglegram (`round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-tanglegram-02-zdku.fasta-B-r1.svg`).
+* Selected `8q2l` A/B support-tree tanglegram (`round2/final-figures/support-extended-analysis-5a32cbeca4-29bed8-tanglegram-01-8q2l.fasta-B-r4.svg`).
 
 Tanglegrams display selected raw-tree subtrees for readability, with support
 annotations and a documented tip subset; red absence marks are not necessarily
 strong conflicts or biological errors. All numerical comparisons retain the
 full specified taxon set. The
-[per-taxon quartet participation table](../../round2/final-figures/taxon-quartet-stability.tsv)
+per-taxon quartet participation table (`round2/final-figures/taxon-quartet-stability.tsv`)
 joins 2,659 rows from nine selected comparisons/views to original labels.
 It is a stability diagnostic, not a taxon-placement error probability; four
 tips participate in every quartet and resolved/unresolved changes count.
-The [alignment/tree join](../../round2/final-figures/alignment-versus-tree.tsv)
+The alignment/tree join (`round2/final-figures/alignment-versus-tree.tsv`)
 contains 274 stage/view-specific points with zero provenance exclusions, not
 274 independent biological inputs.
 
-The [tree inspection bundle](../../round2/inspect-study-trees/manifest.json)
+The tree inspection bundle (`round2/inspect-study-trees/manifest.json`)
 contains 151 distinct executed job paths across the 46 inputs, including the
 broad screen, normal/support cohorts and actual same-seed reruns. Each export
 contains original stable-ID Newick, reversibly quoted original-label Newick,
 the analyzed alignment, IQ-TREE report and provenance. For example, the
-[`1msv` A tree with original labels](../../round2/inspect-study-trees/1msv/pilot-normal-trees-1msv-A-r0-seed73111/original-labels.nwk)
+`1msv` A tree with original labels (`round2/inspect-study-trees/1msv/pilot-normal-trees-1msv-A-r0-seed73111/original-labels.nwk`)
 is directly inspectable. Artifact links assume the preserved workspace's
 sibling `round2` directory; large data and immutable results remain outside Git.
 
@@ -595,16 +599,16 @@ external-contention attribution, and disagreements between global and accumulate
 process CPU counters remain documented. Subsecond batches use a separately named
 child-tree CPU filter while retaining GNU CPU values for the table above.
 Passing these filters does not prove physical isolation or exclude host activity.
-The [complete scheduling summary](../../round2/dikarya4-r2-scheduling-analysis/summary.json),
-[full-policy table](../../round2/dikarya4-r2-scheduling-analysis/full-policies.tsv)
-and [isolated per-input table](../../round2/dikarya4-r2-scheduling-analysis/isolated-per-input.tsv)
+The complete scheduling summary (`round2/dikarya4-r2-scheduling-analysis/summary.json`),
+full-policy table (`round2/dikarya4-r2-scheduling-analysis/full-policies.tsv`)
+and isolated per-input table (`round2/dikarya4-r2-scheduling-analysis/isolated-per-input.tsv`)
 retain counts, provenance, original flags, signed residuals and selection ledgers.
-The [sustained-policy figure](../../round2/dikarya4-r2-performance-figures-v3/sustained-scheduling.svg),
-[isolated-latency figure](../../round2/dikarya4-r2-performance-figures-v3/isolated-selected-latency.svg)
-and [figure manifest](../../round2/dikarya4-r2-performance-figures-v3/manifest.json)
+The [sustained-policy figure](figures/round2/sustained-scheduling.svg),
+[isolated-latency figure](figures/round2/isolated-selected-latency.svg)
+and figure manifest (`round2/dikarya4-r2-performance-figures-v3/manifest.json`)
 provide standalone SVG/PDF/PNG exports and machine-readable plotting tables.
 
-A separate [observed-start projection](../../round2/dikarya4-r2-observed-start-projections/summary.json)
+A separate observed-start projection (`round2/dikarya4-r2-observed-start-projections/summary.json`)
 retained 99 selected execution-start records, excluding `eawn` because its
 current input no longer matched the frozen original hash. Every policy had
 zero modeled waiting at those timestamps. Execution starts are not submission

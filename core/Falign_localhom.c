@@ -1,6 +1,6 @@
 #include "mltaln.h"
 
-#if MAFFT_REJECT_MEMO
+#if MAFFT_FALIGN_SAFETY
 /* Rejection reuse must not retain results from inherited
  * short-block or interrupted paths whose scratch-state independence is
  * unproven.  This flag reports safety only; scoring arithmetic is unchanged. */
@@ -275,7 +275,7 @@ double Falign_localhom( int **whichmtx, double ***scoringmatrices, double **n_dy
 		return( 0.0 );
 	}
 
-#if MAFFT_REJECT_MEMO
+#if MAFFT_FALIGN_SAFETY
 	mafft_reject_memo_falign_safe = 1;
 #endif
 	len1 = strlen( seq1[0] );
@@ -817,7 +817,7 @@ system( "less seqVec2 < /dev/tty > /dev/tty" );
 				totalscore += Aalign( tmpres1, tmpres2, eff1, eff2, clus1, clus2, alloclen );
 				break;
 			case( 'A' ):
-#if MAFFT_REJECT_MEMO
+#if MAFFT_FALIGN_SAFETY
 				/* Empty blocks can leave impmatch untouched; one-column
 				 * blocks can read gap scratch beyond its initialized prefix.
 				 * Exclude both from reuse without changing inherited scoring.
@@ -845,7 +845,7 @@ system( "less seqVec2 < /dev/tty > /dev/tty" );
 		if( chudanres && *chudanres )
 		{
 //			fprintf( stderr, "\n\n## CHUUDAN!!! at Falign_localhom\n" );
-#if MAFFT_REJECT_MEMO
+#if MAFFT_FALIGN_SAFETY
 			mafft_reject_memo_falign_safe = 0;
 #endif
 			return( -1.0 );

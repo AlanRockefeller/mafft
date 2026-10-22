@@ -10,8 +10,9 @@
 #include <stdint.h>
 
 /* Reuse only verified terminal no-gain attempts; see the scoped proof in
- * paper/round2-refinement-reuse.md. The shared switch lives in mltaln.h. */
-#if MAFFT_REJECT_MEMO
+ * paper/round2-refinement-reuse.md. The shared switch lives in mltaln.h.
+ * Ordered multi-worker refinement relies on the same dependency argument. */
+#if MAFFT_FALIGN_SAFETY
 extern TLS int mafft_reject_memo_falign_safe;
 static int reject_memo_symmetric_scores( void )
 {
@@ -59,6 +60,20 @@ extern char **res_g;
 
 static int nwa;
 
+#if MAFFT_FALIGN_SAFETY
+/* The scope in which a branch attempt is a function of the master alignment and
+ * the branch alone (paper/round2-refinement-reuse.md): DNA L-INS-i refinement
+ * with a fixed tree and branch order. */
+static int refinement_attempt_reproducible( int njob, int ntarget, int nkozo )
+{
+	return( njob >= 3 && parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
+		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
+		kobetsubunkatsu == 1 && outgap == 1 && !trywarp &&
+		!rnakozo && !nkozo && RNAscoremtx != 'r' && specificityconsideration == 0.0 && ntarget == njob &&
+		!scoreout && !FULLSCORE && !DEBUG && !RECORD && reject_memo_symmetric_scores() );
+}
+#endif
+
 
 #ifdef enablemultithread
 typedef struct _threadarg
@@ -97,7 +112,73 @@ typedef struct _threadarg
 	pthread_mutex_t *mutex;
 	pthread_cond_t *collection_end;
 	pthread_cond_t *collection_start;
+	int ordered;
+	int *orderedabortpt;
+	pthread_cond_t *commit_turn;
+	struct ordered_memo *omemo;
 } threadarg_t;
+
+/* The terminal no-gain reuse of the one-worker memo, shared by ordered workers
+ * and read or written only under the coordinator mutex.  A hit is decided when
+ * a position is taken and kept only if no earlier position of the generation
+ * is accepted before its turn; it is then the one-worker decision exactly,
+ * because acceptances are the only changes to the epoch, the base gain and the
+ * stamps of positions not yet committed. */
+struct ordered_memo
+{
+	uint64_t epoch, checked_epoch;
+	int verified;
+	uint64_t *stamp;
+	double *score;
+};
+
+/* Waits until every earlier branch position of this generation has committed.
+ * Returns -1 after an abort, 1 if the master changed after this attempt copied
+ * it (the attempt must be recomputed) and 0 if the attempt can be committed.
+ * Only the position holding the turn changes the master, so the master stays
+ * fixed until this worker increments ndone. */
+static int ordered_turn( threadarg_t *targ, int mypos, int subgenerationatfirst )
+{
+	int r;
+	pthread_mutex_lock( targ->mutex );
+	while( *targ->ndonept != mypos && !*targ->orderedabortpt )
+		pthread_cond_wait( targ->commit_turn, targ->mutex );
+	if( *targ->orderedabortpt ) r = -1;
+	else r = ( *targ->subgenerationpt != subgenerationatfirst );
+	pthread_mutex_unlock( targ->mutex );
+	return( r );
+}
+
+/* Stops every thread; TreeDependentIteration then reruns with one worker. */
+static void ordered_abort( threadarg_t *targ )
+{
+	pthread_mutex_lock( targ->mutex );
+	*targ->orderedabortpt = 1;
+	*targ->collectingpt = -1;
+	pthread_cond_broadcast( targ->commit_turn );
+	pthread_cond_broadcast( targ->collection_end );
+	pthread_cond_signal( targ->collection_start );
+	pthread_mutex_unlock( targ->mutex );
+}
+
+#ifdef MAFFT_ORDERED_TEST
+/* Test builds only.  Random delays vary which worker computes, waits for or
+ * recomputes each position.  MAFFT_ORDERED_TEST_UNSAFE=n treats the nth
+ * committed attempt as outside the reproducible scope, exercising the rerun.
+ * The counter is touched only by the worker holding the commit turn. */
+static void ordered_test_jitter( unsigned *state )
+{
+	volatile unsigned spin;
+	*state = *state * 1103515245u + 12345u;
+	for( spin = 0; spin < ( ( *state >> 16 ) % 3000 ) * 1000u; spin++ ) ;
+}
+static int ordered_test_unsafe( void )
+{
+	static int commits = 0;
+	char *env = getenv( "MAFFT_ORDERED_TEST_UNSAFE" );
+	return( env && ++commits == atoi( env ) );
+}
+#endif
 #endif
 
 #if 1
@@ -450,11 +531,26 @@ static void *athread( void *arg )
 	double **eff1s, **eff2s; 
 	int **whichmtx;
 	void *igscache;
+	/* Ordered workers commit branch positions in the one-worker order.  Each
+	 * attempt is speculative until its position's turn; one that started from an
+	 * older master is recomputed.  Gains go to the one-worker slot. */
+	const int ordered = targ->ordered;
+	const int gainslot = ordered ? 1 : thread_no;
+	int *orderedabortpt = targ->orderedabortpt;
+	struct ordered_memo *omemo = targ->omemo;
+	int ordered_hit = 0, ordered_hitgen = 0, ordered_accepted = 0;
+	int mypos = 0;
+#if MAFFT_FALIGN_SAFETY
+	int ordered_safe = 1;
+#endif
+#ifdef MAFFT_ORDERED_TEST
+	unsigned ordered_test_state = 2654435761u * (unsigned)( thread_no + 1 );
+#endif
 
 #if MAFFT_REJECT_MEMO_TRACE
 	int trace_accepted = 0;
 	/* BESTFIRST accepts in the coordinator, outside this per-attempt path. */
-	const int trace_enabled = thread_no == 1 && nwa == 2 && parallelizationstrategy == BAATARI2;
+	const int trace_enabled = ( ( thread_no == 1 && nwa == 2 ) || ( ordered && thread_no > 0 ) ) && parallelizationstrategy == BAATARI2;
 #endif
 #if MAFFT_REJECT_MEMO
 	uint64_t memo_epoch = 1, *memo_stamp = NULL;
@@ -464,12 +560,7 @@ static void *athread( void *arg )
 	int memo_accepted = 0;
 	int memo_attempt_safe = 1;
 	int memo_tail_verified = 0, memo_take_hit = 0, memo_scanpos;
-	int memo_enabled = thread_no == 1 && nwa == 2 && njob >= 3 &&
-		parallelizationstrategy == BAATARI2 && randomseed == 0 && cut == 0.0 && dorp == 'd' &&
-		utree && constraint == 2 && use_fft && alg == 'A' && score_check == 1 &&
-		kobetsubunkatsu == 1 && outgap == 1 && !trywarp &&
-		!rnakozo && !nkozo && RNAscoremtx != 'r' && specificityconsideration == 0.0 && ntarget == njob &&
-		!scoreout && !FULLSCORE && !DEBUG && !RECORD && reject_memo_symmetric_scores();
+	int memo_enabled = thread_no == 1 && nwa == 2 && refinement_attempt_reproducible( njob, ntarget, nkozo );
 	if( memo_enabled )
 	{
 		memo_stamp = calloc( (size_t)nbranch, sizeof(*memo_stamp) );
@@ -626,8 +717,13 @@ static void *athread( void *arg )
 			}
 
 			pthread_mutex_lock( targ->mutex );
-			while( *ndonept < nbranch )
+			while( *ndonept < nbranch && !( ordered && *orderedabortpt ) )
 				pthread_cond_wait( targ->collection_start, targ->mutex );
+			if( ordered && *orderedabortpt )
+			{
+				pthread_mutex_unlock( targ->mutex );
+				break;
+			}
 			pthread_mutex_unlock( targ->mutex );
 //			fprintf( stderr, "Thread 0 got a signal, *collectionpt = %d\n", *collectingpt );
 
@@ -715,7 +811,7 @@ static void *athread( void *arg )
 			pthread_mutex_unlock( targ->mutex );
 		}
 		pthread_mutex_lock( targ->mutex );
-		fprintf( stderr, "\nReached %d\n", maxiter );
+		if( !( ordered && *orderedabortpt ) ) fprintf( stderr, "\nReached %d\n", maxiter );
 		*collectingpt = -1;
 		pthread_cond_broadcast( targ->collection_end );
 		pthread_mutex_unlock( targ->mutex );
@@ -813,6 +909,7 @@ static void *athread( void *arg )
 
 
 			branchpos = myjob;
+			mypos = *jobposintpt;
 			(*jobposintpt)++;
 			iterate = *generationofmastercopypt;
 			(*ntrypt)++;
@@ -844,6 +941,20 @@ static void *athread( void *arg )
 				}
 				memo_take_hit = memo_tail_verified;
 			}
+			ordered_hit = 0;
+			if( omemo && omemo->stamp[branchpos] == omemo->epoch )
+			{
+				if( omemo->checked_epoch != omemo->epoch )
+				{
+					omemo->checked_epoch = omemo->epoch;
+					omemo->verified = *basegainpt == 0.0;
+					for( memo_scanpos = *jobposintpt; omemo->verified && memo_scanpos < nbranch; memo_scanpos++ )
+						if( omemo->stamp[branchtable[memo_scanpos]] != omemo->epoch )
+							omemo->verified = 0;
+				}
+				ordered_hit = omemo->verified;
+				ordered_hitgen = *subgenerationpt;
+			}
 #endif
 			pthread_mutex_unlock( targ->mutex );
 
@@ -873,6 +984,19 @@ static void *athread( void *arg )
 				goto memo_finish;
 			}
 			if( memo_enabled ) memo_misses++;
+			ordered_accepted = 0;
+			if( ordered_hit )
+			{
+				int turn = ordered_turn( targ, mypos, ordered_hitgen );
+				if( turn < 0 ) continue;
+				if( turn == 0 )
+				{
+					tscore = omemo->score[branchpos];
+					fprintf( stderr, "%03d-%04d-%d (thread %4d) cached-rejection\r", iterate+1, *ndonept, k, thread_no );
+					goto memo_finish;
+				}
+				/* An earlier position was accepted; compute as one worker would. */
+			}
 #endif
 			distFromABranch( locnjob, distarr, stopol, topol, len, l, k ); // ato de idou
 			OneClusterAndTheOther_fast( locnjob, memlist[0], memlist[1], &s1, &s2, pairbuf, topol, l, k, smalldistmtx, distmtx, distarr );
@@ -927,11 +1051,22 @@ static void *athread( void *arg )
 			}
 
 			yarinaoshi:
+#ifdef MAFFT_ORDERED_TEST
+			if( ordered ) ordered_test_jitter( &ordered_test_state );
+#endif
 
 			pthread_mutex_lock( targ->mutex );
+			if( ordered && *orderedabortpt )
+			{
+				pthread_mutex_unlock( targ->mutex );
+				continue;
+			}
 			for( i=0; i<locnjob; i++ ) strcpy( localcopy[i], mastercopy[i] );
 			subgenerationatfirst = *subgenerationpt;
 			pthread_mutex_unlock( targ->mutex );
+#if MAFFT_FALIGN_SAFETY
+			ordered_safe = 1;
+#endif
 			length = strlen( localcopy[0] );
 
 			if( nkozo )
@@ -1136,6 +1271,10 @@ static void *athread( void *arg )
 							 * Identity/skip attempts without a call remain safe. */
 							memo_attempt_safe = memo_attempt_safe && mafft_reject_memo_falign_safe;
 #endif
+#if MAFFT_FALIGN_SAFETY
+							/* Only the completed call's result can be committed. */
+							ordered_safe = mafft_reject_memo_falign_safe;
+#endif
 						}
 //						fprintf( stderr, "##### impmatch = %f\n", impmatch );
 						if( chudanres && parallelizationstrategy == BAATARI2 )
@@ -1186,7 +1325,27 @@ static void *athread( void *arg )
 					goto yarinaoshi;
 				}
 #endif
-							
+				if( ordered )
+				{
+					int turn;
+#ifdef MAFFT_ORDERED_TEST
+					ordered_test_jitter( &ordered_test_state );
+#endif
+					turn = ordered_turn( targ, mypos, subgenerationatfirst );
+					if( turn < 0 ) continue;
+					if( turn > 0 ) goto yarinaoshi;
+#ifdef MAFFT_ORDERED_TEST
+					if( ordered_test_unsafe() ) ordered_safe = 0;
+#endif
+#if MAFFT_FALIGN_SAFETY
+					if( !ordered_safe )
+					{
+						ordered_abort( targ );
+						continue;
+					}
+#endif
+				}
+
 				identity = !strcmp( localcopy[s1], mastercopy[s1] );
 				identity *= !strcmp( localcopy[s2], mastercopy[s2] );
 				fprintf( stderr, "%03d-%04d-%d (thread %4d) identical     \r", iterate+1, *ndonept, k, thread_no );
@@ -1194,6 +1353,12 @@ static void *athread( void *arg )
 			}
 			else
 			{
+				if( ordered )
+				{
+					int turn = ordered_turn( targ, mypos, subgenerationatfirst );
+					if( turn < 0 ) continue;
+					if( turn > 0 ) goto yarinaoshi;
+				}
 				identity = 1;
 				fprintf( stderr, "%03d-%04d-%d (thread %4d) skip     \r", iterate+1, *ndonept, k, thread_no );
 			}
@@ -1314,8 +1479,19 @@ static void *athread( void *arg )
 								memo_epoch = 1;
 								}
 						}
+						if( omemo )
+						{
+							ordered_accepted = 1;
+							omemo->checked_epoch = 0;
+							omemo->verified = 0;
+							if( ++omemo->epoch == 0 )
+							{
+								memset( omemo->stamp, 0, (size_t)nbranch * sizeof(*omemo->stamp) );
+								omemo->epoch = 1;
+							}
+						}
 #endif
-						gainlist[thread_no] = *basegainpt + gain;
+						gainlist[gainslot] = *basegainpt + gain;
 						*basegainpt += gain;
 
 						if( scoreout )
@@ -1328,7 +1504,7 @@ static void *athread( void *arg )
 						}
 
 						pthread_mutex_unlock( targ->mutex );
-						tscorelist[thread_no] = tscore;
+						tscorelist[gainslot] = tscore;
 					}
 #if 0
 					fprintf( stderr, "tscore =  %f   mscore = %f  accepted.\n", tscore, mscore );
@@ -1375,6 +1551,19 @@ static void *athread( void *arg )
 					if( !memo_attempt_safe ) memo_unsafe++;
 				}
 			}
+			if( omemo && !ordered_accepted )
+			{
+				/* This worker holds the commit turn; an unsafe attempt has
+				 * already stopped ordered refinement. */
+				pthread_mutex_lock( targ->mutex );
+				if( ordered_safe && isfinite(tscore) )
+				{
+					omemo->score[branchpos] = tscore;
+					omemo->stamp[branchpos] = omemo->epoch;
+				}
+				else omemo->stamp[branchpos] = 0;
+				pthread_mutex_unlock( targ->mutex );
+			}
 			memo_finish:
 #endif
 			converged2 = 0;
@@ -1412,7 +1601,7 @@ static void *athread( void *arg )
 				         " tscorelist=%016" PRIx64 " basegain=%016" PRIx64 "\n",
 				         iterate, branchpos, reject_trace_bits(tscore), trace_accepted,
 				         *subgenerationpt, converged2, *finishpt,
-				         reject_trace_bits(gainlist[thread_no]), reject_trace_bits(tscorelist[thread_no]),
+				         reject_trace_bits(gainlist[gainslot]), reject_trace_bits(tscorelist[gainslot]),
 				         reject_trace_bits(*basegainpt) );
 				if( trace_accepted )
 					for( i=0; i<locnjob; i++ )
@@ -1421,6 +1610,7 @@ static void *athread( void *arg )
 			}
 #endif
 			(*ndonept)++;
+			if( ordered ) pthread_cond_broadcast( targ->commit_turn );
 //			fprintf( stderr, "*ndonept = %d, nbranch = %d (thread %d) iterate=%d\n", *ndonept, nbranch, thread_no, iterate );
 			generationofinput[branchpos] = iterate;
 			if( *ndonept == nbranch )
@@ -1638,16 +1828,45 @@ int TreeDependentIteration( int locnjob, char **name, int nlen[M],
 		int *branchtable;
 		double **tscorehistory_detail;
 		int finish;
+		int ordered = 0, orderedabort;
+		pthread_cond_t commit_turn;
+		char **orderedinput = NULL;
+		struct ordered_memo omemo, *omemopt = NULL;
 
 		nwa = nthread + 1;
 		nbranch = (njob-1) * 2 - 1;
 		maxiter = niter;
+
+#if MAFFT_ORDERED_REFINE && MAFFT_FALIGN_SAFETY
+		if( nwa > 2 && refinement_attempt_reproducible( njob, ntarget, nkozo ) )
+		{
+			char *env = getenv( "MAFFT_ORDERED_REFINE" );
+			ordered = !( env && !strcmp( env, "0" ) );
+		}
+		if( ordered )
+		{
+			/* An attempt with a block that the reproducibility argument excludes
+			 * restarts refinement from this input with one worker. */
+			orderedinput = AllocateCharMtx( locnjob, alloclen );
+			for( i=0; i<locnjob; i++ ) strcpy( orderedinput[i], bseq[i] );
+			fprintf( stderr, "Ordered refinement: %d workers commit in one-worker order.\n", nwa-1 );
+#if MAFFT_REJECT_MEMO
+			memset( &omemo, 0, sizeof( omemo ) );
+			omemo.epoch = 1;
+			omemo.stamp = calloc( (size_t)nbranch, sizeof( *omemo.stamp ) );
+			omemo.score = malloc( (size_t)nbranch * sizeof( *omemo.score ) );
+			if( omemo.stamp && omemo.score ) omemopt = &omemo;
+			else { free( omemo.stamp ); free( omemo.score ); }
+#endif
+		}
+#endif
 
 		targ = calloc( nwa, sizeof( threadarg_t ) );
 		handle = calloc( nwa, sizeof( pthread_t ) );
 		pthread_mutex_init( &mutex, NULL );
 		pthread_cond_init( &collection_end, NULL );
 		pthread_cond_init( &collection_start, NULL );
+		pthread_cond_init( &commit_turn, NULL );
 
 		gainlist = calloc( nwa, sizeof( double ) );
 		tscorelist = calloc( nwa, sizeof( double ) );
@@ -1658,10 +1877,17 @@ int TreeDependentIteration( int locnjob, char **name, int nlen[M],
 		for( i=0; i<nbranch; i++ ) branchtable[i] = i;
 		tscorehistory_detail = AllocateFloatMtx( maxiter, nbranch );
 
+		for( ;; )
+		{
 		collecting = 1;
+		orderedabort = 0;
 
 		for( i=0; i<nwa; i++ )
 		{
+			targ[i].ordered = ordered;
+			targ[i].orderedabortpt = &orderedabort;
+			targ[i].commit_turn = &commit_turn;
+			targ[i].omemo = ordered ? omemopt : NULL;
 			targ[i].thread_no = i;
 			targ[i].njob = njob;
 			targ[i].nbranch = nbranch;
@@ -1705,9 +1931,19 @@ int TreeDependentIteration( int locnjob, char **name, int nlen[M],
 			pthread_join( handle[i], NULL );
 		}
 
+		if( !orderedabort ) break;
+		fprintf( stderr, "\nOrdered refinement: rerunning with one worker.\n" );
+		for( i=0; i<locnjob; i++ ) strcpy( bseq[i], orderedinput[i] );
+		ordered = 0;
+		nwa = 2;
+		}
+		if( orderedinput ) FreeCharMtx( orderedinput );
+		if( omemopt ) { free( omemo.stamp ); free( omemo.score ); }
+
 		pthread_mutex_destroy( &mutex );
 		pthread_cond_destroy( &collection_end );
 		pthread_cond_destroy( &collection_start );
+		pthread_cond_destroy( &commit_turn );
 
 		free( targ );
 		free( handle );
