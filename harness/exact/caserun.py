@@ -81,6 +81,74 @@ def _kill_group(pgid, sig):
         return False
 
 
+def _group_alive(pgid):
+    """True while any non-zombie process is in group PGID (Linux /proc; else kill -0)."""
+    if not os.path.isdir('/proc/self'):
+        return _kill_group(pgid, 0)
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        try:
+            with open('/proc/%s/stat' % entry) as stream:
+                fields = stream.read().rsplit(')', 1)[1].split()
+        except OSError:
+            continue
+        if int(fields[2]) == pgid and fields[0] != 'Z':
+            return True
+    return False
+
+
+def run_group(argv, *, stdout, stderr, env, timeout, nice=None, grace=5.0, cwd=None, stdin=None):
+    """Run argv in its own session; on timeout kill the whole process group.
+
+    SIGTERM first, SIGKILL after GRACE seconds for anything still in the
+    group.  Group members left behind by a leader that exited are killed and
+    reported as leaked.  Returns returncode, timed_out, rusage (of the child,
+    including the descendants it waited for), launch_error and leaked.
+    """
+    import subprocess
+    preexec = (lambda: os.nice(nice)) if nice else None
+    timed_out = threading.Event()
+    try:
+        proc = subprocess.Popen(argv, stdin=stdin, stdout=stdout, stderr=stderr, env=env, cwd=cwd,
+                                start_new_session=True, preexec_fn=preexec)
+    except OSError as error:
+        return dict(returncode=127, timed_out=False, usage=None, launch_error=str(error), leaked=False)
+
+    def expire():
+        timed_out.set()
+        _kill_group(proc.pid, signal.SIGTERM)
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if not _kill_group(proc.pid, 0):
+                return
+            time.sleep(0.05)
+        _kill_group(proc.pid, signal.SIGKILL)
+
+    timer = threading.Timer(timeout, expire)
+    timer.daemon = True
+    timer.start()
+    try:
+        _, status, usage = os.wait4(proc.pid, 0)
+    except BaseException:
+        _kill_group(proc.pid, signal.SIGKILL)
+        raise
+    finally:
+        timer.cancel()
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    # A leader that exited may leave group members behind (for example a
+    # killed launcher whose C program ignored SIGTERM).  Sweep them.
+    leaked = _kill_group(proc.pid, 0)
+    if leaked:
+        _kill_group(proc.pid, signal.SIGKILL)
+    # Do not return while killed members still run: the next case would overlap them.
+    deadline = time.monotonic() + 30
+    while _group_alive(proc.pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return dict(returncode=proc.returncode, timed_out=timed_out.is_set(), usage=usage,
+                launch_error=None, leaked=leaked)
+
+
 def run_case(argv, out, *, env, timeout, nice=None, err=None, grace=5.0, cwd=None):
     """Run argv with stdout to OUT, atomically.  Returns a result dict.
 
@@ -89,7 +157,6 @@ def run_case(argv, out, *, env, timeout, nice=None, err=None, grace=5.0, cwd=Non
     shell.  CPU time is the child's rusage, which includes the descendants it
     waited for.
     """
-    import subprocess
     out = Path(out)
     err = Path(err) if err else Path(str(out) + '.err')
     tag = '.tmp-%d' % os.getpid()
@@ -97,55 +164,19 @@ def run_case(argv, out, *, env, timeout, nice=None, err=None, grace=5.0, cwd=Non
     for stale in (out, err, Path(str(out) + '.failed'), Path(str(err) + '.failed')):
         if stale.exists():
             stale.unlink()
-    preexec = (lambda: os.nice(nice)) if nice else None
     started = time.monotonic()
-    timed_out = threading.Event()
     with open(tmp_out, 'wb') as stdout, open(tmp_err, 'wb') as stderr:
-        try:
-            proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, env=env, cwd=cwd,
-                                    start_new_session=True, preexec_fn=preexec)
-        except OSError as error:
-            stderr.write(('launch failed: %s\n' % error).encode())
-            proc = None
-        if proc is None:
-            status, usage, launch_error = 127 << 8, None, True
-        else:
-            launch_error = False
-
-            def expire():
-                timed_out.set()
-                _kill_group(proc.pid, signal.SIGTERM)
-                deadline = time.monotonic() + grace
-                while time.monotonic() < deadline:
-                    if not _kill_group(proc.pid, 0):
-                        return
-                    time.sleep(0.05)
-                _kill_group(proc.pid, signal.SIGKILL)
-
-            timer = threading.Timer(timeout, expire)
-            timer.daemon = True
-            timer.start()
-            try:
-                _, status, usage = os.wait4(proc.pid, 0)
-            except BaseException:
-                _kill_group(proc.pid, signal.SIGKILL)
-                raise
-            finally:
-                timer.cancel()
-            proc.returncode = os.waitstatus_to_exitcode(status)
-            # A leader that exited may leave group members behind (for example a
-            # killed launcher whose C program ignored SIGTERM).  Sweep them.
-            leaked = _kill_group(proc.pid, 0)
-            if leaked:
-                _kill_group(proc.pid, signal.SIGKILL)
-    wall = time.monotonic() - started
-    returncode = os.waitstatus_to_exitcode(status)
-    result = dict(argv=[str(x) for x in argv], returncode=returncode,
-                  timed_out=timed_out.is_set(), timeout=timeout, wall=wall,
+        g = run_group(argv, stdout=stdout, stderr=stderr, env=env, timeout=timeout, nice=nice,
+                      grace=grace, cwd=cwd)
+        if g['launch_error']:
+            stderr.write(('launch failed: %s\n' % g['launch_error']).encode())
+    usage = g['usage']
+    result = dict(argv=[str(x) for x in argv], returncode=g['returncode'],
+                  timed_out=g['timed_out'], timeout=timeout, wall=time.monotonic() - started,
                   cpu=(usage.ru_utime + usage.ru_stime) if usage else None,
                   maxrss_kib=usage.ru_maxrss if usage else None,
-                  launch_error=launch_error, leaked_processes=False if launch_error else leaked)
-    clean = returncode == 0 and not result['timed_out'] and not result['leaked_processes']
+                  launch_error=bool(g['launch_error']), leaked_processes=g['leaked'])
+    clean = result['returncode'] == 0 and not result['timed_out'] and not result['leaked_processes']
     os.replace(tmp_out, out if clean else Path(str(out) + '.failed'))
     os.replace(tmp_err, err if clean else Path(str(err) + '.failed'))
     result['output'] = str(out if clean else Path(str(out) + '.failed'))

@@ -5,7 +5,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "exact"))
+from caserun import run_group  # noqa: E402  (kills the whole process group on timeout)
 
 from corpus import fasta
 
@@ -39,9 +42,11 @@ def main():
         argv = ["nice", "-n", "15", "taskset", "-c", a.cpu, str(binary.resolve()),
                 "--thread", "1", *map(str, flags)]
         with dest.open("xb") as out, dest.with_suffix(".stderr").open("xb") as err:
-            r = subprocess.run(argv, stdout=out, stderr=err, env=env, timeout=600)
+            r = run_group(argv, stdout=out, stderr=err, env=env, timeout=600)
+        if r["timed_out"] or r["launch_error"]:
+            raise SystemExit(f"timeout or launch failure: {argv}; retained {dest}")
         value = dest.read_bytes()
-        return dict(argv=argv, returncode=r.returncode, bytes=len(value),
+        return dict(argv=argv, returncode=r["returncode"], bytes=len(value),
                     sha256=hashlib.sha256(value).hexdigest())
 
     with (a.output / "runs.jsonl").open("x", buffering=1) as log:

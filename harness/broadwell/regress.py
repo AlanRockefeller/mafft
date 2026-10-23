@@ -10,7 +10,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "exact"))
+from caserun import run_group  # noqa: E402  (kills the whole process group on timeout)
 
 MODES = {
     "auto": ["--auto"],
@@ -63,9 +66,11 @@ with (a.output / "runs.jsonl").open("x", buffering=1) as log:
                 argv = ["nice", "-n", "15", "taskset", "-c", str(a.cpu), str(binary.resolve()),
                         "--thread", str(a.threads), *MODES[mode], str(source.resolve())]
                 with (dest / name).open("xb") as out, (dest / (name + ".stderr")).open("xb") as err:
-                    r = subprocess.run(argv, stdout=out, stderr=err, env=env, timeout=600)
+                    r = run_group(argv, stdout=out, stderr=err, env=env, timeout=600)
                 value = (dest / name).read_bytes()
-                results.append(dict(argv=argv, returncode=r.returncode, sha256=hashlib.sha256(value).hexdigest(), bytes=len(value)))
+                if r["timed_out"] or r["launch_error"]:
+                    raise SystemExit(f"timeout or launch failure: {argv}; retained {dest}")
+                results.append(dict(argv=argv, returncode=r["returncode"], sha256=hashlib.sha256(value).hexdigest(), bytes=len(value)))
             ok = results[0]["returncode"] == results[1]["returncode"] and (dest / "ref").read_bytes() == (dest / "new").read_bytes()
             status = "aligned" if results[0]["returncode"] == 0 and results[0]["bytes"] else "matching-rejection"
             log.write(json.dumps(dict(input=source.name, mode=mode, threads=a.threads, identical=ok, status=status, builds=results)) + "\n")

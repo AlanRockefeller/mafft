@@ -15,9 +15,11 @@ import os
 from pathlib import Path
 import resource
 import shutil
-import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "exact"))
+from caserun import run_group  # noqa: E402  (kills the whole process group on timeout)
 
 
 def capture():
@@ -67,13 +69,13 @@ def main():
                     # MAFFT feeds pre on stdin; dvtditr writes the refined alignment back
                     # to pre itself (stdout is normally /dev/null in mafft.tmpl).
                     with (dest / "out").open("xb") as out, (dest / "err").open("xb") as err, (work / "pre").open("rb") as inp:
-                        result = subprocess.run(argv, cwd=work, stdin=inp, stdout=out, stderr=err,
-                                                env={**os.environ, "LC_ALL": "C"}, timeout=1200)
+                        result = run_group(argv, cwd=work, stdin=inp, stdout=out, stderr=err,
+                                           env={**os.environ, "LC_ALL": "C"}, timeout=1200)
                     wall = time.monotonic() - start
                     after = resource.getrusage(resource.RUSAGE_CHILDREN)
                     output = (work / "pre").read_bytes()
                     goldens.setdefault(case.name, output)
-                    ok = result.returncode == 0 and bool(output) and output == goldens[case.name]
+                    ok = result["returncode"] == 0 and not result["timed_out"] and bool(output) and output == goldens[case.name]
                     record = dict(case=case.name, build=name, round=r, argv=argv,
                                   wall=wall, cpu=after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime,
                                   identical=ok, sha256=hashlib.sha256(output).hexdigest())

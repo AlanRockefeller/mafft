@@ -9,7 +9,6 @@ import contextlib
 import io
 import json
 import os
-import signal
 import sys
 import tempfile
 import time
@@ -41,6 +40,16 @@ case $mode in
   ignoreterm) trap '' TERM; printf '>a\n'; (trap '' TERM; exec sleep 300) & echo $! > "$FAKE_CHILD_PID"; wait ;;
 esac
 '''
+
+
+def assert_dead(test, pid):
+    """A killed process may linger as a zombie until init reaps it; that is dead."""
+    try:
+        with open('/proc/%d/stat' % pid) as stream:
+            state = stream.read().rsplit(')', 1)[1].split()[0]
+    except FileNotFoundError:
+        return
+    test.assertEqual(state, 'Z', 'process %d still running' % pid)
 
 
 class Fixture:
@@ -173,9 +182,7 @@ class OrderedChecksResumeTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 30)
         self.assertEqual((status, summary['total_failures']), (1, 2))
         self.assertIn('timeout after 1s', out)
-        child = int(self.f.child_pid.read_text())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(child, 0)
+        assert_dead(self, int(self.f.child_pid.read_text()))
 
     def test_manifest_record_cut_off_mid_write_is_ignored(self):
         self.f.ordered()
@@ -204,8 +211,7 @@ class RunCaseTests(unittest.TestCase):
             result = caserun.run_case([str(f.mafft), 'in'], out, env=dict(os.environ), timeout=1, grace=1)
             self.assertTrue(result['timed_out'])
             self.assertFalse(out.exists())
-            with self.assertRaises(ProcessLookupError):
-                os.kill(int(f.child_pid.read_text()), 0)
+            assert_dead(self, int(f.child_pid.read_text()))
 
     def test_launch_failure_is_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
