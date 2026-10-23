@@ -4,13 +4,15 @@
 #
 #   harness/verify-against-stock.sh [--full] [--cc gcc] [--cflags "-O3 ..."]
 #       [--candidate-cflags "..."] [--stock-cflags "..."] [--no-test-build]
-#       [--work DIR] [--jobs N] [-- extra matrix.py arguments]
+#       [--make-args "STRIP=true"] [--work DIR] [--jobs N] [-- extra matrix.py arguments]
 #
 # Defaults: gcc, -O3 -march=native -ffp-contract=off (the AVX2 build on an
 # AVX2-only CPU; use -march=broadwell or -march=haswell on an AVX-512 CPU to test
 # the AVX2 paths).  --candidate-cflags is added to the candidate only, for
 # example -DMAFFT_STOCK_FMA=1 for the clang FMA class.  The fast matrix takes a
-# few minutes; --full takes hours.  Exit status 0 only if every case matched.
+# few minutes; --full takes hours.  --make-args is passed to both make commands of
+# every build (STRIP=true keeps symbols for sanitizer reports).  Exit status 0
+# only if every case matched.
 #
 # Nothing is installed outside --work (default: a new temporary directory).
 # Stock builds are cached in $MAFFT_STOCK_CACHE (if set) by compiler and flags.
@@ -27,6 +29,7 @@ full=""
 test_build=1
 work=""
 jobs=$(( $(nproc 2>/dev/null || echo 1) ))
+make_args=""
 extra=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -35,11 +38,12 @@ while [ $# -gt 0 ]; do
     --cflags) cflags=$2; shift ;;
     --candidate-cflags) cand_extra=$2; shift ;;
     --stock-cflags) stock_extra=$2; shift ;;
+    --make-args) make_args=$2; shift ;;
     --no-test-build) test_build="" ;;
     --work) work=$2; shift ;;
     --jobs) jobs=$2; shift ;;
     --) shift; extra=("$@"); break ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -62,8 +66,8 @@ build() {
   fi
   echo "building $name: CC=$cc CFLAGS=$flags"
   (cd "$src/core" &&
-     make -j"$jobs" CC="$cc" CFLAGS="$flags" PREFIX="$prefix" >../build.log 2>&1 &&
-     make install CC="$cc" CFLAGS="$flags" PREFIX="$prefix" >>../build.log 2>&1) ||
+     make -j"$jobs" CC="$cc" CFLAGS="$flags" PREFIX="$prefix" $make_args >../build.log 2>&1 &&
+     make install CC="$cc" CFLAGS="$flags" PREFIX="$prefix" $make_args >>../build.log 2>&1) ||
     { tail -30 "$src/build.log"; echo "build of $name failed" >&2; exit 2; }
 }
 
@@ -71,7 +75,7 @@ stock_flags="$cflags${stock_extra:+ $stock_extra}"
 cand_flags="$cflags${cand_extra:+ $cand_extra}"
 stock_prefix=$work/inst/stock
 if [ -n "${MAFFT_STOCK_CACHE:-}" ]; then
-  tag=$(printf '%s\n%s\n%s\n%s\n' "$stock_rev" "$cc" "$("$cc" --version | head -1)" "$stock_flags" |
+  tag=$(printf '%s\n%s\n%s\n%s\n%s\n' "$stock_rev" "$cc" "$("$cc" --version | head -1)" "$stock_flags" "$make_args" |
           sha256sum | cut -c1-16)
   stock_prefix=$MAFFT_STOCK_CACHE/stock-$tag
 fi

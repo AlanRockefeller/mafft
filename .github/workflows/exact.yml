@@ -1,0 +1,128 @@
+# Byte-identity against stock MAFFT 7.526 built in the same job with the same flags.
+# Each job runs harness/verify-against-stock.sh (fast matrix, a few minutes) for one
+# build class.  Not enabled until the repository owner turns on Actions for it.
+name: exact
+
+on:
+  push:
+    branches: [exact-speedups, audit-fixes]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Run the full matrix (hours)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Harness unit tests
+        run: |
+          set -e
+          (cd harness/exact && for t in test_*.py; do python3 "$t"; done)
+          (cd harness/round2 && for t in test_*.py; do python3 "$t"; done)
+          python3 harness/exact/make_fixtures.py --check
+
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc scalar (-O3)
+            runner: ubuntu-24.04
+            cc: gcc
+            cflags: -O3
+            timeout: 60
+            experimental: false
+          # -march=haswell, not native: GitHub's x86 runners may have AVX-512, which
+          # would select the AVX-512 paths instead of the production AVX2 ones.
+          - name: gcc AVX2 (-march=haswell)
+            runner: ubuntu-24.04
+            cc: gcc
+            cflags: -O3 -march=haswell -ffp-contract=off
+            timeout: 60
+            experimental: false
+          # clang contracts a*b+c into FMA on an FMA target; the candidate must be told
+          # that its stock reference does (rounding class FMA).
+          - name: clang FMA class (x86-64-v3)
+            runner: ubuntu-24.04
+            cc: clang
+            cflags: -O3 -march=x86-64-v3
+            candidate_cflags: -DMAFFT_STOCK_FMA=1
+            timeout: 60
+            experimental: false
+          - name: ASan+UBSan (AVX2)
+            runner: ubuntu-24.04
+            cc: gcc
+            cflags: -O1 -g -fno-omit-frame-pointer -march=haswell -ffp-contract=off -fsanitize=address,undefined
+            make_args: STRIP=true
+            matrix_args: --timeout 3600
+            timeout: 180
+            experimental: false
+          # Ordered refinement under random delays and forced fallbacks, more repeats.
+          - name: threaded DNA L/G/E-INS-i (jitter build)
+            runner: ubuntu-24.04
+            cc: gcc
+            cflags: -O3 -march=haswell -ffp-contract=off
+            matrix_args: --full --only "^(ordered|jitter|unsafe-fallback) linsi"
+            timeout: 180
+            experimental: false
+          # NEON paths; non-blocking until it has passed once.
+          - name: gcc arm64 NEON (-O3)
+            runner: ubuntu-24.04-arm
+            cc: gcc
+            cflags: -O3
+            timeout: 90
+            experimental: true
+    env:
+      MAFFT_STOCK_CACHE: ${{ github.workspace }}/.stock-cache
+      # Stock MAFFT leaks by design; a sanitizer error must change the exit status
+      # so the matrix compares it with stock.
+      ASAN_OPTIONS: detect_leaks=0:exitcode=86
+      UBSAN_OPTIONS: halt_on_error=1:exitcode=87:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # verify-against-stock.sh builds stock from commit 0a2319b
+      - name: Compiler
+        run: |
+          if [ "${{ matrix.cc }}" = clang ]; then sudo apt-get update && sudo apt-get install -y clang; fi
+          ${{ matrix.cc }} --version | head -1
+          echo "CC_VERSION=$(${{ matrix.cc }} --version | head -1 | sha256sum | cut -c1-12)" >> "$GITHUB_ENV"
+      - name: Cache stock build
+        uses: actions/cache@v4
+        with:
+          path: .stock-cache
+          key: stock-0a2319b-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cc }}-${{ env.CC_VERSION }}-${{ hashFiles('harness/verify-against-stock.sh') }}-${{ matrix.cflags }}-${{ matrix.make_args }}
+      - name: Verify against stock
+        run: |
+          full=""
+          if [ "${{ inputs.full }}" = true ]; then full=--full; fi
+          harness/verify-against-stock.sh --cc "${{ matrix.cc }}" --cflags "${{ matrix.cflags }}" \
+            --candidate-cflags "${{ matrix.candidate_cflags }}" --make-args "${{ matrix.make_args }}" \
+            --work "$RUNNER_TEMP/verify" --jobs "$(nproc)" $full -- ${{ matrix.matrix_args }}
+      - name: Keep the comparison records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-${{ strategy.job-index }}
+          path: |
+            ${{ runner.temp }}/verify/matrix/summary.json
+            ${{ runner.temp }}/verify/matrix/comparisons.json
+            ${{ runner.temp }}/verify/matrix/manifest.jsonl
+          if-no-files-found: ignore
