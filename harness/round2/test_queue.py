@@ -97,13 +97,20 @@ class QueueTests(unittest.TestCase):
                 self.assertFalse(set(queue["jobs"]) & set(fast["jobs"]))
             args.output = root / "queue"
             def run(plan, **_kwargs):
-                return {"completed": True, "tree": str(Path(plan["directory"]) / "fixture.treefile"),
-                        "tree_sha256": "fixture-hash", "elapsed_seconds": .1, "resources": None}
+                tree = Path(plan["directory"]) / "fixture.treefile"
+                tree.write_text("(a,b,(c,d));\n")
+                return {"completed": True, "tree": str(tree),
+                        "tree_sha256": sha256_file(tree), "elapsed_seconds": .1, "resources": None}
             with patch("queue_trees.run_tree_job", side_effect=run) as executor:
                 self.assertTrue(execute_queue(queue, args))
                 self.assertEqual(executor.call_count, 3)
                 self.assertTrue(execute_queue(queue, args))
                 self.assertEqual(executor.call_count, 3)
+                tree = Path(json.loads((args.output / "runs.jsonl").read_text().splitlines()[0])["tree"])
+                tree.write_text("(a,c,(b,d));\n")
+                with self.assertRaisesRegex(ValueError, "Recorded tree missing or changed"):
+                    execute_queue(queue, args)
+                tree.write_text("(a,b,(c,d));\n")
             results = [json.loads(line) for line in (args.output / "runs.jsonl").read_text().splitlines()]
             self.assertEqual(len(results), 6)
             self.assertEqual(sum(r["inference_counts_as_independent"] for r in results), 3)
