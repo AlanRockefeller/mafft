@@ -159,7 +159,7 @@ def run_case(argv, out, *, env, timeout, nice=None, err=None, grace=5.0, cwd=Non
     """
     out = Path(out)
     err = Path(err) if err else Path(str(out) + '.err')
-    tag = '.tmp-%d' % os.getpid()
+    tag = '.tmp-%d-%d' % (os.getpid(), threading.get_ident())
     tmp_out, tmp_err = Path(str(out) + tag), Path(str(err) + tag)
     for stale in (out, err, Path(str(out) + '.failed'), Path(str(err) + '.failed')):
         if stale.exists():
