@@ -85,6 +85,10 @@ ORDERED = ['linsi', 'ginsi', 'einsi']
 FAST = dict(
     strategy_inputs=['dna12small', 'aa12small', 'tiny', 'one'],
     strategies=list(STRATEGIES),
+    # Mid-sized inputs: the small ones above can miss a wrong rounding class (a
+    # clang FMA build without -DMAFFT_STOCK_FMA=1 matches them but not dna40).
+    rounding_inputs=['dna40'],
+    rounding_strategies=['fftns2', 'fftnsi', 'linsi'],
     option_inputs=['dna12small', 'aa12small'],
     options=list(OPTIONS),
     default_thread_inputs=['dna12small', 'aa12small'],
@@ -98,6 +102,8 @@ FULL = dict(
                      'dna30near', 'aa60', 'aa40div', 'dna6x5k', 'dna12small', 'aa12small', 'tiny', 'one',
                      'gappedu', 'sample'],
     strategies=list(STRATEGIES),
+    rounding_inputs=[],
+    rounding_strategies=[],
     option_inputs=['dna40', 'dna60rc', 'dna50amb', 'aa60', 'aa40div', 'dna12small', 'aa12small'],
     options=list(OPTIONS),
     default_thread_inputs=['dna40', 'dna80dup', 'aa60', 'sample'],
@@ -217,6 +223,10 @@ def build_cases(plan, stock, cand, test_build, corpus):
         for name in plan['strategy_inputs']:
             opts = STRATEGIES[s] + [str(input_path(name))]
             yield ('strategy %s t1' % s, name, cand, ['--thread', '1', *opts], {}, ['--thread', '1', *opts])
+    for s in plan['rounding_strategies']:
+        for name in plan['rounding_inputs']:
+            opts = STRATEGIES[s] + [str(input_path(name))]
+            yield ('rounding %s t1' % s, name, cand, ['--thread', '1', *opts], {}, ['--thread', '1', *opts])
     for name in plan['default_thread_inputs']:
         for s in ('fftns2', 'fftnsi', 'linsi'):
             opts = STRATEGIES[s] + [str(input_path(name))]

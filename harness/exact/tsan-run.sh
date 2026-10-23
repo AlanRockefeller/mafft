@@ -15,7 +15,7 @@ for input in "$@"; do
     for t in 2 4; do
       name=$(basename "$input" .fa).$(echo $strategy | tr -d ' -').t$t
       mkdir -p "$out/$name"
-      TSAN_OPTIONS="log_path=$out/$name/tsan halt_on_error=0 report_signal_unsafe=0 history_size=4" \
+      TSAN_OPTIONS="log_path=$out/$name/tsan halt_on_error=0 exitcode=0 report_signal_unsafe=0 history_size=4" \
         timeout 3600 setarch "$(uname -m)" -R "$mafft" --thread $t $strategy "$input" \
         > "$out/$name/out.fa" 2> "$out/$name/stderr"
       echo "$name exit=$? reports=$(cat "$out/$name"/tsan.* 2>/dev/null | grep -c 'WARNING: ThreadSanitizer')"
