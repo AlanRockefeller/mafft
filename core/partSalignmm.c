@@ -1408,37 +1408,13 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 		}
 		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
 	}
-#elif defined(MAFFT_AVX512)
-	/* The running best as a prefix scan over (value, position) pairs, 8 at a time: a later pair
-	   replaces an earlier one only if its value is strictly greater (ties keep the earlier, as '>'), which is
-	   associative, so three shift+compare+blend steps (and the carry from the previous block)
-	   give each lane exactly the scalar loop's best and bi.  Blends, not max, so ties between
-	   -0 and +0 resolve as in the scalar loop. */
-	{
-		__m512d cv = _mm512_set1_pd( best ), vpre = _mm512_set1_pd( gf1vapre );
-		__m256i ck = _mm256_set1_epi32( bi ), vk = _mm256_setr_epi32( 0, 1, 2, 3, 4, 5, 6, 7 ), veight = _mm256_set1_epi32( 8 );
-		for( ; j+8<=lgth2; j+=8 )
-		{
-			__m512d x = VMULADD( _mm512_loadu_pd( ogcp2 + j ), vpre, _mm512_loadu_pd( prev + j - 1 ) ), e;
-			__m256i t = vk, f;
-			__mmask8 c;
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 7 ) ); f = _mm256_alignr_epi32( t, ck, 7 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 6 ) ); f = _mm256_alignr_epi32( t, ck, 6 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 4 ) ); f = _mm256_alignr_epi32( t, ck, 4 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			c = _mm512_cmp_pd_mask( x, cv, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, cv, x ); t = _mm256_mask_blend_epi32( c, ck, t );
-			_mm512_storeu_pd( MI + j + 1, x );
-			_mm256_storeu_si256( (__m256i *)( MPI + j + 1 ), t );
-			cv = _mm512_permutexvar_pd( _mm512_set1_epi64( 7 ), x );
-			ck = _mm256_permutexvar_epi32( _mm256_set1_epi32( 7 ), t );
-			vk = _mm256_add_epi32( vk, veight );
-		}
-		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
-	}
 #elif defined(MAFFT_AVX2_PATHS)
-	/* The AVX-512 scan above, 4 at a time. */
+	/* The running best as a prefix scan over (value, position) pairs, 4 at a time: a later pair
+	   replaces an earlier one only if its value is strictly greater (ties keep the earlier, as '>'),
+	   which is associative, so two shift+compare+blend steps (and the carry from the previous
+	   block) give each lane exactly the scalar loop's best and bi.  Blends, not max, so ties
+	   between -0 and +0 resolve as in the scalar loop.  MAFFT_AVX2_SHORT_SCAN applies the carry
+	   as the AVX-512 scan above does. */
 	{
 		__m256d cv = _mm256_set1_pd( best ), vpre = _mm256_set1_pd( gf1vapre );
 		__m128i ck = _mm_set1_epi32( bi ), vk = _mm_setr_epi32( 0, 1, 2, 3 ), vfour = _mm_set1_epi32( 4 );
