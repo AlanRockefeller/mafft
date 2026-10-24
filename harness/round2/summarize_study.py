@@ -30,22 +30,27 @@ def main():
     ap.add_argument('--output',type=Path,required=True);ap.add_argument('--manifest',type=Path,required=True)
     ap.add_argument('--pairwise',action='store_true');args=ap.parse_args()
     args.output.mkdir(parents=True,exist_ok=False)
-    runs=[];sources=[];builds=set()
+    runs=[];sources=[];builds=set();installed=set()
     for p in args.runs:
         metadata_path=p.parent/'experiment.json'
         metadata=json.loads(metadata_path.read_text())
         build=(metadata['binary'],metadata['version'],metadata['launcher_sha256'])
         builds.add(build)
+        # libexec programs can change while the launcher stays the same (alignments.py records them);
+        # experiments recorded before that field existed have none to compare.
+        programs=metadata.get('installed_file_sha256')
+        if programs is not None:installed.add(json.dumps(programs,sort_keys=True))
         sources.append({'runs':str(p.resolve()),'runs_sha256':sha256_file(p),
                         'experiment':str(metadata_path.resolve()),'experiment_sha256':sha256_file(metadata_path),
-                        'binary':build[0],'version':build[1],'launcher_sha256':build[2]})
+                        'binary':build[0],'version':build[1],'launcher_sha256':build[2],
+                        'installed_file_sha256':programs})
         for line in p.read_text().splitlines():
             r=json.loads(line)
             if r['returncode'] or r.get('completed') is False:raise ValueError('Failed run in study')
             if (r['binary'],r['version'])!=build[:2]:raise ValueError('Run differs from recorded MAFFT build')
             if sha256_file(r['alignment'])!=r['output_sha256']:raise ValueError('Recorded alignment hash changed')
             r['source_log']=str(p.resolve());runs.append(r)
-    if len(builds)!=1:raise ValueError('Analyze different MAFFT builds separately')
+    if len(builds)!=1 or len(installed)>1:raise ValueError('Analyze different MAFFT builds separately')
     manifest={f['file']:f for f in json.loads(args.manifest.read_text())['files']}
     groups=defaultdict(list)
     for r in runs:groups[r['input_sha256']].append(r)
