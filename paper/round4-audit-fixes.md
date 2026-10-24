@@ -73,11 +73,12 @@ output legitimately differs between compilers and rounding classes, so the refer
 reject the input with the same status. The fast mode covers every strategy of the regression
 matrix on four small inputs with `--thread 1`, the default thread setting (no flag), every
 option set, ordered `--thread 2/3/4` DNA L/G/E-INS-i against stock `--thread 1`, the jitter
-build and forced one-worker fallbacks: 160 cases. `--full` widens inputs and repeats;
+build and forced one-worker fallbacks: 160 cases when first written, 163 after the `rounding`
+group was added (section 5). `--full` (675 cases) widens inputs and repeats;
 `--corpus` adds a private corpus; `--allow-clustal-version` accepts CLUSTAL output whose only
 difference is the version on line 1 (off by default).
 
-## 3. CI (written, not enabled)
+## 3. CI
 
 `.github/workflows/exact.yml`: harness unit tests, then `verify-against-stock.sh` (fast) for
 gcc scalar `-O3`; gcc AVX2 (`-march=haswell -ffp-contract=off`, so AVX-512 runners still
@@ -85,8 +86,16 @@ take the AVX2 paths); the clang FMA class (`x86-64-v3`, candidate `-DMAFFT_STOCK
 ASan+UBSan (`STRIP=true`; sanitizer errors set exit codes 86/87 so they are compared with
 stock, leak checks off because stock MAFFT does not free everything at exit); a threaded job
 (full-mode ordered, jitter and forced-fallback L-INS-i); and a non-blocking arm64 NEON job on
-`ubuntu-24.04-arm`. Stock builds are cached by compiler, version and flags. None of this has
-run on GitHub yet.
+`ubuntu-24.04-arm`. Stock builds are cached by compiler, version and flags.
+
+It first ran on GitHub, with the owner's approval, when `audit-fixes` was pushed (run
+40107264417): every job passed except ASan+UBSan, which stopped in its cache step because
+cache keys may not contain commas (`-fsanitize=address,undefined` was part of the key). With
+the flags hashed into the key, run 40108614898 passed all seven jobs: harness tests; gcc scalar,
+gcc AVX2, clang FMA class, ASan+UBSan and gcc arm64 NEON 163/163 each; the threaded job
+119/119. arm64 was then made blocking. A review of the PR (#3) found that the cached stock
+installation kept the launcher of its original work directory, which a later job would not
+have; stock is now built directly into its cache prefix.
 
 ## 4. Concurrency audit of ordered refinement (dikarya5)
 
@@ -128,7 +137,7 @@ forced-fallback runs) are byte-identical to stock `--thread 1` built with gcc `-
 
 | Object | Argument |
 | --- | --- |
-| `ordered_turn` / `commit_turn` | the wait loop rechecks `ndone == mypos || orderedabort` under the mutex; `ndone` changes and the broadcast happen under the same mutex, so a wake-up cannot be lost. |
+| `ordered_turn` / `commit_turn` | the wait loop rechecks `ndone == mypos` or `orderedabort` under the mutex; `ndone` changes and the broadcast happen under the same mutex, so a wake-up cannot be lost. |
 | `ordered_abort` | called only by the turn holder before `ndone++`; sets `orderedabort`, `collecting = -1`, broadcasts `commit_turn` and `collection_end`, signals `collection_start`. Every wait (`commit_turn`; the coordinator's `ndone < nbranch && !orderedabort`; the workers' `collecting > 0`) rechecks the abort flag, so no thread sleeps through it. Because only the turn holder aborts, an abort cannot fall between two generations, and the coordinator's reset of `collecting` from 1 to 0 cannot overwrite −1. |
 | one-worker rerun | restores `bseq` from `orderedinput`, runs `nwa = 2` with fresh per-thread (TLS, calloc'd) scratch, as stock `--thread 1` does with its single fresh worker; `finish`, `ntry`, gain and `tscore` lists are reset and stale `tscorehistory_detail` entries are overwritten before they are read. |
 | `omemo` | `stamp`, `score`, `epoch`, `checked_epoch`, `verified` are read and written only under `targ->mutex`; writes happen while holding the commit turn (tditeration.c:1554–1565, 1482–1490). |

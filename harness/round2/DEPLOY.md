@@ -177,8 +177,10 @@ only stdout change, the CLUSTAL header (`v7.526` instead of `7.526-opt8`), affec
    `python3 harness/round2/build.py --source "$src" --output round2/opt9-build --jobs 1`
    (GCC, `-O3 -march=native -ffp-contract=off -g`, the dikarya5 bundle's flags).
 3. **Check against stock.** `harness/verify-against-stock.sh --full --cflags "-O3 -march=native
-   -ffp-contract=off"` (675 cases), then the 100-input corpus through the bundle with
-   `--thread 1` and `--thread 2` against `bench/golden/production-t1`, as for dikarya5
+   -ffp-contract=off"` (675 cases), then the 100-input corpus through the bundle against
+   `bench/golden/production-t1`: every input with `--thread 1` and with
+   `--thread 2 --threadit 1`, and plain `--thread 2` only on the L-INS-i inputs (FFT-NS-i keeps
+   stock two-thread refinement, as in the validation table above), as for dikarya5
    ([round-3 evidence](../../paper/round3-ordered-refinement.md#evidence)).
 4. **Pin the script.** In `deploy.py`, set `SOURCE_COMMIT`, `VERSION`
    (`v7.526-opt9 (…)`), `BUILD_SHA`, `INSTALL_SHA` and `RELEASE_NAME` from the new bundle's

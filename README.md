@@ -17,7 +17,8 @@ output are unaffected; only how fast the result arrives changes. On the 100-inpu
 dikarya4 (by OpenAI Codex) is **1.45x faster than opt8** with `--thread 1`; on 56 later production inputs it
 used **9.6x less CPU than stock MAFFT 7.526**, with all 56 outputs byte-identical to stock's.
 dikarya5 adds ordered refinement, which gives DNA L-INS-i runs with `--thread 2` the
-`--thread 1` alignment at **1.50x lower latency** than `--thread 1` (same 56 inputs). dikarya4
+`--thread 1` alignment **1.50x faster** than `--thread 1` (33% lower latency; same 56
+inputs). dikarya4
 was deployed to Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; this branch is the
 unreleased `7.526-opt9` (audit fixes and verification, no new speedup;
 [changelog](CHANGELOG.md)).
@@ -112,7 +113,7 @@ and flags.
 | `--thread N`, DNA L-INS-i, G-INS-i or E-INS-i (`--localpair`, `--globalpair`, `--genafpair` with `--maxiterate`), in the ordered scope | stock **`--thread 1`** | yes |
 | `--thread N`, other iterative refinement (FFT-NS-i, protein, RNA, the options below) | stock's own multi-threaded refinement | no, as in stock |
 | `--thread N`, no iterative refinement (e.g. FFT-NS-2) | stock's with the same threads; round 2 checked 72 non-iterative two-thread comparisons against opt8 | as in stock |
-| Metal or CUDA build | the same build without the GPU (733,956 GPU alignments = CPU on the opt8 g6 test) | as above |
+| Metal or CUDA build | not rechecked for opt9; for opt8, the same build without the GPU (733,956 GPU alignments = CPU on the g6 test) | as above |
 
 The ordered scope is decided at run time by `refinement_attempt_reproducible()` in
 `core/tditeration.c`; stderr says `Ordered refinement: N workers commit in one-worker order.`

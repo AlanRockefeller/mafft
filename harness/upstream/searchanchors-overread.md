@@ -3,7 +3,8 @@
 Not fixed in this fork: `searchAnchors()` is byte-identical to stock 0a2319b,
 and the fork keeps stock behaviour. In `harness/exact/matrix.py` ASan runs,
 FFT-NS-i and NW-NS-i on `test/exact/tiny.fa` therefore exit with the ASan
-status in both builds and count as a matching rejection. Reproduced on
+status in both builds; the matrix counts that as stock parity but lists it separately as a
+matching sanitizer abort, not a clean run. Reproduced on
 2026-10-24 with stock 0a2319b built by gcc 13.3 (`-O1 -g
 -fsanitize=address,undefined -march=native -ffp-contract=off`). Not yet
 sent; the text below is ready to send upstream.
@@ -19,8 +20,9 @@ alignment is shorter than `divWinSize`
 
 ```sh
 cd core
-make CFLAGS="-O1 -g -fsanitize=address -fno-omit-frame-pointer" STRIP=true PREFIX=$HOME/mafft-asan
-make install CFLAGS="-O1 -g -fsanitize=address -fno-omit-frame-pointer" STRIP=true PREFIX=$HOME/mafft-asan
+FLAGS="-O1 -g -fno-omit-frame-pointer -march=native -ffp-contract=off -fsanitize=address,undefined"
+make CFLAGS="$FLAGS" STRIP=true PREFIX=$HOME/mafft-asan
+make install CFLAGS="$FLAGS" STRIP=true PREFIX=$HOME/mafft-asan
 printf '>t1\nA\n>t2\nAC\n>t3\nG\n>t4\nTT\n>t5\nACG\n>t6\nCA\n' > tiny.fa
 ASAN_OPTIONS=detect_leaks=0 $HOME/mafft-asan/bin/mafft --maxiterate 100 tiny.fa > /dev/null
 ```

@@ -15,7 +15,8 @@ Audit fixes and verification infrastructure; no new speedup. Details and evidenc
   stock. Through dikarya5 it said `7.526-opt8`, so that CLUSTAL files stayed identical to
   opt8's.
 - The `REJECT_MEMO hits=… misses=… unsafe=…` line, which every `--thread 1` refinement printed
-  on stderr, is printed only with `MAFFT_REJECT_MEMO_STATS` set.
+  on stderr, is printed only with `MAFFT_REJECT_MEMO_STATS` set to a value other than `0`,
+  `off`, `false` or `no` (for example `1`).
 - `MAFFT_ORDERED_REFINE` accepts `0`, `off`, `false` and `no` in any case; only `0` worked.
 - clang on x86-64 with FMA stops with `#error` unless `-DMAFFT_STOCK_FMA` says which rounding
   class the stock reference is (a guess silently differed from stock).
