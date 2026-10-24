@@ -133,6 +133,23 @@ static void part_imp_match_out_vead_gapmap( double *imp, int i1, int lgth2, int 
 		__m512d g = _mm512_i32gather_pd( _mm256_loadu_si256( (__m256i *)( gapmap2 + j ) ), row, 8 );
 		_mm512_storeu_pd( imp + j, _mm512_add_pd( _mm512_loadu_pd( imp + j ), g ) );
 	}
+#elif defined(MAFFT_AVX2)
+	/* Where gapmap2 maps 4 consecutive j to 4 consecutive columns, one vector load of the row;
+	   otherwise an AVX2 gather.  The same single add for every element. */
+	{
+		const __m128i step = _mm_setr_epi32( 0, 1, 2, 3 );
+		for( ; j+4<=b; j+=4 )
+		{
+			__m128i idx = _mm_loadu_si128( (const __m128i *)( gapmap2 + j ) );
+			int g0 = gapmap2[j];
+			__m256d g;
+			if( _mm_movemask_epi8( _mm_cmpeq_epi32( idx, _mm_add_epi32( _mm_set1_epi32( g0 ), step ) ) ) == 0xffff )
+				g = _mm256_loadu_pd( row + g0 );
+			else
+				g = _mm256_i32gather_pd( row, idx, 8 );
+			_mm256_storeu_pd( imp + j, _mm256_add_pd( _mm256_loadu_pd( imp + j ), g ) );
+		}
+	}
 #elif defined(MAFFT_A64)
 	/* No gather on NEON: where gapmap2 maps 4 consecutive j to 4 consecutive columns (most of the
 	   time), two vector loads; otherwise the scalar adds.  The same add for every element. */
