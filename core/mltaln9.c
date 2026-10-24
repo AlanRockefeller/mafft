@@ -884,6 +884,11 @@ static int igs_pairscores_x( char **seq1, char **seq2, int clus1, int clus2, int
 	rare1 = malloc( sizeof( igsx_rare ) * ( maxrare + 1 ) );
 	rare2 = malloc( sizeof( igsx_rare ) * ( maxrare + 1 ) );
 	cs = malloc( sizeof( long long ) * clus1 * clus2 );
+	if( !gap || !pl || !runbuf || !nrun || !rare1 || !rare2 || !cs )
+	{
+		free( gap ); free( pl ); free( runbuf ); free( nrun ); free( rare1 ); free( rare2 ); free( cs );
+		return( 0 );
+	}
 	nr1 = nr2 = 0;
 	for( i=0; i<clus1 && nr1>=0; i++ )
 		nr1 = igsx_row( (unsigned char *)seq1[i], len, nw8, gap + (size_t)i * nw8, pl + (size_t)i * nw8 * IGSX_NC, com1, nc1, rare1, nr1, maxrare, i );
@@ -1024,6 +1029,7 @@ static int igs_pairscores( char **seq1, char **seq2, int clus1, int clus2, int l
 		/* amino_dis_consweight_multi may be only 0x80 x 0x80 (charsize); use 7-bit characters only. */
 		if( !dz ) dz = calloc( 0x10000, sizeof( double ) );
 		if( !dzi ) dzi = calloc( 0x4000, sizeof( int ) );
+		if( !dz || !dzi ) { tabsrc = NULL; return( 0 ); } /* out of memory: retried next call */
 		integral = 1;
 		dzmax = 0;
 		for( i=0; i<0x80 && integral; i++ ) for( j=0; j<0x80; j++ )
@@ -1050,6 +1056,7 @@ static int igs_pairscores( char **seq1, char **seq2, int clus1, int clus2, int l
 	runbuf = malloc( sizeof( igs_run ) * rstride * ( clus1 + clus2 ) );
 	nxt1 = malloc( sizeof( int * ) * clus1 ); run1 = malloc( sizeof( igs_run * ) * clus1 ); nrun1 = malloc( sizeof( int ) * clus1 );
 	nxt2 = malloc( sizeof( int * ) * clus2 ); run2 = malloc( sizeof( igs_run * ) * clus2 ); nrun2 = malloc( sizeof( int ) * clus2 );
+	if( !nxtbuf || !runbuf || !nxt1 || !run1 || !nrun1 || !nxt2 || !run2 || !nrun2 ) ok = 0;
 	for( i=0; i<clus1 && ok; i++ )
 	{
 		nxt1[i] = nxtbuf + stride * i; run1[i] = runbuf + rstride * i;
@@ -1073,8 +1080,8 @@ static int igs_pairscores( char **seq1, char **seq2, int clus1, int clus2, int l
 #endif
 	if( !colsum && (double)dzmax * len < 1.0e9 )
 	{
-		colsum = malloc( sizeof( double ) * clus1 * clus2 );
-		for( i=0; i<clus1; i++ )
+		colsum = malloc( sizeof( double ) * clus1 * clus2 ); /* NULL: summed per pair below */
+		for( i=0; colsum && i<clus1; i++ )
 		{
 			unsigned char *m1 = (unsigned char *)seq1[i];
 			for( j=0; j<clus2; j++ )
@@ -1234,19 +1241,22 @@ void igs_cache_free( void *cv )
 	free( c );
 }
 
-static void igs_cache_sync( struct igs_cache *c, int id, char *row )
+/* 0 if out of memory: the row is left unseen (version 0) and the caller scores uncached. */
+static int igs_cache_sync( struct igs_cache *c, int id, char *row )
 {
 	size_t l;
-	if( c->ver[id] && !strcmp( c->snap[id], row ) ) return;
+	if( c->ver[id] && !strcmp( c->snap[id], row ) ) return( 1 );
 	l = strlen( row ) + 1;
 	if( c->snapcap[id] < l )
 	{
 		free( c->snap[id] );
 		c->snap[id] = malloc( l );
-		c->snapcap[id] = l;
+		c->snapcap[id] = c->snap[id] ? l : 0;
+		if( !c->snap[id] ) { c->ver[id] = 0; return( 0 ); }
 	}
 	memcpy( c->snap[id], row, l );
 	c->ver[id] = c->nextver++;
+	return( 1 );
 }
 
 /* intergroup_score() for seq1[i] = row id1[i], seq2[j] = row id2[j] of one alignment. */
@@ -1274,8 +1284,8 @@ void intergroup_score_cached( void *cv, int *id1, int *id2, char **seq1, char **
 	}
 	for( i=0; i<clus1; i++ ) if( id1[i] < 0 || id1[i] >= n ) goto fallback;
 	for( j=0; j<clus2; j++ ) if( id2[j] < 0 || id2[j] >= n ) goto fallback;
-	for( i=0; i<clus1; i++ ) igs_cache_sync( c, id1[i], seq1[i] );
-	for( j=0; j<clus2; j++ ) igs_cache_sync( c, id2[j], seq2[j] );
+	for( i=0; i<clus1; i++ ) if( !igs_cache_sync( c, id1[i], seq1[i] ) ) goto fallback;
+	for( j=0; j<clus2; j++ ) if( !igs_cache_sync( c, id2[j], seq2[j] ) ) goto fallback;
 
 	pairscore = malloc( sizeof( double ) * clus1 * clus2 );
 	missrow = calloc( clus1, sizeof( int ) );
@@ -11550,6 +11560,7 @@ void commongappick_record( int nseq, char **seq, int *map )
 
 	/* Same result as the column-major original, but walks each row contiguously. */
 	keep = calloc( len+1, 1 );
+	if( !keep ) ErrorExit( "Cannot allocate memory." );
 	keep[len] = 1; /* the terminating NUL is never '-' */
 	for( j=0; j<nseq; j++ )
 	{
@@ -11562,6 +11573,7 @@ void commongappick_record( int nseq, char **seq, int *map )
 	if( count < len + 1 )
 	{
 		int *rs = malloc( sizeof( int ) * ( count + 1 ) ), *rl = malloc( sizeof( int ) * ( count + 1 ) ), nr = 0, r;
+		if( !rs || !rl ) ErrorExit( "Cannot allocate memory." );
 		for( i=0; i<count; i++ )
 		{
 			if( nr && map[i] == rs[nr-1] + rl[nr-1] ) rl[nr-1]++;
@@ -13557,6 +13569,7 @@ static int *gapruns_buf( int len )
 		free( buf );
 		size = len + 2;
 		buf = malloc( sizeof( int ) * 2 * size );
+		if( !buf ) ErrorExit( "Cannot allocate memory." );
 	}
 	return( buf );
 }
@@ -16721,6 +16734,7 @@ static int fillimp_banded( double **impmtx, double *base, size_t stride, int clu
 	seg = malloc( sizeof( fillimp_seg ) * nseg );
 	bstart = calloc( nband + 1, sizeof( int ) );
 	bfill = malloc( sizeof( int ) * ( nband + 1 ) );
+	if( !seg || !bstart || !bfill ) { free( seg ); free( bstart ); free( bfill ); return( 0 ); } /* nothing written yet */
 	k = 0;
 	for( i=0; i<clus1; i++ )
 	{
@@ -16748,6 +16762,7 @@ static int fillimp_banded( double **impmtx, double *base, size_t stride, int clu
 	for( b=0; b<nband; b++ ) bstart[b+1] += bstart[b];
 	nlist = bstart[nband];
 	blist = malloc( sizeof( int ) * ( nlist + 1 ) );
+	if( !blist ) { free( seg ); free( bstart ); free( bfill ); return( 0 ); }
 	memcpy( bfill, bstart, sizeof( int ) * ( nband + 1 ) );
 	for( k=0; k<nseg; k++ )
 		for( b = seg[k].p1[0] / FILLIMP_BAND; b <= seg[k].p1[seg[k].n-1] / FILLIMP_BAND; b++ ) blist[bfill[b]++] = k;
@@ -16845,8 +16860,9 @@ void fillimp_track( double **impmtx, double *imp, int clus1, int clus2, int lgth
 	map2 = malloc( clus2 * sizeof( int * ) );
 	nres1 = malloc( clus1 * sizeof( int ) );
 	nres2 = malloc( clus2 * sizeof( int ) );
-	for( i=0; i<clus1; i++ ) { map1[i] = malloc( ( lgth1 + 1 ) * sizeof( int ) ); nres1[i] = makeresmap( seq1[i], map1[i] ); }
-	for( j=0; j<clus2; j++ ) { map2[j] = malloc( ( lgth2 + 1 ) * sizeof( int ) ); nres2[j] = makeresmap( seq2[j], map2[j] ); }
+	if( !map1 || !map2 || !nres1 || !nres2 ) ErrorExit( "Cannot allocate memory." );
+	for( i=0; i<clus1; i++ ) { map1[i] = malloc( ( lgth1 + 1 ) * sizeof( int ) ); if( !map1[i] ) ErrorExit( "Cannot allocate memory." ); nres1[i] = makeresmap( seq1[i], map1[i] ); }
+	for( j=0; j<clus2; j++ ) { map2[j] = malloc( ( lgth2 + 1 ) * sizeof( int ) ); if( !map2[j] ) ErrorExit( "Cannot allocate memory." ); nres2[j] = makeresmap( seq2[j], map2[j] ); }
 
 #if FILLIMP_BAND > 0
 	if( fillimp_banded( impmtx, fi_base, fi_stride, clus1, clus2, lgth1, eff1, eff2, eff1_kozo, eff2_kozo, effijx, localhom, swaplist, orinum1, orinum2, rowlo, rowhi, map1, map2, nres1, nres2 ) )
@@ -17559,6 +17575,7 @@ void scarr_fill( double *scarr, double **mtx, double **cpmx1, int i1 )
 		nzalloc = nalphabets;
 		nzj = malloc( sizeof( int ) * nzalloc );
 		nzc = malloc( sizeof( double ) * nzalloc );
+		if( !nzj || !nzc ) ErrorExit( "Cannot allocate the profile score buffers." );
 	}
 	for( j=0; j<nalphabets; j++ ) if( cpmx1[j][i1] != 0.0 ) { nzj[nz] = j; nzc[nz] = cpmx1[j][i1]; nz++; }
 #if defined(MAFFT_AVX512)

@@ -211,6 +211,7 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 		free( improwlo ); free( improwhi );
 		improwlo = malloc( sizeof( int ) * impalloclen );
 		improwhi = malloc( sizeof( int ) * impalloclen );
+		if( !improwlo || !improwhi ) ErrorExit( "Cannot allocate memory." );
 		impclean = 0;
 	}
 
@@ -400,6 +401,7 @@ static void mcx_build( double **cpmx2, int lgth2, unsigned int *colm )
 	free( mcx_K ); free( mcx_off );
 	mcx_K = malloc( mcx_nblk + 1 );
 	mcx_off = malloc( sizeof( int ) * ( mcx_nblk + 1 ) );
+	if( !mcx_K || !mcx_off ) { free( mcx_K ); free( mcx_off ); mcx_K = NULL; mcx_off = NULL; return; } /* mcx_ok = 0: mc_match's grouped loop */
 	for( b=0; b<mcx_nblk; b++ )
 	{
 		int kb = 0;
@@ -411,6 +413,12 @@ static void mcx_build( double **cpmx2, int lgth2, unsigned int *colm )
 		free( mcx_let ); free( mcx_msk ); free( mcx_val );
 		mcx_cap = (size_t)nlev + 1;
 		mcx_let = malloc( 8 * mcx_cap ); mcx_msk = malloc( mcx_cap ); mcx_val = malloc( sizeof( double ) * 8 * mcx_cap );
+		if( !mcx_let || !mcx_msk || !mcx_val )
+		{
+			free( mcx_let ); free( mcx_msk ); free( mcx_val );
+			mcx_let = mcx_msk = NULL; mcx_val = NULL; mcx_cap = 0;
+			return;
+		}
 	}
 	memset( mcx_let, 0, 8 * (size_t)nlev ); memset( mcx_msk, 0, nlev );
 	for( b=0; b<mcx_nblk; b++ ) for( c=0; c<8; c++ )
@@ -468,6 +476,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 #endif
 
 	mc_ready = 0;
+	fill = NULL;
 	if( mc_alloc < lgth2 + 2 )
 	{
 		free( mc_perm ); free( mc_gstart ); free( mc_gcnt ); free( mc_goff ); free( mc_vstart ); free( mc_glet ); free( mc_val );
@@ -478,6 +487,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 		mc_goff = malloc( sizeof( int ) * mc_alloc );
 		mc_vstart = malloc( sizeof( int ) * mc_alloc );
 		mc_glet = NULL; mc_val = NULL;
+		if( !mc_perm || !mc_gstart || !mc_gcnt || !mc_goff || !mc_vstart ) { key = colgrp = keyoff = keycnt = tab = NULL; hash = NULL; goto nomem; }
 	}
 	key = malloc( sizeof( int ) * ( lgth2 * nalphabets + 1 ) );
 	colgrp = malloc( sizeof( int ) * ( lgth2 + 1 ) );
@@ -486,10 +496,11 @@ static void mc_build( double **cpmx2, int lgth2 )
 	hash = malloc( sizeof( unsigned long long ) * ( lgth2 + 1 ) );
 	for( tabsize=64; tabsize < 2*lgth2+2; tabsize*=2 ) ;
 	tab = malloc( sizeof( int ) * tabsize );
+	if( !key || !colgrp || !keyoff || !keycnt || !hash || !tab ) goto nomem;
 	for( k=0; k<tabsize; k++ ) tab[k] = -1;
 
 #if defined(MAFFT_AVX512)
-	if( nalphabets <= 32 ) { colm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ); cpmx_colmask( cpmx2, nalphabets, lgth2, colm ); }
+	if( nalphabets <= 32 ) { colm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ); if( colm ) cpmx_colmask( cpmx2, nalphabets, lgth2, colm ); }
 #endif
 	for( j=0; j<lgth2; j++ )
 	{
@@ -527,10 +538,12 @@ static void mc_build( double **cpmx2, int lgth2 )
 	for( j=0; j<lgth2; j++ ) mc_gstart[colgrp[j]+1]++;
 	for( g=0; g<nkey; g++ ) mc_gstart[g+1] += mc_gstart[g];
 	fill = malloc( sizeof( int ) * ( nkey + 1 ) );
+	if( !fill ) goto nomem;
 	for( g=0; g<nkey; g++ ) fill[g] = mc_gstart[g];
 	for( j=0; j<lgth2; j++ ) mc_perm[fill[colgrp[j]]++] = j;
 	free( mc_glet );
 	mc_glet = malloc( sizeof( int ) * ( keylen + 1 ) );
+	if( !mc_glet ) goto nomem;
 	n = 0;
 	for( g=0; g<nkey; g++ )
 	{
@@ -543,6 +556,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 	}
 	free( mc_val );
 	mc_val = malloc( sizeof( double ) * ( n + 1 ) );
+	if( !mc_val ) goto nomem;
 	for( g=0; g<nkey; g++ )
 	{
 		int gs = mc_gstart[g], gsize = mc_gstart[g+1] - gs;
@@ -560,6 +574,15 @@ static void mc_build( double **cpmx2, int lgth2 )
 #endif
 	mc_len = lgth2;
 	mc_ready = 1;
+	return;
+nomem: /* out of memory: mc_ready stays 0 and match_calc takes the original loop */
+	free( key ); free( colgrp ); free( keyoff ); free( keycnt ); free( hash ); free( tab ); free( fill );
+#if defined(MAFFT_AVX512)
+	free( colm );
+#endif
+	free( mc_perm ); free( mc_gstart ); free( mc_gcnt ); free( mc_goff ); free( mc_vstart ); free( mc_glet ); free( mc_val );
+	mc_perm = mc_gstart = mc_gcnt = mc_goff = mc_vstart = mc_glet = NULL; mc_val = NULL;
+	mc_alloc = 0;
 }
 
 #ifndef MAFFT_AVX2_MCMATCH
@@ -591,7 +614,11 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 	int g, k, n;
 	double *scarr;
 	static TLS int scalloc = 0;
-	if( scalloc < nalphabets ) { free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc ); }
+	if( scalloc < nalphabets )
+	{
+		free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc );
+		if( !mc_scarr ) ErrorExit( "Cannot allocate memory." );
+	}
 	scarr = mc_scarr;
 	scarr_fill( scarr, n_dis_consweight_multi, cpmx1, i1 );
 #if defined(MAFFT_AVX512)
@@ -738,6 +765,7 @@ static void match_calc( double *match, double **cpmx1, double **cpmx2, int i1, i
 		if( nalphabets <= 32 )
 		{
 			unsigned int *cm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ), m;
+			if( !cm ) ErrorExit( "Cannot allocate memory." );
 			cpmx_colmask( cpmx2, nalphabets, lgth2, cm );
 			for( j=0; j<lgth2; j++ )
 			{
@@ -987,6 +1015,7 @@ static void at_expand( char **seq, char **mseq, int n, int *col, int ncol, int c
 	int nw = ( ncol + 63 ) / 64, w;
 	unsigned long long *m = malloc( sizeof( unsigned long long ) * ( nw + 1 ) );
 	const __m512i vgap = _mm512_set1_epi8( gapc );
+	if( !m ) ErrorExit( "Cannot allocate memory." );
 	for( w=0; w<nw; w++ )
 	{
 		unsigned long long mm = 0;
@@ -1090,6 +1119,7 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 	   across all sequences, without touching icyc+jcyc cache lines per column. */
 	col1 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
 	col2 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
+	if( !col1 || !col2 ) ErrorExit( "Cannot allocate memory." );
 	cp = lgth1+lgth2;
 	iin = lgth1; jin = lgth2;
 	*impwmpt = 0.0;
@@ -2013,6 +2043,7 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 		rowalloc = lgth2+2;
 		rowMI = malloc( sizeof( double ) * rowalloc );
 		rowMPI = malloc( sizeof( int ) * rowalloc );
+		if( !rowMI || !rowMPI ) ErrorExit( "Cannot allocate memory." );
 	}
 	lastj = lgth2+1;
 

@@ -1989,6 +1989,7 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 		A[(int)amino[a]][(int)amino[b]] = (double)n_dis_consweight_multi[a][b];
 	for( a=0; a<0x100; a++ ) if( used[a] ) code[a] = ncode++;
 	mtx = calloc( ( ncode+1 ) * ( ncode+1 ), sizeof( int ) );
+	if( !mtx ) { FreeDoubleMtx( A ); return; } /* out of memory: every pair on the CPU */
 	for( a=0; a<0x100; a++ ) if( used[a] ) for( b=0; b<0x100; b++ ) if( used[b] )
 	{
 		v = A[a][b];
@@ -1999,9 +2000,10 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 	FreeDoubleMtx( A );
 
 	lens = malloc( sizeof( int ) * njob );
-	for( i=0; i<njob; i++ ) lens[i] = strlen( seq[i] );
 	pi = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
 	pj = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
+	if( !lens || !pi || !pj ) { free( pi ); free( pj ); free( lens ); free( mtx ); return; }
+	for( i=0; i<njob; i++ ) lens[i] = strlen( seq[i] );
 	for( i=0; i<njob-1; i++ ) for( j=i+1; j<njob; j++ )
 	{
 		if( !lens[i] || !lens[j] ) continue;

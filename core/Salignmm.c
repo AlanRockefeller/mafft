@@ -329,6 +329,7 @@ static void match_calc( double **n_dynamicmtx, double *match, double **cpmx1, do
 		if( nalphabets <= 32 )
 		{
 			unsigned int *cm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ), m;
+			if( !cm ) ErrorExit( "Cannot allocate memory." );
 			cpmx_colmask( cpmx2, nalphabets, lgth2, cm );
 			for( j=0; j<lgth2; j++ )
 			{
@@ -2052,6 +2053,7 @@ double A__align( double **n_dynamicmtx, int penalty_l, int penalty_ex_l, char **
 		rowalloc = lgth2+2;
 		rowMI = malloc( sizeof( double ) * rowalloc );
 		rowMPI = malloc( sizeof( int ) * rowalloc );
+		if( !rowMI || !rowMPI ) ErrorExit( "Cannot allocate memory." );
 	}
 	lastj = lgth2+1;
 

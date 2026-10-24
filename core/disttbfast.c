@@ -1262,18 +1262,21 @@ static int allpairs_naivescore_dist( int njob, char **seq, int *selfscore, int p
 	single = ( maxabs * len < 8.0e6 );
 
 	/* per sequence: cnt[k] = residues in columns [0,k); gap stretches as (start,end) pairs */
-	cnt = malloc( sizeof( int * ) * njob );
-	stretch = malloc( sizeof( int * ) * njob );
+	cnt = calloc( njob, sizeof( int * ) );
+	stretch = calloc( njob, sizeof( int * ) );
 	nstretch = malloc( sizeof( int ) * njob );
+	if( !cnt || !stretch || !nstretch ) goto nomem;
 	for( i=0; i<njob; i++ )
 	{
 		char *s = seq[i];
 		int n = 0, c = 0;
 		cnt[i] = malloc( sizeof( int ) * ( len + 1 ) );
+		if( !cnt[i] ) goto nomem;
 		for( k=0; k<len; k++ ) { cnt[i][k] = c; if( s[k] != '-' ) c++; }
 		cnt[i][len] = c;
 		for( k=0; k<len; k++ ) if( s[k] == '-' && ( k == 0 || s[k-1] != '-' ) ) n++;
 		stretch[i] = malloc( sizeof( int ) * ( 2 * n + 1 ) );
+		if( !stretch[i] ) goto nomem;
 		n = 0;
 		for( k=0; k<len; k++ ) if( s[k] == '-' )
 		{
@@ -1297,6 +1300,11 @@ static int allpairs_naivescore_dist( int njob, char **seq, int *selfscore, int p
 		Cd = malloc( sizeof( double ) * tile * tile );
 		if( single ) { Xf = malloc( sizeof( float ) * tile * kdim ); Yf = malloc( sizeof( float ) * tile * kdim ); Cf = malloc( sizeof( float ) * tile * tile ); }
 		else         { Xd = malloc( sizeof( double ) * tile * kdim ); Yd = malloc( sizeof( double ) * tile * kdim ); }
+		if( !Cd || ( single ? ( !Xf || !Yf || !Cf ) : ( !Xd || !Yd ) ) )
+		{
+			free( Xf ); free( Yf ); free( Cf ); free( Xd ); free( Yd ); free( Cd );
+			goto nomem;
+		}
 		for( i0=0; i0<njob; i0+=tile )
 		{
 			bi = MIN( tile, njob - i0 );
@@ -1373,6 +1381,10 @@ static int allpairs_naivescore_dist( int njob, char **seq, int *selfscore, int p
 	for( i=0; i<njob; i++ ) { free( cnt[i] ); free( stretch[i] ); }
 	free( cnt ); free( stretch ); free( nstretch );
 	return( 1 );
+nomem: /* out of memory before any iscore was written: the original loop */
+	for( i=0; i<njob; i++ ) { if( cnt ) free( cnt[i] ); if( stretch ) free( stretch[i] ); }
+	free( cnt ); free( stretch ); free( nstretch );
+	return( 0 );
 #else
 	return( 0 );
 #endif

@@ -121,6 +121,7 @@ int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int n
 	{
 		/* sequence storage: codes and characters, one offset per sequence */
 		soff = malloc( sizeof( uint32_t ) * nseq );
+		if( !soff ) return( 0 ); /* out of memory: every pair on the CPU */
 		for( k=0; k<nseq; k++ ) { soff[k] = (uint32_t)total; total += lens[k] + 1; }
 		codesb = [dev newBufferWithLength:total+16 options:MTLResourceStorageModeShared];
 		charsb = [dev newBufferWithLength:total+16 options:MTLResourceStorageModeShared];
@@ -140,6 +141,7 @@ int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int n
 
 		/* pairs the kernel can take: 64 <= l2 <= 32*CMAX, traceback values fit in int16 */
 		job = malloc( sizeof( int ) * ( npairs + 1 ) );
+		if( !job ) { free( soff ); return( 0 ); }
 		for( p=0; p<npairs; p++ )
 		{
 			int l1 = lens[pi[p]], l2 = lens[pj[p]];
@@ -151,6 +153,7 @@ int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int n
 		/* batches are per kernel variant: order jobs by width class (stable) */
 		{
 			int *tmp = malloc( sizeof( int ) * ( njob + 1 ) ), m = 0, v2;
+			if( !tmp ) { free( soff ); free( job ); return( 0 ); }
 			for( v2=0; v2<(int)NCMAX; v2++ ) for( k=0; k<njob; k++ )
 			{
 				int c = ( lens[pj[job[k]]] + 31 ) / 32, vv;
@@ -185,8 +188,11 @@ int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int n
 							int len = ( pd[k].l1 + pd[k].l2 ) - r->start;
 							char *m1 = ob + pd[k].outoff + r->start;
 							char *m2 = ob + pd[k].outoff + ( pd[k].l1 + pd[k].l2 + 1 ) + r->start;
-							out[q].s1 = malloc( len + 1 ); memcpy( out[q].s1, m1, len + 1 );
-							out[q].s2 = malloc( len + 1 ); memcpy( out[q].s2, m2, len + 1 );
+							out[q].s1 = malloc( len + 1 );
+							out[q].s2 = malloc( len + 1 );
+							/* out of memory: leave the pair (status -1) to the CPU */
+							if( !out[q].s1 || !out[q].s2 ) { free( out[q].s1 ); free( out[q].s2 ); out[q].s1 = out[q].s2 = NULL; continue; }
+							memcpy( out[q].s1, m1, len + 1 ); memcpy( out[q].s2, m2, len + 1 );
 							out[q].status = 0;
 						}
 						else if( r->status == 1 ) { out[q].s1 = out[q].s2 = NULL; out[q].status = 1; }

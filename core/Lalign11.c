@@ -396,6 +396,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	for( c=0; c<0x100; c++ ) prof[c] = NULL;
 	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
 	profbuf = malloc( sizeof( int ) * nprof * LPROF_STRIDE );
+	if( profbuf == NULL ) return( 0 ); /* out of memory: the double-precision fill */
 	k = 0;
 	for( c=0; c<0x100; c++ ) if( used[c] )
 	{
@@ -417,8 +418,8 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	{
 		free( lr_raw );
 		lr_raw = malloc( sizeof( int ) * need );
-		if( lr_raw == NULL ) ErrorExit( "Cannot allocate the local alignment rows." );
-		lr_cap = need;
+		lr_cap = lr_raw ? need : 0;
+		if( lr_raw == NULL ) { free( profbuf ); return( 0 ); }
 	}
 #ifdef MAFFT_POISON_TEST
 	memset( lr_raw, 0xa5, sizeof( int ) * need );
@@ -435,6 +436,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	vm    = (int *)( ( (uintptr_t)( vmraw + 8 ) & ~(uintptr_t)31 ) );
 	/* kx[k] = k*ext, kp[k] = k*ext + ext + pen (horizontal gap scan offsets, read by the NEON loop) */
 	kx = malloc( sizeof( int ) * 2 * ( lgth2 + 8 ) );
+	if( kx == NULL ) { free( profbuf ); free( vmraw ); return( 0 ); }
 	kp = kx + lgth2 + 8;
 	for( k=0; k<lgth2+8; k++ ) { kx[k] = k * ext; kp[k] = k * ext + ext + pen; }
 #else
@@ -442,6 +444,14 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 #endif
 	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	wmrow = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	if( !vmraw || !hq || !wmrow )
+	{
+		free( profbuf ); free( vmraw ); free( hq ); free( wmrow );
+#if defined(MAFFT_A64)
+		free( kx );
+#endif
+		return( 0 );
+	}
 #ifdef MAFFT_POISON_TEST
 	memset( vmraw, 0xa5, sizeof( int ) * ( lgth2 + 16 ) ); memset( hq, 0xa5, sizeof( int ) * ( lgth2 + 4 ) ); memset( wmrow, 0xa5, sizeof( int ) * ( lgth2 + 4 ) );
 #endif
@@ -1060,6 +1070,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	for( c=0; c<0x100; c++ ) prof[c] = NULL;
 	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
 	profbuf = malloc( sizeof( int ) * nprof * ( lgth2 + 4 ) );
+	if( profbuf == NULL ) return( 0 ); /* out of memory: the double-precision fill */
 	k = 0;
 	for( c=0; c<0x100; c++ ) if( used[c] )
 	{
@@ -1078,6 +1089,11 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	hk    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	wmrow = malloc( sizeof( int ) * ( lgth2 + 4 ) );
+	if( !pbuf1 || !pbuf2 || !vm || !vmp || !hq || !hk || !wmrow )
+	{
+		free( profbuf ); free( pbuf1 ); free( pbuf2 ); free( vm ); free( vmp ); free( hq ); free( hk ); free( wmrow );
+		return( 0 );
+	}
 
 	/* row 0: currentw[j] = mtx[s1[0]][s2[j]];  m[j] = currentw[j-1], mp[j] = 0 */
 	for( j=0; j<lgth2; j++ ) cur[j] = prof[u1[0]][j];
