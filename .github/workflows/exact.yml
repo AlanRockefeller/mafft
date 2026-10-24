@@ -33,6 +33,7 @@ jobs:
           (cd harness/exact && for t in test_*.py; do python3 "$t"; done)
           (cd harness/round2 && for t in test_*.py; do python3 "$t"; done)
           python3 harness/exact/make_fixtures.py --check
+          python3 harness/exact/check_links.py
 
   verify:
     name: ${{ matrix.name }}
