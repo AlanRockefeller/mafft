@@ -125,6 +125,9 @@ def main():
                     ok = result["returncode"] == 0 and not result["timed_out"] and dest.stat().st_size > 0
                     if a.golden:
                         gold = a.golden / f"{a.mode}-t{a.threads}" / source.name
+                        if a.freeze and not ok:
+                            # never freeze a timed-out, failed or empty output as a golden
+                            raise SystemExit(f"failed: {argv}; nothing frozen; retained {dest}")
                         if a.freeze:
                             gold.parent.mkdir(parents=True, exist_ok=True)
                             with gold.open("xb") as f:
