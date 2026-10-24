@@ -1862,7 +1862,7 @@ int TreeDependentIteration( int locnjob, char **name, int nlen[M],
 		if( nwa > 2 && refinement_attempt_reproducible( njob, ntarget, nkozo ) )
 		{
 			char *env = getenv( "MAFFT_ORDERED_REFINE" );
-			ordered = !( env && !strcmp( env, "0" ) );
+			ordered = !( env && env_is_off( env ) );
 		}
 		if( ordered )
 		{

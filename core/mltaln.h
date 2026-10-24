@@ -45,7 +45,8 @@
 #endif
 /* Multi-worker refinement that commits attempts in branch order, so it computes
  * the one-worker alignment.  -DMAFFT_ORDERED_REFINE=0, or MAFFT_ORDERED_REFINE=0
- * in the environment, retains the original completion-order commits. */
+ * (or off, false, no, in any case) in the environment, retains the original
+ * completion-order commits. */
 #ifndef MAFFT_ORDERED_REFINE
 #define MAFFT_ORDERED_REFINE 1
 #endif
