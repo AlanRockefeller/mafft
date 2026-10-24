@@ -50,9 +50,9 @@
 #define MAFFT_ORDERED_REFINE 1
 #endif
 #define MAFFT_FALIGN_SAFETY ( MAFFT_REJECT_MEMO || MAFFT_ORDERED_REFINE )
-/* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout. Preserve
-   the designated opt8 reference's header byte-for-byte across this speedup. */
-#define ALIGNMENT_VERSION "7.526-opt8"
+/* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout: keep
+   stock 7.526's header so --clustalout output is byte-identical to stock. */
+#define ALIGNMENT_VERSION "7.526"
 #define SHOWVERSION reporterr( "%s (%s) Version " VERSION "\nalg=%c, model=%s, amax=%3.1f\n%d thread(s)\n\n", progName( argv[0] ), (dorp=='d')?"nuc":((nblosum==-2)?"text":"aa"), alg, modelname, specificityconsideration, nthread )
 
 #if defined(MAFFT_AVX512)
