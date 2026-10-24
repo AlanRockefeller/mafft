@@ -52,10 +52,11 @@ done
 mkdir -p "$work"
 echo "work directory: $work"
 
-# build NAME SOURCE-COMMAND CFLAGS: copy core/ and scripts/ into $work/src/NAME,
-# build and install into $work/inst/NAME (never a system prefix).
+# build NAME SOURCE-COMMAND CFLAGS [PREFIX]: copy core/ and scripts/ into $work/src/NAME,
+# build and install into PREFIX (default $work/inst/NAME; never a system prefix).  The
+# launcher embeds PREFIX, so an installation cannot be moved afterwards.
 build() {
-  local name=$1 kind=$2 flags=$3 src=$work/src/$1 prefix=$work/inst/$1
+  local name=$1 kind=$2 flags=$3 src=$work/src/$1 prefix=${4:-$work/inst/$1}
   rm -rf "$src" "$prefix"
   mkdir -p "$src/binaries" "$src/scripts"
   if [ "$kind" = stock ]; then
@@ -79,15 +80,14 @@ if [ -n "${MAFFT_STOCK_CACHE:-}" ]; then
           sha256sum | cut -c1-16)
   stock_prefix=$MAFFT_STOCK_CACHE/stock-$tag
 fi
-if [ -x "$stock_prefix/bin/mafft" ]; then
+# A cached stock build is installed at its final path (the launcher embeds it) and is used
+# only once .complete exists, so an interrupted build is rebuilt rather than reused.
+if [ -x "$stock_prefix/bin/mafft" ] && [ -e "$stock_prefix/.complete" ]; then
   echo "using cached stock build $stock_prefix"
 else
-  build stock stock "$stock_flags"
-  if [ "$stock_prefix" != "$work/inst/stock" ]; then
-    mkdir -p "$(dirname "$stock_prefix")"
-    rm -rf "$stock_prefix.tmp"
-    cp -a "$work/inst/stock" "$stock_prefix.tmp" && mv "$stock_prefix.tmp" "$stock_prefix"
-  fi
+  mkdir -p "$(dirname "$stock_prefix")"
+  build stock stock "$stock_flags" "$stock_prefix"
+  touch "$stock_prefix/.complete"
 fi
 build candidate tree "$cand_flags"
 test_args=()
