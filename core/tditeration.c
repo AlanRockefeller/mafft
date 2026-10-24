@@ -9,6 +9,24 @@
 #include "mltaln.h"
 #include <stdint.h>
 
+/* Runtime switches: 0, off, false or no (any case) means off. */
+static int env_is_off( const char *s )
+{
+	static const char *const off[] = { "0", "off", "false", "no" };
+	int i, j;
+	for( i=0; i<4; i++ )
+	{
+		for( j=0; s[j] && off[i][j] && tolower( (unsigned char)s[j] ) == off[i][j]; j++ ) ;
+		if( !s[j] && !off[i][j] ) return( 1 );
+	}
+	return( 0 );
+}
+static int env_is_on( const char *name )
+{
+	const char *s = getenv( name );
+	return( s && *s && !env_is_off( s ) );
+}
+
 /* Reuse only verified terminal no-gain attempts; see the scoped proof in
  * paper/round2-refinement-reuse.md. The shared switch lives in mltaln.h.
  * Ordered multi-worker refinement relies on the same dependency argument. */
@@ -863,7 +881,10 @@ static void *athread( void *arg )
 			{
 				pthread_mutex_unlock( targ->mutex );
 #if MAFFT_REJECT_MEMO
-				if( memo_enabled ) fprintf( stderr, "\nREJECT_MEMO hits=%lu misses=%lu unsafe=%lu\n", memo_hits, memo_misses, memo_unsafe );
+				/* Counters for measurements only, on request; trace builds always
+				 * print them for harness/round2/refinement_semantics.py. */
+				if( memo_enabled && ( MAFFT_REJECT_MEMO_TRACE || env_is_on( "MAFFT_REJECT_MEMO_STATS" ) ) )
+					fprintf( stderr, "\nREJECT_MEMO hits=%lu misses=%lu unsafe=%lu\n", memo_hits, memo_misses, memo_unsafe );
 				free( memo_stamp ); free( memo_score );
 #endif
 				igs_cache_free( igscache );
