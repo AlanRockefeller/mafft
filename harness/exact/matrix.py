@@ -190,6 +190,19 @@ def clustal_header_only(cand, ref):
             and bool(CLUSTAL_HEADER.match(a)) and bool(CLUSTAL_HEADER.match(b)))
 
 
+# ASAN_OPTIONS=exitcode=86 and UBSAN_OPTIONS=exitcode=87 (verify-against-stock.sh, CI).
+SANITIZER_EXIT = (86, 87)
+
+
+def outcome(cand, ref):
+    """How a passing comparison passed: identical output, or both builds exiting alike."""
+    if cand['returncode'] == 0:
+        return 'identical'
+    if cand['returncode'] in SANITIZER_EXIT:
+        return 'matching sanitizer abort'
+    return 'matching rejection'
+
+
 def compare(cand, ref, allow_clustal_version=False):
     """Failure reason for a candidate run against its stock reference, or None."""
     for who, r in (('candidate', cand), ('stock', ref)):
@@ -311,18 +324,27 @@ def main():
             tally.add(category, name, reason, cached=got['cached'] and ref['cached'])
             results.append(dict(category=category, input=name, candidate=got['key'], stock=ref['key'],
                                 returncode=got['returncode'], failure=reason,
+                                outcome=None if reason else outcome(got, ref),
                                 candidate_cpu=got['cpu'], stock_cpu=ref['cpu'],
                                 candidate_wall=got['wall'], stock_wall=ref['wall']))
             print('%5d/%d %-36s %-22s %s' % (n, len(cases), category, name,
                                              'ok' if reason is None else 'FAIL ' + reason), flush=True)
     runner.manifest.close()
+    # Matching aborts are stock parity, not clean runs: listed apart so a summary never hides them.
+    aborts = ['%s %s' % (r['category'], r['input']) for r in results if r['outcome'] == 'matching sanitizer abort']
+    rejections = ['%s %s' % (r['category'], r['input']) for r in results if r['outcome'] == 'matching rejection']
     caserun.write_json(a.out / 'summary.json', dict(tally.as_dict(), mode='full' if a.full else 'fast',
+                                                     matching_sanitizer_aborts=aborts, matching_rejections=rejections,
                                                      allow_clustal_version=a.allow_clustal_version,
                                                      stock=stock, candidate=cand, test_build=test_build,
                                                      stock_sha256=runner.digest(stock),
                                                      candidate_sha256=runner.digest(cand)))
     caserun.write_json(a.out / 'comparisons.json', results)
     tally.report()
+    for title, group in (('matching rejections (same nonzero exit in both builds)', rejections),
+                         ('matching sanitizer aborts (stock parity, not a clean run)', aborts)):
+        if group:
+            print('%s: %d: %s' % (title, len(group), ', '.join(group)))
     return 1 if tally.failed else 0
 
 

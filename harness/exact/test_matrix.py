@@ -30,6 +30,15 @@ class CompareTests(unittest.TestCase):
             self.assertIn('cached output', matrix.compare(dict(a, invalid='cached output is missing'), a))
             self.assertEqual(matrix.compare(run(tmp, 'g', b''), run(tmp, 'h', b'')), 'both outputs empty')
 
+    def test_matching_aborts_are_told_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, rej, asan = run(tmp, 'a', b'>x\nAC\n'), run(tmp, 'b', b'', 1), run(tmp, 'c', b'', 86)
+            self.assertEqual(matrix.outcome(ok, ok), 'identical')
+            self.assertEqual(matrix.outcome(rej, rej), 'matching rejection')
+            self.assertIsNone(matrix.compare(asan, asan))
+            self.assertEqual(matrix.outcome(asan, asan), 'matching sanitizer abort')
+            self.assertEqual(matrix.compare(asan, rej), 'exit status 86, stock 1')
+
     def test_clustal_version_allowance_covers_line_one_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             body = b'\n\nx  AC\ny  A-\n'
