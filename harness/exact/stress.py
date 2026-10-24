@@ -100,6 +100,8 @@ def main():
             category, name = case[0], case[1]
             if ref is not None:
                 reason = matrix.compare(got, ref)
+            elif got.get('invalid'):
+                reason = got['invalid']   # a cached output that changed since it was recorded
             else:
                 reason = caserun.verdict(dict(got, launch_error=got['launch_error']), None)
                 if reason is None:
