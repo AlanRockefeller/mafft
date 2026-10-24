@@ -78,6 +78,11 @@
    bit-identical.  clang on arm64 contracts a*b+c into one fused (singly rounded) multiply-add;
    gcc with -std=c99 (the Makefile default) never contracts, and the x86-64 baseline has no FMA
    at all.  Override with -DMAFFT_STOCK_FMA=0/1 for a reference built differently. */
+/* clang also contracts on x86-64 when the target has FMA (-march=haswell, x86-64-v3 and later)
+   unless -ffp-contract=off, and no macro says which; a guess would differ from stock silently. */
+#if !defined(MAFFT_STOCK_FMA) && defined(__clang__) && defined(__x86_64__) && defined(__FMA__)
+#error "clang with FMA on x86-64: add -DMAFFT_STOCK_FMA=1 (stock built the same way contracts a*b+c), or -DMAFFT_STOCK_FMA=0 with -ffp-contract=off for both builds"
+#endif
 #ifndef MAFFT_STOCK_FMA
 #if defined(__aarch64__) && defined(__clang__)
 #define MAFFT_STOCK_FMA 1
