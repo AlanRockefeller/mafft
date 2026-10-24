@@ -188,3 +188,49 @@ for that reason.
 
 Not verified here: arm64 NEON (the CI job exists but has not run), Metal, CUDA, AVX-512
 (this CPU has none), and Windows/macOS builds.
+
+## 6. Code fixes (Phase 2)
+
+One commit per item; each commit message says how it was verified. Decisions by the owner:
+the CLUSTAL header prints stock's version (option a), and the release name is `opt9`.
+
+| Item | Commit | Change | Verified by |
+| --- | --- | --- | --- |
+| 2.1 CLUSTAL header | `2fb4604` | `ALIGNMENT_VERSION` is `"7.526"`; `--clustalout` is byte-identical to stock. Dikarya never uses `--clustalout` (0 of 13,441 pipeline logs). | `option clustalout` cases 2/2 (were 0/2) |
+| 2.2 `REJECT_MEMO` stderr line | `47e1d06` | printed only with `MAFFT_REJECT_MEMO_STATS` (not 0/off/false/no) or in `MAFFT_REJECT_MEMO_TRACE` builds, whose checker reads it | each value at `--thread 1`; stdout equals stock `--thread 1` |
+| 2.3 EUC-JP comment | `b4e6440` | `Lalign11.c` line restored from stock; no other tracked file has U+FFFD | byte comparison; identical `Lalign11.o` disassembly |
+| 2.4 unchecked allocations | `227ef8b` | every allocation added over stock checked; exact fallback where the function has one, else `ErrorExit` | fast matrix 163/163; `harness/exact/force_fallbacks.py`: 109/109 on three builds with each fallback forced on every call, every site hit |
+| 2.5 GPU precompute memory | `800f1ee` | skipped (all pairs on the CPU) when its host memory would exceed 256 MB | compiles with `-DMAFFT_CUDA`; GPU paths not run (no Apple or CUDA hardware) |
+| 2.6 dead AVX-512 block | `654a632` | unreachable `#elif defined(MAFFT_AVX512)` scan deleted; its exactness argument moved to the AVX2 scan | `objcheck.sh`: 0/65 objects differ (gcc native, icelake-server, x86-64; clang x86-64-v4) |
+| 2.7 `MAFFT_ORDERED_REFINE` values | `97480fe` | 0, off, false, no in any case | each value; stress switch-off 20/20 (was 5/20) |
+| 2.8 clang FMA footgun | `c7f129a` | `#error` for clang on x86-64 with FMA unless `-DMAFFT_STOCK_FMA` is given | both offered choices 163/163 against stock clang built the same way; no error for arm64 clang (syntax check), gcc, non-FMA x86 |
+| 2.9 version | `c005835` | `7.526-opt9`, launcher `v7.526-opt9 (2026/Oct/24)` | `check_version_stamps`; round-2 tests |
+| 2.10 upstream overread | `4a29e8e` | report only: `harness/upstream/searchanchors-overread.md` (not sent) | reproducer gives the quoted ASan trace on stock |
+
+The fallback paths of item 2.4 were tested by forcing them, not by exhausting memory: in a
+scratch copy, `force_fallbacks.py` makes each new allocation check always true and prints a
+marker, and the forced builds were run through the matrix against stock. Hits per site
+(markers in the 109 runs' stderr): `cprf` 7929, `dz` 11520, `fillimp` 6732 (with
+`-DMAFFT_FILLIMP_DIRECT_BYTES=0`; on Broadwell the banded walk otherwise starts at 16 MB),
+`igscache` 7173, `mcbuild` 18642, AVX2 `Lfill_int` 4725 and `igsx` 9705 (with
+`-DMAFFT_AVX2_STRIPED=0`, since the striped fill normally runs first), and on a scalar build
+the portable `Lfill_int` 4732 and `nxt` 18639. The Apple Accelerate distance path and the Metal
+and CUDA sources were neither compiled nor run here; the arm64 NEON `kx` check passed only a
+clang syntax check for an aarch64 target (borrowed x86 libc headers), not a build.
+
+## 7. Regression matrix after Phase 2
+
+Tree `4a29e8e` (all Phase 2 items), each run through `harness/verify-against-stock.sh` from a
+clean work directory: stock `0a2319b`, the candidate and its `-DMAFFT_ORDERED_TEST` build,
+all with the same compiler and flags (gcc 13.3), 2-vCPU VM at nice 19.
+
+| Run | Flags | Result |
+| --- | --- | --- |
+| full matrix | `-O3 -march=native -ffp-contract=off` (AVX2) | 675/675 (strategies 204, options 102, default threads 12, ordered `--thread 2/3/4` 63, jitter 189, forced fallback 105), 1 h 57 min |
+| fast matrix, ASan+UBSan | `-O1 -g -fno-omit-frame-pointer -march=native -ffp-contract=off -fsanitize=address,undefined`, `STRIP=true` | 163/163 |
+| fast matrix, scalar | `-O3` | 163/163 |
+| stress (`stress.py`, 10 repeats) | AVX2 jitter build of the full run | 318/318: repeats at `--thread 2/3/4` 150, `--thread 8` 10, forced fallbacks 138 (128 reruns taken), switch off 20 |
+
+Matching rejections in the ASan run are those of section 5 (FFT-NS-i and NW-NS-i on `one` and,
+under ASan only, on `tiny`). The clang FMA class and its `-ffp-contract=off` alternative were
+run at item 2.8 (163/163 each). arm64, Metal and CUDA remain unverified here.
