@@ -82,13 +82,13 @@ jobs:
             matrix_args: --full --only "^(ordered|jitter|unsafe-fallback) linsi"
             timeout: 180
             experimental: false
-          # NEON paths; non-blocking until it has passed once.
+          # NEON paths (first passed 163/163 in run 40107264417).
           - name: gcc arm64 NEON (-O3)
             runner: ubuntu-24.04-arm
             cc: gcc
             cflags: -O3
             timeout: 90
-            experimental: true
+            experimental: false
     env:
       MAFFT_STOCK_CACHE: ${{ github.workspace }}/.stock-cache
       # Stock MAFFT leaks by design; a sanitizer error must change the exit status
@@ -104,11 +104,13 @@ jobs:
           if [ "${{ matrix.cc }}" = clang ]; then sudo apt-get update && sudo apt-get install -y clang; fi
           ${{ matrix.cc }} --version | head -1
           echo "CC_VERSION=$(${{ matrix.cc }} --version | head -1 | sha256sum | cut -c1-12)" >> "$GITHUB_ENV"
+          # cache keys may not contain commas (-fsanitize=address,undefined): hash the flags
+          echo "FLAGS_KEY=$(printf '%s|%s' "${{ matrix.cflags }}" "${{ matrix.make_args }}" | sha256sum | cut -c1-16)" >> "$GITHUB_ENV"
       - name: Cache stock build
         uses: actions/cache@v4
         with:
           path: .stock-cache
-          key: stock-0a2319b-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cc }}-${{ env.CC_VERSION }}-${{ hashFiles('harness/verify-against-stock.sh') }}-${{ matrix.cflags }}-${{ matrix.make_args }}
+          key: stock-0a2319b-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cc }}-${{ env.CC_VERSION }}-${{ hashFiles('harness/verify-against-stock.sh') }}-${{ env.FLAGS_KEY }}
       - name: Verify against stock
         run: |
           full=""
