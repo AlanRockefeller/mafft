@@ -144,7 +144,7 @@ static int lres_vmp( int i, int j )
 }
 #endif
 
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 static int kb_ijv( int i, int j, int lstop );
 static int kb_isstop( int i, int j );
 #endif
@@ -170,11 +170,17 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 	}
 #endif
  
-    for( i=0; i<lgth1+1; i++ ) 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	if( !kb )
+#endif
+    for( i=0; i<lgth1+1; i++ )
     {
         ijp[i][0] = localstop;
     }
-    for( j=0; j<lgth2+1; j++ ) 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	if( !kb )
+#endif
+    for( j=0; j<lgth2+1; j++ )
     {
         ijp[0][j] = localstop;
     }
@@ -187,8 +193,13 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 	limk = lgth1+lgth2;
 	for( k=0; k<=limk; k++ ) 
 	{
-		int ijv = ijp[iin][jin];
-#if defined(MAFFT_AVX512)
+		int ijv;
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+		if( !kb ) ijv = ijp[iin][jin];
+#else
+		ijv = ijp[iin][jin];
+#endif
+#if defined(MAFFT_LSTRIPED)
 		if( kb ) ijv = kb_ijv( iin, jin, localstop );
 		else
 #endif
@@ -259,7 +270,7 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 		if( iin <= 0 || jin <= 0 ) break;
 		*--mseq1[0] = seq1[0][ifi];
 		*--mseq2[0] = seq2[0][jfi];
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 		if( kb ? kb_isstop( ifi, jfi ) : ijp[ifi][jfi] == localstop ) break;
 #else
 		if( ijp[ifi][jfi] == localstop ) break;
@@ -289,17 +300,27 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 static int lfill_prepare( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
                           unsigned char *u1, unsigned char *u2, int lgth1, int lgth2, int *ithrpt, unsigned char *used )
 {
-	int i, j, c, k, maxabs = 0, ithr;
+	int i, j, c, k, ithr;
 	int pen = penalty, ext = penalty_ex;
-	double thr = -offset + scoreoffset * 600;
+	double maxabs = 0.0, thr, span, basebound;
 	if( lgth1 < 1 || lgth2 < 1 ) return( 0 );
+	if( !isfinite(scoreoffset) ) return( 0 );
+	/* Conversion must follow finite/range checks. Widen before negating the
+	   integer offset too: -INT_MIN and abs(INT_MIN) overflow in integer C. */
+	thr = ( offset ? -(double)offset : 0.0 ) + scoreoffset * 600;
+	if( !isfinite(thr) || thr < (double)INT_MIN || thr > (double)INT_MAX ) return( 0 );
 	if( thr != (double)(int)thr ) return( 0 );
 	ithr = (int)thr;
+	span = (double)lgth1 + (double)lgth2 + 4.0;
+	basebound = fabs((double)pen) + fabs((double)ext) + fabs((double)ithr) + 1.0;
+	/* This lower bound also rejects impossible lengths before scanning them. */
+	if( basebound * span * 2.0 > 5.0e8 ) return( 0 );
 	for( i=0; i<nalphabets; i++ ) for( j=0; j<nalphabets; j++ )
 	{
 		double v = n_dynamicmtx[i][j];
+		if( !isfinite(v) || v < (double)INT_MIN || v > (double)INT_MAX ) return( 0 );
 		if( v != (double)(int)v ) return( 0 );
-		if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+		if( fabs(v) > maxabs ) maxabs = fabs(v);
 	}
 	/* Characters outside the alphabet read entries that were never set from n_dynamicmtx. */
 	memset( used, 0, 0x100 );
@@ -310,13 +331,13 @@ static int lfill_prepare( double **amino_dynamicmtx, double **n_dynamicmtx, doub
 		for( k=0; k<0x100; k++ ) if( used[k] )
 		{
 			double v = amino_dynamicmtx[c][k];
-			if( v != (double)(int)v || fabs( v ) > 1e6 ) return( 0 );
-			if( abs( (int)v ) > maxabs ) maxabs = abs( (int)v );
+			if( !isfinite(v) || fabs(v) > 1e6 || v != (double)(int)v ) return( 0 );
+			if( fabs(v) > maxabs ) maxabs = fabs(v);
 		}
 	}
 	/* Keep every intermediate (including prev[k] - k*ext) far from int32 overflow. */
 	{
-		double bound = (double)( maxabs + abs( pen ) + abs( ext ) + abs( ithr ) + 1 ) * ( lgth1 + lgth2 + 4 ) * 2.0;
+		double bound = (maxabs + basebound) * span * 2.0;
 		if( bound > 5.0e8 ) return( 0 );
 	}
 	*ithrpt = ithr;
@@ -738,6 +759,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	*endaljpt = endalj;
 	return( 1 );
 }
+#if defined(MAFFT_LSTRIPED)
 #if defined(MAFFT_AVX512)
 /*
  * Lfill_kb: the marker fill above in a striped layout (Farrar's), with ijp kept as one byte per
@@ -955,6 +977,18 @@ static int Lfill_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double sc
 	*endaljpt = endalj;
 	return( 1 );
 }
+#else
+#include "l11_avx2.h"
+#endif
+
+#if defined(MAFFT_AVX512) || !MAFFT_KB_SCORE_ONLY
+static int Lscore_kb( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                      char *s1, char *s2, int lgth1, int lgth2, double *maxwmpt )
+{
+	int ei, ej;
+	return Lfill_kb(amino_dynamicmtx,n_dynamicmtx,scoreoffset,s1,s2,lgth1,lgth2,maxwmpt,&ei,&ej);
+}
+#endif
 
 /* lres_hk() and lres_vmp() over the striped rows */
 static int kb_hk( int i, int j )
@@ -992,6 +1026,20 @@ static int kb_ijv( int i, int j, int lstop )
 	}
 }
 static int kb_isstop( int i, int j ) { return( i <= 0 || j <= 0 || KB_KIND( i, j-1 ) == KB_STOP ); }
+/* Both public entry points share this per-thread workspace. Their NULL-input
+   cleanup is called before worker exit (direction checking can create many workers). */
+static void kb_release( void )
+{
+#if defined(MAFFT_AVX512)
+	aligned_free_64(kb_rows); free(kb_raw);
+#else
+	kb_free(kb_rows); kb_free(kb_raw);
+#if MAFFT_KB_SCORE_ONLY
+	kb_free(kb_score_mem); kb_score_mem=NULL; kb_score_cap=0;
+#endif
+#endif
+	kb_rows=NULL; kb_raw=NULL; kb_rcap=kb_cap=0;
+}
 #endif
 #else
 static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
@@ -1231,7 +1279,7 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	double *prevwmrecords = NULL;
 	int warpn = 0;
 	int warpbase;
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	int kbfill = 0;
 #endif
 	double curm = 0.0;
@@ -1242,6 +1290,9 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_LSTRIPED)
+		kb_release();
+#endif
 		if( orlgth1 > 0 && orlgth2 > 0 )
 		{
 			orlgth1 = 0;
@@ -1357,7 +1408,21 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 
 	mseq1[0] = mseq[0];
 	mseq2[0] = mseq[1];
+	currentw = w1; /* also a valid (unused) argument to Ltracking after an integer fill */
 
+#if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
+	/* The byte/bit traceback is self-contained. Only allocate the full int matrix if
+	   the striped fill declines (fractional scoring, range limits or warped alignment). */
+	if( !trywarp )
+	{
+		localstop = lgth1+lgth2+1;
+		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, &maxwm, &endali, &endalj ) )
+		{
+			kbfill = 1;
+			goto Lint_done;
+		}
+	}
+#endif
 
 	if( orlgth1 > commonAlloc1 || orlgth2 > commonAlloc2 )
 	{
@@ -1386,7 +1451,7 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	}
 	ijp = commonIP;
 
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED) && !MAFFT_KB_NOIJP
 	if( !trywarp )
 	{
 		localstop = lgth1+lgth2+1;
@@ -1700,7 +1765,7 @@ fprintf( stderr, "\n" );
 #endif
 
 Lint_done:
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	if( kbfill ? kb_isstop( endali, endalj ) : ( ijp[endali][endalj] == localstop ) )
 #else
 	if( ijp[endali][endalj] == localstop )
@@ -1713,7 +1778,7 @@ Lint_done:
 		return( 0.0 );
 	}
 		
-#if defined(MAFFT_AVX512)
+#if defined(MAFFT_LSTRIPED)
 	Ltracking( currentw, lastverticalw, seq1, seq2, mseq1, mseq2, ijp, off1pt, off2pt, endali, endalj, warpis, warpjs, warpbase, kbfill );
 #else
 	Ltracking( currentw, lastverticalw, seq1, seq2, mseq1, mseq2, ijp, off1pt, off2pt, endali, endalj, warpis, warpjs, warpbase, 0 );
@@ -1791,6 +1856,9 @@ double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
 
 	if( seq1 == NULL )
 	{
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+		kb_release();
+#endif
 		if( orlgth1 > 0 && orlgth2 > 0 )
 		{
 			orlgth1 = 0;
@@ -1884,6 +1952,21 @@ double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
 		amino_dynamicmtx[(int)amino[i]][(int)amino[j]] = (double)n_dynamicmtx[i][j];
 
 
+
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+	/* Identical recurrence and raw maximum to the alignment fill. Its range guard
+	   also puts every value above the scalar maximum's -999999999.9 initializer.
+	   Keep zero results on the scalar path: integral matrices may contain -0.0,
+	   whose sign can survive the original score-only return value. */
+	{
+		double fastscore;
+		if( Lscore_kb( amino_dynamicmtx, n_dynamicmtx, 0.0, seq1[0], seq2[0], lgth1, lgth2, &fastscore ) && fastscore != 0.0 )
+		{
+			maxwm = fastscore;
+			goto Lnoalign_done;
+		}
+	}
+#endif
 
 //	mseq1[0] = mseq[0];
 //	mseq2[0] = mseq[1];
@@ -2112,6 +2195,9 @@ fprintf( stderr, "\n" );
 #endif
 
 
+#if defined(MAFFT_LSTRIPED) && MAFFT_FAST_NOALIGN
+Lnoalign_done:
+#endif
 #if 0 // IRUKAMO!!!!
 	if( ijp[endali][endalj] == localstop )
 	{
