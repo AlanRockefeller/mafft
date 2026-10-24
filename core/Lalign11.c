@@ -432,6 +432,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 #endif
 	lr_ext = ext;
 	vmraw = malloc( sizeof( int ) * ( lgth2 + 16 ) );
+	if( vmraw == NULL ) { free( profbuf ); return( 0 ); }
 #if defined(MAFFT_A64)
 	vm    = (int *)( ( (uintptr_t)( vmraw + 8 ) & ~(uintptr_t)31 ) );
 	/* kx[k] = k*ext, kp[k] = k*ext + ext + pen (horizontal gap scan offsets, read by the NEON loop) */
@@ -444,7 +445,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 #endif
 	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	wmrow = malloc( sizeof( int ) * ( lgth2 + 4 ) );
-	if( !vmraw || !hq || !wmrow )
+	if( !hq || !wmrow )
 	{
 		free( profbuf ); free( vmraw ); free( hq ); free( wmrow );
 #if defined(MAFFT_A64)
@@ -1082,8 +1083,8 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	}
 
 	/* one slot in front of prev[]/cur[]: prev[-1] seeds the vector scan */
-	pbuf1 = calloc( lgth2 + 5, sizeof( int ) ); prev = pbuf1 + 1;
-	pbuf2 = calloc( lgth2 + 5, sizeof( int ) ); cur = pbuf2 + 1;
+	pbuf1 = calloc( lgth2 + 5, sizeof( int ) );
+	pbuf2 = calloc( lgth2 + 5, sizeof( int ) );
 	vm    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	vmp   = malloc( sizeof( int ) * ( lgth2 + 4 ) );
 	hq    = malloc( sizeof( int ) * ( lgth2 + 4 ) );
@@ -1094,6 +1095,7 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 		free( profbuf ); free( pbuf1 ); free( pbuf2 ); free( vm ); free( vmp ); free( hq ); free( hk ); free( wmrow );
 		return( 0 );
 	}
+	prev = pbuf1 + 1; cur = pbuf2 + 1;
 
 	/* row 0: currentw[j] = mtx[s1[0]][s2[j]];  m[j] = currentw[j-1], mp[j] = 0 */
 	for( j=0; j<lgth2; j++ ) cur[j] = prof[u1[0]][j];
