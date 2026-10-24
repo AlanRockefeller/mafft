@@ -68,7 +68,7 @@ static void match_calc_bk( double *match, double **cpmx1, double **cpmx2, int i1
 		for( k=0; k<nalphabets; k++ )
 			scarr[l] += n_dis[k][l] * cpmx1[k][i1];
 	}
-#if 0 /* ï¿½ï¿½ï¿½ï¿½ï¿½È¤ï¿½ï¿½È¤ï¿½ï¿½ï¿½doubleworkï¿½Î¥ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¤ï¿½Õ¤Ë¤ï¿½ï¿½ï¿½ */
+#if 0 /* ¤³¤ì¤ò»È¤¦¤È¤­¤Ïdoublework¤Î¥¢¥í¥±¡¼¥È¤òµÕ¤Ë¤¹¤ë */
 	{
 		double *fpt, **fptpt, *fpt2;
 		int *ipt, **iptpt;
