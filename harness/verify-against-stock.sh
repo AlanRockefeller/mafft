@@ -50,6 +50,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$work" ] || work=$(mktemp -d "${TMPDIR:-/tmp}/mafft-verify.XXXXXX")
 mkdir -p "$work"
+work=$(cd "$work" && pwd -P)  # build() runs make in $src/core, and the launcher embeds PREFIX
 echo "work directory: $work"
 
 # build NAME SOURCE-COMMAND CFLAGS [PREFIX]: copy core/ and scripts/ into $work/src/NAME,
@@ -78,7 +79,8 @@ stock_prefix=$work/inst/stock
 if [ -n "${MAFFT_STOCK_CACHE:-}" ]; then
   tag=$(printf '%s\n%s\n%s\n%s\n%s\n' "$stock_rev" "$cc" "$("$cc" --version | head -1)" "$stock_flags" "$make_args" |
           sha256sum | cut -c1-16)
-  stock_prefix=$MAFFT_STOCK_CACHE/stock-$tag
+  mkdir -p "$MAFFT_STOCK_CACHE"
+  stock_prefix=$(cd "$MAFFT_STOCK_CACHE" && pwd -P)/stock-$tag
 fi
 # A cached stock build is installed at its final path (the launcher embeds it) and is used
 # only once .complete exists, so an interrupted build is rebuilt rather than reused.
