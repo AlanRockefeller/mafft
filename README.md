@@ -189,8 +189,8 @@ None of these changes the output, except as noted for `MAFFT_ORDERED_REFINE`.
 | `L11GPU_VERBOSE`, `L11GPU_LOG=FILE` | GPU timing diagnostics on stderr, or one line per call appended to `FILE` |
 | `MAFFT_NODUPCACHE` (any value) | turn off reuse of duplicate-pair local alignments |
 | `MAFFT_NODENSEKMER` (any value) | turn off the dense six-mer counts |
-| `MAFFT_NOLBAND` (any value) | AVX2 builds: turn off the exact banded all-pairs fill (opt9) and use the full striped fill for every pair |
-| `MAFFT_LBAND_CHECK` (any value) | AVX2 builds: align every all-pairs pair both without and with the band and stop if they differ (a test mode; it does the all-pairs work twice) |
+| `MAFFT_NOLBAND` (any value) | AVX2 builds without AVX-512 (`MAFFT_LBAND`, with the striped fill): turn off the exact banded all-pairs fill (opt9) and use the full striped fill for every pair |
+| `MAFFT_LBAND_CHECK` (any value) | the same builds: align every all-pairs pair both without and with the band and stop if they differ (a test mode; it does the all-pairs work twice) |
 | `MAFFT_ORDERED_TEST_UNSAFE=n` | `-DMAFFT_ORDERED_TEST` builds only: force the one-worker fallback at the nth commit |
 | `MAFFT_BINARIES`, `MAFFT_TMPDIR` | as in stock MAFFT |
 

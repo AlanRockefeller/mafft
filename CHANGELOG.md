@@ -26,7 +26,8 @@ evidence: [round-4 report](paper/round4-audit-fixes.md).
 - The `REJECT_MEMO hits=… misses=… unsafe=…` line, which every `--thread 1` refinement printed
   on stderr, is printed only with `MAFFT_REJECT_MEMO_STATS` set to a value other than `0`,
   `off`, `false` or `no` (for example `1`).
-- `MAFFT_ORDERED_REFINE` accepts `0`, `off`, `false` and `no` in any case; only `0` worked.
+- `MAFFT_ORDERED_REFINE` accepts `0`, `off`, `false` and `no` in any case; through dikarya5
+  only `0` turned it off.
 - clang on x86-64 with FMA stops with `#error` unless `-DMAFFT_STOCK_FMA` says which rounding
   class the stock reference is (a guess silently differed from stock).
 - Every allocation the fast paths added is checked; an allocation failure takes the original
