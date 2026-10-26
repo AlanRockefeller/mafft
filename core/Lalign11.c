@@ -2,6 +2,35 @@
 #include "dp.h"
 #include <limits.h>
 #include <stdint.h>
+/* Exact banded all-pairs fill (Lfill_band, paper/round2-band-certificate.md).  On by default
+   only where it was measured: AVX2 builds without AVX-512 (the Dikarya host). */
+#ifndef MAFFT_LBAND
+#if defined(MAFFT_AVX2) && !defined(MAFFT_AVX512) && MAFFT_AVX2_STRIPED
+#define MAFFT_LBAND 1
+#else
+#define MAFFT_LBAND 0
+#endif
+#endif
+#define LBAND_NEG ( INT_MIN / 2 ) /* an empty state: below every filled value, never overflows */
+#if MAFFT_LBAND
+/* MAFFT_NOLBAND (any value) turns the band off; lband_force overrides it for the check mode. */
+static TLS int lband_force = -1;
+static int lband_on( void )
+{
+	static int env = -1;
+	if( lband_force >= 0 ) return( lband_force );
+	if( env < 0 ) env = getenv( "MAFFT_NOLBAND" ) ? 0 : 1;
+	return( env );
+}
+static int lband_check_on( void )
+{
+	static int env = -1;
+	if( env < 0 ) env = getenv( "MAFFT_LBAND_CHECK" ) ? 1 : 0;
+	return( env );
+}
+#else
+#define lband_on() 0
+#endif
 #if defined(MAFFT_SVE)
 #ifndef LSVE_MINLANES
 #define LSVE_MINLANES 8 /* the SVE fill is used for vectors of at least this many int32 lanes */
@@ -117,12 +146,22 @@ static TLS int *lr_raw = NULL;
 static TLS size_t lr_cap = 0;
 static TLS int *lr_base, lr_stride, lr_ext, lr_v0;
 #define LROW( r ) ( lr_base + (size_t)( r ) * lr_stride )
+#if MAFFT_LBAND
+/* Set by Lfill_band: only cells with lr_blo <= i-j <= lr_bhi were filled (see Lfill_band). */
+static TLS int lr_banded = 0, lr_blo, lr_bhi;
+#endif
 
 /* hk[j] of row i: first k in [0, j-2] maximising prev[k] - k*ext (the first k of a tie), k = 0 for j < 2 */
 static int lres_hk( int i, int j )
 {
+#if MAFFT_LBAND
+	/* banded: the k of row i-1 below its first filled column are out of the band */
+	int *prev = LROW( i-1 ), jj, k0 = ( lr_banded && i-1-lr_bhi > 0 ) ? i-1-lr_bhi : 0, tbest = prev[k0], tbestk = k0;
+	for( jj=k0+2; jj<=j; jj++ )
+#else
 	int *prev = LROW( i-1 ), jj, tbest = prev[0], tbestk = 0;
 	for( jj=2; jj<=j; jj++ )
+#endif
 	{
 		int q = prev[jj-2] - ( jj-2 ) * lr_ext;
 		if( q > tbest ) { tbest = q; tbestk = jj-2; }
@@ -133,8 +172,15 @@ static int lres_hk( int i, int j )
 /* vmp[j] as row i reads it: the vertical state started from row 0 and updated by rows 1 .. i-1 */
 static int lres_vmp( int i, int j )
 {
+#if MAFFT_LBAND
+	/* banded: column j-1 is filled from row q0 = j-1+lr_blo down; above it the state is empty */
+	int q0 = ( lr_banded && j-1+lr_blo > 0 ) ? j-1+lr_blo : 0, r;
+	int vm = q0 ? LBAND_NEG : ( j == 1 ) ? lr_v0 : LROW( 0 )[j-1], vmp = q0;
+	for( r=q0+1; r<i; r++ )
+#else
 	int r, vm = ( j == 1 ) ? lr_v0 : LROW( 0 )[j-1], vmp = 0;
 	for( r=1; r<i; r++ )
+#endif
 	{
 		int p = LROW( r-1 )[j-1];
 		if( p > vm ) { vm = p; vmp = r-1; }
@@ -147,6 +193,13 @@ static int lres_vmp( int i, int j )
 #if defined(MAFFT_LSTRIPED)
 static int kb_ijv( int i, int j, int lstop );
 static int kb_isstop( int i, int j );
+#if MAFFT_LBAND
+static int lband_ijv( int i, int j, int lstop );
+static int lband_isstop( int i, int j );
+#define LKB_ISSTOP( kb, i, j ) ( (kb) == 2 ? lband_isstop( (i), (j) ) : kb_isstop( (i), (j) ) )
+#else
+#define LKB_ISSTOP( kb, i, j ) kb_isstop( (i), (j) )
+#endif
 #endif
 /* kb: the fill was Lfill_kb, whose traceback is read through kb_ijv() instead of ijp */
 static double Ltracking( double *lasthorizontalw, double *lastverticalw, 
@@ -200,6 +253,10 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 		ijv = ijp[iin][jin];
 #endif
 #if defined(MAFFT_LSTRIPED)
+#if MAFFT_LBAND
+		if( kb == 2 ) ijv = lband_ijv( iin, jin, localstop );
+		else
+#endif
 		if( kb ) ijv = kb_ijv( iin, jin, localstop );
 		else
 #endif
@@ -271,7 +328,7 @@ static double Ltracking( double *lasthorizontalw, double *lastverticalw,
 		*--mseq1[0] = seq1[0][ifi];
 		*--mseq2[0] = seq2[0][jfi];
 #if defined(MAFFT_LSTRIPED)
-		if( kb ? kb_isstop( ifi, jfi ) : ijp[ifi][jfi] == localstop ) break;
+		if( kb ? LKB_ISSTOP( kb, ifi, jfi ) : ijp[ifi][jfi] == localstop ) break;
 #else
 		if( ijp[ifi][jfi] == localstop ) break;
 #endif
@@ -392,6 +449,9 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	size_t need;
 
 	if( !lfill_prepare( amino_dynamicmtx, n_dynamicmtx, scoreoffset, u1, u2, lgth1, lgth2, &ithr, used ) ) return( 0 );
+#if MAFFT_LBAND
+	lr_banded = 0; /* a full fill: lres_hk()/lres_vmp() replay whole rows and columns */
+#endif
 
 	for( c=0; c<0x100; c++ ) prof[c] = NULL;
 	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
@@ -770,6 +830,566 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	*endaljpt = endalj;
 	return( 1 );
 }
+#if MAFFT_LBAND
+/*
+ * Lfill_band: Lfill_int restricted to the cells with lo <= i-j <= hi.  Row i fills
+ * j in [ja, jb] = [max(1,i-hi), min(lgth2,i-lo)] with Lfill_int's rules; a state built only
+ * from cells outside the band is LBAND_NEG.  Every cell the window reads is in the band: the
+ * diagonal prev[j-1] and the horizontal terms prev[k] (k >= ja-1, or column 0 when ja == 1)
+ * lie in row i-1's window, and column j enters the window exactly when cell (i-1,j-1) does,
+ * so its vertical state starts empty there (row 1 starts from row 0, as Lfill_int does).
+ * lres_hk()/lres_vmp() replay the same restricted rules.  The result is the band-restricted
+ * recurrence; Lband_try() below uses it only where the certificate makes it the full one.
+ */
+static int Lfill_band( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                       char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop, int lo, int hi,
+                       double *maxwmpt, int *endalipt, int *endaljpt )
+{
+	int i, j, c, k, ja, jb, jbprev;
+	int pen = penalty, ext = penalty_ex;
+	int ithr, *prof[0x100], *profbuf, nprof = 0;
+	int *prev, *cur, *vm, *wmrow;
+	int needwm, endpend = 0, tbest;
+	int maxwm, endali = 0, endalj = 0, rowmax;
+	unsigned char *u1 = (unsigned char *)s1, *u2 = (unsigned char *)s2;
+	unsigned char used[0x100];
+	size_t need;
+
+	if( !lfill_prepare( amino_dynamicmtx, n_dynamicmtx, scoreoffset, u1, u2, lgth1, lgth2, &ithr, used ) ) return( 0 );
+	for( c=0; c<0x100; c++ ) prof[c] = NULL;
+	for( c=0; c<0x100; c++ ) if( used[c] ) nprof++;
+	profbuf = malloc( sizeof( int ) * nprof * LPROF_STRIDE );
+	if( profbuf == NULL ) return( 0 );
+	k = 0;
+	for( c=0; c<0x100; c++ ) if( used[c] )
+	{
+		double *row = amino_dynamicmtx[c];
+		prof[c] = profbuf + k * LPROF_STRIDE;
+		for( j=0; j<lgth2; j++ ) prof[c][j] = (int)row[u2[j]];
+		prof[c][lgth2] = 0;
+		k++;
+	}
+	lr_stride = ( ( lgth2 + 9 ) + 7 ) & ~7;
+	need = (size_t)( lgth1 + 1 ) * lr_stride + 16;
+	if( need > ( (size_t)1 << 26 ) ) { free( profbuf ); return( 0 ); }
+	if( need > lr_cap )
+	{
+		free( lr_raw );
+		lr_raw = malloc( sizeof( int ) * need );
+		lr_cap = lr_raw ? need : 0;
+		if( lr_raw == NULL ) { free( profbuf ); return( 0 ); }
+	}
+	lr_base = (int *)( ( (uintptr_t)( lr_raw + 8 ) & ~(uintptr_t)31 ) ) + 7;
+	lr_ext = ext;
+	vm = malloc( sizeof( int ) * ( lgth2 + 16 ) );
+	wmrow = malloc( sizeof( int ) * ( lgth2 + 16 ) );
+	if( !vm || !wmrow ) { free( profbuf ); free( vm ); free( wmrow ); return( 0 ); }
+
+	cur = LROW( 0 );
+	for( j=0; j<lgth2; j++ ) cur[j] = prof[u1[0]][j];
+	cur[lgth2] = 0;
+	lr_v0 = cur[0];
+	jbprev = ( 1-lo < lgth2 ) ? 1-lo : lgth2;
+	for( j=1; j<=jbprev; j++ ) vm[j] = cur[j-1];
+
+	maxwm = INT_MIN;
+	for( i=1; i<=lgth1; i++ )
+	{
+		int *profrow = ( i < lgth1 ) ? prof[u1[i]] : prof[u1[0]]; /* last row: as Lfill_int */
+		int *ijrow = ijp[i];
+		prev = LROW( i-1 ); cur = LROW( i );
+		prev[0] = (int)amino_dynamicmtx[u2[0]][u1[i-1]];
+		ja = ( i-hi > 1 ) ? i-hi : 1;
+		jb = ( i-lo < lgth2 ) ? i-lo : lgth2;
+		for( j=jbprev+1; j<=jb; j++ ) vm[j] = LBAND_NEG; /* columns entering the band */
+		if( jb > jbprev ) jbprev = jb;
+		if( i < lgth1 ) cur[0] = (int)amino_dynamicmtx[u2[0]][u1[i]];
+		if( ja > jb ) continue;
+		if( ja == 1 ) { prev[-1] = prev[0] - ext; tbest = prev[0]; }
+		else { prev[ja-2] = LBAND_NEG; tbest = LBAND_NEG; } /* column ja-2 of row i-1 is outside */
+		rowmax = INT_MIN;
+		needwm = ( maxwm <= ithr );
+		j = ja;
+		{
+#define AVX2_BLEND( a, b, m ) _mm256_xor_si256( (a), _mm256_and_si256( _mm256_xor_si256( (a), (b) ), (m) ) )
+			const __m256i vpen = _mm256_set1_epi32( pen ), vext = _mm256_set1_epi32( ext ), vthr = _mm256_set1_epi32( ithr );
+			const __m256i vstop = _mm256_set1_epi32( lstop ), vmarkh = _mm256_set1_epi32( LMARK_H ), vmarkv = _mm256_set1_epi32( LMARK_V );
+			const __m256i ninf = _mm256_set1_epi32( INT_MIN );
+			const __m256i fill1 = _mm256_setr_epi32( INT_MIN, 0, 0, 0, INT_MIN, 0, 0, 0 );
+			const __m256i fill2 = _mm256_setr_epi32( INT_MIN, INT_MIN, 0, 0, INT_MIN, INT_MIN, 0, 0 );
+			const __m256i idx3 = _mm256_set1_epi32( 3 ), last = _mm256_set1_epi32( 7 );
+			const __m256i ext8 = _mm256_set1_epi32( 8 * ext );
+			__m256i vmax = ninf, cv = ninf;
+			/* lane l of the block at j stands for k = j-2+l */
+			__m256i kext = _mm256_mullo_epi32( _mm256_add_epi32( _mm256_set1_epi32( ja-2 ), _mm256_setr_epi32( 0, 1, 2, 3, 4, 5, 6, 7 ) ), vext );
+			__m256i kext1pen = _mm256_add_epi32( kext, _mm256_set1_epi32( ext + pen ) );
+			for( ; j+7<=jb; j+=8 )
+			{
+				__m256i p = _mm256_loadu_si256( (__m256i *)( prev + j - 1 ) );
+				__m256i v = _mm256_sub_epi32( _mm256_loadu_si256( (__m256i *)( prev + j - 2 ) ), kext );
+				__m256i x, g, wm, ch, cvt, clamp, ij, vmj;
+				x = _mm256_max_epi32( v, _mm256_or_si256( _mm256_bslli_epi128( v, 4 ), fill1 ) );
+				x = _mm256_max_epi32( x, _mm256_or_si256( _mm256_bslli_epi128( x, 8 ), fill2 ) );
+				x = _mm256_max_epi32( x, _mm256_blend_epi32( ninf, _mm256_permutevar8x32_epi32( x, idx3 ), 0xf0 ) );
+				x = _mm256_max_epi32( x, cv );
+				cv = _mm256_permutevar8x32_epi32( x, last );
+				wm = p;
+				g = _mm256_add_epi32( x, kext1pen );
+				ch = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				vmj = _mm256_loadu_si256( (__m256i *)( vm + j ) );
+				g = _mm256_add_epi32( vmj, vpen );
+				cvt = _mm256_cmpgt_epi32( g, wm );
+				wm = _mm256_max_epi32( wm, g );
+				_mm256_storeu_si256( (__m256i *)( vm + j ), _mm256_add_epi32( _mm256_max_epi32( p, vmj ), vext ) );
+				if( needwm ) _mm256_storeu_si256( (__m256i *)( wmrow + j ), wm );
+				vmax = _mm256_max_epi32( vmax, wm );
+				clamp = _mm256_cmpgt_epi32( vthr, wm );
+				ij = _mm256_and_si256( ch, vmarkh );
+				ij = AVX2_BLEND( ij, vmarkv, cvt );
+				ij = AVX2_BLEND( ij, vstop, clamp );
+				wm = _mm256_max_epi32( wm, vthr );
+				_mm256_storeu_si256( (__m256i *)( ijrow + j ), ij );
+				_mm256_storeu_si256( (__m256i *)( cur + j ), _mm256_add_epi32( wm, _mm256_loadu_si256( (__m256i *)( profrow + j ) ) ) );
+				kext = _mm256_add_epi32( kext, ext8 );
+				kext1pen = _mm256_add_epi32( kext1pen, ext8 );
+			}
+#undef AVX2_BLEND
+			if( j > ja )
+			{
+				__m128i h = _mm_max_epi32( _mm256_castsi256_si128( vmax ), _mm256_extracti128_si256( vmax, 1 ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0x4e ) );
+				h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0xb1 ) );
+				rowmax = _mm_cvtsi128_si32( h );
+				tbest = _mm256_cvtsi256_si32( cv );
+			}
+		}
+		for( ; j<=jb; j++ )
+		{
+			int p = prev[j-1], wm = p, ij = 0, g;
+			if( j >= 2 )
+			{
+				int q = prev[j-2] - ( j-2 ) * ext;
+				if( q > tbest ) tbest = q;
+			}
+			g = tbest + ( j-1 ) * ext + pen;
+			if( g > wm ) { wm = g; ij = LMARK_H; }
+			g = vm[j] + pen;
+			if( g > wm ) { wm = g; ij = LMARK_V; }
+			if( p > vm[j] ) vm[j] = p;
+			vm[j] += ext;
+			wmrow[j] = wm;
+			rowmax = ( wm > rowmax ) ? wm : rowmax;
+			if( wm < ithr ) { ij = lstop; wm = ithr; }
+			ijrow[j] = ij;
+			cur[j] = wm + profrow[j];
+		}
+		if( rowmax > maxwm && !needwm )
+		{
+			maxwm = rowmax; endali = i; endpend = 1;
+		}
+		else if( rowmax > maxwm )
+		{
+			endpend = 0;
+			for( j=ja; wmrow[j] != rowmax; j++ )
+				;
+			maxwm = rowmax; endali = i; endalj = j;
+		}
+	}
+	if( endpend )
+	{
+		int *r = LROW( endali ), *pr = ( endali < lgth1 ) ? prof[u1[endali]] : prof[u1[0]];
+		j = ( endali-hi > 1 ) ? endali-hi : 1;
+		for( ; r[j] - pr[j] != maxwm; j++ )
+			;
+		endalj = j;
+	}
+	free( profbuf ); free( vm ); free( wmrow );
+	lr_banded = 1; lr_blo = lo; lr_bhi = hi;
+	*maxwmpt = (double)maxwm;
+	*endalipt = endali;
+	*endaljpt = endalj;
+	return( 1 );
+}
+
+/*
+ * The striped band fill: Lfill_band's recurrence over lo <= i-j <= hi in diagonal coordinates.
+ * Slot d = l*S + s (lane l, position s, S = ceil(W/8), W = hi-lo+1) of row i is column
+ * j = i-hi+d.  The diagonal predecessor (i-1, j-1) is slot d of the previous row; the
+ * horizontal term max_{k<=j-2} prev[k] + (j-1-k)*ext is max_{d'<=d-1} P[d'] + (d-d')*ext over
+ * the previous row, a lane-local running maximum plus a carry from the lower lanes, as in
+ * Lfill_kb (for j = 1, where Lfill_int also allows k = 0, that candidate is the diagonal plus
+ * pen <= 0 and never wins); column j's vertical state moves from slot d to d-1 at the next row.
+ * Column 0 (the reversed-access mtx[s2[0]][s1[r]] that Lfill_int puts in prev[0]) sits at slot
+ * hi-r, and a slot with j < 1, j > lgth2 or d >= W holds LBAND_NEG.  Substitution scores are a
+ * two-table lookup on seq2's letter codes (at most 15 letters; code ncode is the zero past the
+ * last column), pre-striped once per call.
+ *
+ * store == 0: only the raw maximum (for L).  store == 1: every row is kept as Lfill_kb keeps it,
+ * value*4 | kind (KB_H, KB_V, KB_STOP), and the first row-major cell of the maximum is found
+ * as in Lfill_kb; lband_ijv()/lband_isstop() below then serve Ltracking.
+ */
+#define LB_NEGENC INT_MIN                 /* an empty stored slot: decodes below every value */
+#define LB_H 1                            /* the kinds Lfill_kb stores (KB_H, KB_V, KB_STOP) */
+#define LB_V 2
+#define LB_STOP 3
+static TLS int *lb_rows = NULL;
+static TLS size_t lb_cap = 0;
+static TLS int lb_S, lb_W, lb_hi, lb_lo, lb_ext, lb_v0;
+#define LB_SLOT( d ) ( (size_t)( (d) % lb_S ) * 8 + (d) / lb_S )
+/* Lfill_int's LROW( r )[col], or LBAND_NEG outside the band */
+static inline int lb_rv( int r, int col )
+{
+	int d = col - r + lb_hi;
+	if( d < 0 || d >= lb_W ) return( LBAND_NEG );
+	return( lb_rows[(size_t)r * 8 * lb_S + LB_SLOT( d )] >> 2 );
+}
+/* a ? b : c by lanes of an all-ones/all-zeros mask m, without vpblendvb (two port-5 uops on Haswell/Broadwell) */
+#define LB_SEL( m, b, c ) _mm256_xor_si256( (c), _mm256_and_si256( _mm256_xor_si256( (c), (b) ), (m) ) )
+static TLS int *lb_buf = NULL;
+static TLS size_t lb_bufcap = 0;
+static inline __attribute__((always_inline)) int lband_striped( double **amino_dynamicmtx, int lgth1, int lgth2,
+                        unsigned char *u1, unsigned char *u2, int ithr, int lo, int hi, int store, int onetab,
+                        long long *maxwmpt, int *endalipt, int *endaljpt )
+{
+	int W = hi - lo + 1, S = W / 8, i, s, l, c, code[0x100], letter[16], qcode[0x100], nq = 0, ncode, inv;
+	int pen = penalty, ext = penalty_ex, tmin, tmax, t, maxwm = INT_MIN, endali = 0, endalj = 0, endpend = 0;
+	int *P, *V, *Vn, *CS, *wmrow, *tabs;
+	__m256i vmaxall, LM, lanebase;
+	const __m256i NEGV = _mm256_set1_epi32( LBAND_NEG ), one = _mm256_set1_epi32( 1 );
+	const __m256i vpen = _mm256_set1_epi32( pen ), vext = _mm256_set1_epi32( ext ), vthr = _mm256_set1_epi32( ithr );
+	const __m256i up1 = _mm256_setr_epi32( 0, 0, 1, 2, 3, 4, 5, 6 ), up2 = _mm256_setr_epi32( 0, 0, 0, 1, 2, 3, 4, 5 );
+	const __m256i dn1 = _mm256_setr_epi32( 1, 2, 3, 4, 5, 6, 7, 7 ), seven = _mm256_set1_epi32( 7 );
+	const __m256i kh = _mm256_set1_epi32( LB_H ), kv = _mm256_set1_epi32( LB_V ), kst = _mm256_set1_epi32( LB_STOP );
+	size_t rs = (size_t)8 * S, need;
+	/* the caller makes W a multiple of 8: no padding slots */
+	for( c=0; c<0x100; c++ ) { code[c] = -1; qcode[c] = -1; }
+	ncode = 0;
+	for( i=0; i<lgth2; i++ ) if( code[u2[i]] < 0 )
+	{
+		if( ncode == ( onetab ? 6 : 14 ) ) return( 0 );
+		letter[ncode] = u2[i]; code[u2[i]] = ncode++;
+	}
+	inv = onetab ? 7 : 15; /* code ncode: the zero past the last column; code inv: no cell (LBAND_NEG) */
+	for( i=0; i<lgth1; i++ ) if( qcode[u1[i]] < 0 ) qcode[u1[i]] = nq++;
+	/* CS[t] lane l = code of column t + l*S, t = 1-hi .. lgth1-hi+S-1; column 0 and anything
+	   outside 1..lgth2 is not a cell (column lgth2 is the zero profile entry, code ncode) */
+	tmin = 1 - hi; tmax = lgth1 - hi + S - 1;
+	need = (size_t)8 * ( tmax - tmin + 1 ) + rs * 4 + (size_t)16 * nq + 16;
+	if( need > lb_bufcap )
+	{
+		free( lb_buf ); lb_buf = malloc( sizeof( int ) * need + 64 );
+		lb_bufcap = lb_buf ? need : 0;
+		if( !lb_buf ) return( 0 );
+	}
+	P = (int *)( ( (uintptr_t)lb_buf + 31 ) & ~(uintptr_t)31 ); V = P + rs; Vn = V + rs; wmrow = Vn + rs; tabs = wmrow + rs;
+	CS = tabs + (size_t)16 * nq;
+	for( c=0; c<0x100; c++ ) if( qcode[c] >= 0 )
+		for( l=0; l<16; l++ ) tabs[qcode[c]*16+l] = ( l < ncode ) ? (int)amino_dynamicmtx[c][letter[l]] : ( l == inv ) ? LBAND_NEG : 0;
+	for( t=tmin; t<=tmax; t++ ) for( l=0; l<8; l++ )
+	{
+		int x = t + l * S;
+		CS[(size_t)( t - tmin ) * 8 + l] = ( x >= 1 && x < lgth2 ) ? code[u2[x]] : ( x == lgth2 ) ? ncode : inv;
+	}
+	if( store )
+	{
+		size_t nr = (size_t)( lgth1 + 1 ) * rs;
+		if( nr > lb_cap )
+		{
+			free( lb_rows ); lb_rows = malloc( sizeof( int ) * nr + 32 );
+			lb_cap = lb_rows ? nr : 0;
+			if( !lb_rows ) return( 0 );
+		}
+	}
+	/* row 0: slot d is column j' = d-hi; column 0 holds the value row 1 reads as prev[0];
+	   row 1's vertical state of column j = 1-hi+d is row 0's value at j-1 (Lfill_int's vm init) */
+	for( s=0; s<S; s++ ) for( l=0; l<8; l++ )
+	{
+		int d = l * S + s, jj = d - hi, v = LBAND_NEG, vv = LBAND_NEG;
+		if( jj >= 0 && jj <= lgth2 )
+			v = ( jj == 0 ) ? (int)amino_dynamicmtx[u2[0]][u1[0]] : ( jj < lgth2 ) ? (int)amino_dynamicmtx[u1[0]][u2[jj]] : 0;
+		jj = 1 - hi + d;
+		if( jj >= 1 && jj <= lgth2 ) vv = (int)amino_dynamicmtx[u1[0]][u2[jj-1]];
+		P[s*8+l] = v; V[s*8+l] = vv;
+		if( store ) lb_rows[s*8+l] = ( v == LBAND_NEG ) ? LBAND_NEG : v * 4; /* only filled cells and column 0 are ever read; LBAND_NEG*4 would overflow */
+	}
+	{
+		int lb[8] __attribute__((aligned(32)));
+		for( l=0; l<8; l++ ) lb[l] = l * S;
+		lanebase = _mm256_load_si256( (__m256i *)lb );
+	}
+	LM = NEGV;
+	{
+		__m256i cext = _mm256_mullo_epi32( lanebase, vext );
+		for( s=0; s<S; s++ ) { LM = _mm256_max_epi32( LM, _mm256_sub_epi32( _mm256_load_si256( (__m256i *)( P + s*8 ) ), cext ) ); cext = _mm256_add_epi32( cext, vext ); }
+	}
+	vmaxall = NEGV;
+	for( i=1; i<=lgth1; i++ )
+	{
+		unsigned char rc = ( i < lgth1 ) ? u1[i] : u1[0]; /* last row: as Lfill_int */
+		int dmax = hi + lgth2 - i, d0 = hi - i, rowmax, needwm = ( maxwm <= ithr );
+		__m256i T0, T1, carry, e = NEGV, cext, cextpen, pos = lanebase, LMn = NEGV, res0 = NEGV, vmax = NEGV;
+		__m256i vdmax = _mm256_set1_epi32( dmax + 1 );
+		const int *Ci = CS + (size_t)( i - hi - tmin ) * 8;
+		int *row = store ? lb_rows + (size_t)i * rs : NULL, edge = ( dmax < W - 1 );
+		T0 = _mm256_loadu_si256( (__m256i *)( tabs + qcode[rc]*16 ) );
+		T1 = onetab ? T0 : _mm256_loadu_si256( (__m256i *)( tabs + qcode[rc]*16 + 8 ) );
+		/* exclusive prefix maximum of the previous row's lane maxima: the carry from lower lanes */
+		carry = _mm256_blend_epi32( _mm256_permutevar8x32_epi32( LM, up1 ), NEGV, 1 );
+		carry = _mm256_max_epi32( carry, _mm256_blend_epi32( _mm256_permutevar8x32_epi32( carry, up1 ), NEGV, 1 ) );
+		carry = _mm256_max_epi32( carry, _mm256_blend_epi32( _mm256_permutevar8x32_epi32( carry, up2 ), NEGV, 3 ) );
+		carry = _mm256_max_epi32( carry, _mm256_permute2x128_si256( NEGV, carry, 0x20 ) );
+		cext = _mm256_mullo_epi32( lanebase, vext ); cextpen = _mm256_add_epi32( cext, vpen );
+		for( s=0; s<S; s++ )
+		{
+			__m256i a = _mm256_load_si256( (__m256i *)( P + s*8 ) ), vmj = _mm256_load_si256( (__m256i *)( V + s*8 ) );
+			__m256i cd = _mm256_loadu_si256( (const __m256i *)( Ci + (size_t)s * 8 ) );
+			__m256i m = _mm256_max_epi32( e, carry ), g, wm, nv, sc, v, ch, cvt, wv;
+			e = _mm256_max_epi32( e, _mm256_sub_epi32( a, cext ) );
+			g = _mm256_add_epi32( m, cextpen );
+			ch = _mm256_cmpgt_epi32( g, a ); wm = _mm256_max_epi32( a, g );
+			g = _mm256_add_epi32( vmj, vpen );
+			cvt = _mm256_cmpgt_epi32( g, wm ); wm = _mm256_max_epi32( wm, g );
+			nv = _mm256_add_epi32( _mm256_max_epi32( a, vmj ), vext );
+			if( s ) _mm256_store_si256( (__m256i *)( Vn + (s-1)*8 ), nv ); else res0 = nv;
+			/* only cells past column lgth2 can hold a real wm without being cells (left of column 1
+			   every predecessor is empty) */
+			wv = edge ? LB_SEL( _mm256_cmpgt_epi32( vdmax, pos ), wm, NEGV ) : wm;
+			vmax = _mm256_max_epi32( vmax, wv );
+			if( store && needwm ) _mm256_store_si256( (__m256i *)( wmrow + s*8 ), wv );
+			sc = _mm256_permutevar8x32_epi32( T0, cd );
+			if( !onetab ) sc = LB_SEL( _mm256_cmpgt_epi32( cd, seven ), _mm256_permutevar8x32_epi32( T1, cd ), sc );
+			v = _mm256_add_epi32( _mm256_max_epi32( wm, vthr ), sc ); /* code inv: about LBAND_NEG */
+			_mm256_store_si256( (__m256i *)( P + s*8 ), v );
+			if( store )
+			{
+				__m256i ij = _mm256_and_si256( ch, kh );
+				ij = LB_SEL( cvt, kv, ij );
+				ij = LB_SEL( _mm256_cmpgt_epi32( vthr, wm ), kst, ij );
+				_mm256_storeu_si256( (__m256i *)( row + s*8 ), _mm256_or_si256( _mm256_slli_epi32( v, 2 ), ij ) ); /* lb_rows: malloc alignment */
+			}
+			LMn = _mm256_max_epi32( LMn, _mm256_sub_epi32( v, cext ) );
+			cext = _mm256_add_epi32( cext, vext ); cextpen = _mm256_add_epi32( cextpen, vext );
+			pos = _mm256_add_epi32( pos, one );
+		}
+		/* slot l*S-1 of the next row's vertical state is lane l-1, position S-1 */
+		_mm256_store_si256( (__m256i *)( Vn + (S-1)*8 ), _mm256_blend_epi32( _mm256_permutevar8x32_epi32( res0, dn1 ), NEGV, 0x80 ) );
+		{ int *tp = V; V = Vn; Vn = tp; }
+		/* column 0 of this row (slot d0): the value the next row reads as prev[0] */
+		if( d0 >= 0 )
+		{
+			int seed = ( i < lgth1 ) ? (int)amino_dynamicmtx[u2[0]][u1[i]] : 0, sl = ( d0 % S ) * 8 + d0 / S;
+			int q[8] __attribute__((aligned(32)));
+			P[sl] = seed;
+			if( store ) row[sl] = seed * 4;
+			for( l=0; l<8; l++ ) q[l] = LBAND_NEG;
+			q[d0 / S] = seed - d0 * ext;
+			LMn = _mm256_max_epi32( LMn, _mm256_load_si256( (__m256i *)q ) );
+		}
+		LM = LMn;
+		vmaxall = _mm256_max_epi32( vmaxall, vmax );
+		if( !store ) continue;
+		{
+			__m128i h = _mm_max_epi32( _mm256_castsi256_si128( vmax ), _mm256_extracti128_si256( vmax, 1 ) );
+			h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0x4e ) );
+			h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0xb1 ) );
+			rowmax = _mm_cvtsi128_si32( h );
+		}
+		if( rowmax > maxwm )
+		{
+			maxwm = rowmax; endali = i;
+			if( !needwm ) { endpend = 1; continue; }
+			endpend = 0;
+			{
+				/* the first column holding rowmax: the lowest lane with one, then its lowest position */
+				unsigned any = 0; int ln;
+				__m256i vr = _mm256_set1_epi32( rowmax );
+				for( s=0; s<S; s++ ) any |= (unsigned)_mm256_movemask_ps( _mm256_castsi256_ps( _mm256_cmpeq_epi32( _mm256_load_si256( (__m256i *)( wmrow + s*8 ) ), vr ) ) );
+				ln = __builtin_ctz( any );
+				for( s=0; wmrow[s*8+ln] != rowmax; s++ ) ;
+				endalj = i - hi + ln * S + s;
+			}
+		}
+	}
+	if( store && endpend )
+	{
+		/* Once maxwm > ithr a clamped cell cannot hold it; wm = stored value - score elsewhere. */
+		unsigned char rc = ( endali < lgth1 ) ? u1[endali] : u1[0];
+		const int *tb = tabs + qcode[rc]*16, *Ci = CS + (size_t)( endali - hi - tmin ) * 8;
+		int *row = lb_rows + (size_t)endali * rs, dmin = hi + 1 - endali, dmx = ( hi + lgth2 - endali < W - 1 ) ? hi + lgth2 - endali : W - 1, d;
+		for( d=( dmin > 0 ? dmin : 0 ); d<=dmx; d++ )
+		{
+			int sl = ( d % S ) * 8 + d / S;
+			if( ( row[sl] >> 2 ) - tb[Ci[sl]] == maxwm ) break;
+		}
+		endalj = endali - hi + d;
+	}
+	if( !store )
+	{
+		__m128i h = _mm_max_epi32( _mm256_castsi256_si128( vmaxall ), _mm256_extracti128_si256( vmaxall, 1 ) );
+		h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0x4e ) );
+		h = _mm_max_epi32( h, _mm_shuffle_epi32( h, 0xb1 ) );
+		maxwm = _mm_cvtsi128_si32( h );
+	}
+	else
+	{
+		lb_S = S; lb_W = W; lb_hi = hi; lb_lo = lo; lb_ext = ext;
+		lb_v0 = (int)amino_dynamicmtx[u1[0]][u2[0]]; /* Lfill_int's lr_v0: row 0's column 0 before row 1 */
+		*endalipt = endali; *endaljpt = endalj;
+	}
+	*maxwmpt = maxwm;
+	return( 1 );
+}
+#undef LB_SEL
+/* the letters of seq2 decide the table width; at most 14 */
+static int lband_onetab( unsigned char *u2, int lgth2 )
+{
+	unsigned char seen[0x100] = { 0 };
+	int i, n = 0;
+	for( i=0; i<lgth2; i++ ) if( !seen[u2[i]] ) { seen[u2[i]] = 1; n++; }
+	return( n <= 6 );
+}
+static int Lscore_band( double **amino_dynamicmtx, int lgth1, int lgth2, unsigned char *u1, unsigned char *u2,
+                        int ithr, int lo, int hi, long long *maxwmpt )
+{
+	if( lband_onetab( u2, lgth2 ) ) return( lband_striped( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, lo, hi, 0, 1, maxwmpt, NULL, NULL ) );
+	return( lband_striped( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, lo, hi, 0, 0, maxwmpt, NULL, NULL ) );
+}
+static int Lfill_bandkb( double **amino_dynamicmtx, int lgth1, int lgth2, unsigned char *u1, unsigned char *u2,
+                         int ithr, int lo, int hi, long long *maxwmpt, int *endalipt, int *endaljpt )
+{
+	if( lband_onetab( u2, lgth2 ) ) return( lband_striped( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, lo, hi, 1, 1, maxwmpt, endalipt, endaljpt ) );
+	return( lband_striped( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, lo, hi, 1, 0, maxwmpt, endalipt, endaljpt ) );
+}
+/* lres_hk()/lres_vmp() and kb_ijv()/kb_isstop() over the striped band rows */
+static int lb_hk( int i, int j )
+{
+	int k0 = ( i-1-lb_hi > 0 ) ? i-1-lb_hi : 0, jj, tbest = lb_rv( i-1, k0 ), tbestk = k0;
+	for( jj=k0+2; jj<=j; jj++ )
+	{
+		int q = lb_rv( i-1, jj-2 ) - ( jj-2 ) * lb_ext;
+		if( q > tbest ) { tbest = q; tbestk = jj-2; }
+	}
+	return( tbestk );
+}
+static int lb_vmp( int i, int j )
+{
+	int q0 = ( j-1+lb_lo > 0 ) ? j-1+lb_lo : 0, r;
+	int vm = q0 ? LBAND_NEG : ( j == 1 ) ? lb_v0 : lb_rv( 0, j-1 ), vmp = q0;
+	for( r=q0+1; r<i; r++ )
+	{
+		int p = lb_rv( r-1, j-1 );
+		if( p > vm ) { vm = p; vmp = r-1; }
+		vm += lb_ext;
+	}
+	return( vmp );
+}
+static int lb_kind( int i, int j )
+{
+	int d = j - i + lb_hi;
+	if( d < 0 || d >= lb_W ) return( LB_STOP ); /* not reached on the path: the certificate */
+	return( lb_rows[(size_t)i * 8 * lb_S + LB_SLOT( d )] & 3 );
+}
+static int lband_ijv( int i, int j, int lstop )
+{
+	if( i <= 0 || j <= 0 ) return( lstop );
+	switch( lb_kind( i, j ) )
+	{
+		case LB_H: return( -( j - lb_hk( i, j ) ) );
+		case LB_V: return( i - lb_vmp( i, j ) );
+		case LB_STOP: return( lstop );
+		default: return( 0 );
+	}
+}
+static int lband_isstop( int i, int j ) { return( i <= 0 || j <= 0 || lb_kind( i, j ) == LB_STOP ); }
+
+#ifndef LBAND_W
+#define LBAND_W 32       /* half-width of the first band */
+#endif
+#ifndef LBAND_REFILL
+#define LBAND_REFILL 0.6 /* refill with the certificate's band only below this fraction of the cells */
+#endif
+/* Cost of a cell relative to the full striped fill (Dikarya VM, round 4): the score-only first
+   band and the striped band with traceback.  On inputs where most pairs end with the full fill
+   (divergent or very unequal lengths) the first band is wasted, so each thread keeps a running
+   estimate of the cells saved and, once it is negative after LBAND_LEARN attempts, tries only
+   every LBAND_PROBE-th pair.  Either way the result is the full fill's; only time changes. */
+#define LBAND_COST1 0.8
+#define LBAND_COST2 1.3
+#define LBAND_LEARN 64
+#define LBAND_PROBE 32
+static TLS double lband_saved = 0.0;
+static TLS long lband_tries = 0, lband_skipped = 0;
+/* Cells of an lgth1 x lgth2 fill with lo <= i-j <= hi (i in 1..lgth1, j in 1..lgth2). */
+static double lband_cells( int lgth1, int lgth2, long long lo, long long hi )
+{
+	double n = 0; int i;
+	for( i=1; i<=lgth1; i++ )
+	{
+		long long a = i - hi, b = i - lo;
+		if( a < 1 ) a = 1;
+		if( b > lgth2 ) b = lgth2;
+		if( b >= a ) n += (double)( b - a + 1 );
+	}
+	return( n );
+}
+/*
+ * The band certificate (paper/round2-band-certificate.md): with M >= every substitution score
+ * that can be read (0 included), T <= M, nonpositive gap costs and a feasible raw score L >
+ * max(T,0), every history using a cell outside min(0,D)-r <= i-j <= max(0,D)+r, D = lgth1-lgth2,
+ * r = min(lgth1,lgth2) - ceil(L/M), scores below L.  Within such a band the restricted fill gives
+ * the full fill's maximum, end point, path and markers.  L is the first band's own maximum (a
+ * real history of the full recurrence).  Returns 1 with the exact fill done, or 0 having left
+ * nothing the caller uses (it then runs the full fill).
+ */
+static int Lband_try( double **amino_dynamicmtx, double **n_dynamicmtx, double scoreoffset,
+                      char *s1, char *s2, int lgth1, int lgth2, int **ijp, int lstop,
+                      double *maxwmpt, int *endalipt, int *endaljpt )
+{
+	int c, k, n = lgth1 < lgth2 ? lgth1 : lgth2, d = lgth1 - lgth2, mx = 0, ithr;
+	long long lo, hi, w = LBAND_W, kk, r, L;
+	unsigned char *u1 = (unsigned char *)s1, *u2 = (unsigned char *)s2, used[0x100];
+	double full = (double)lgth1 * lgth2;
+	lr_banded = 0;
+	if( penalty > 0 || penalty_ex > 0 || n < 4 * LBAND_W ) return( 0 );
+	/* the check mode tries every eligible pair, so that each one is compared */
+	if( lband_tries >= LBAND_LEARN && lband_saved < 0.0 && !lband_check_on() && ++lband_skipped % LBAND_PROBE ) return( 0 );
+	if( !lfill_prepare( amino_dynamicmtx, n_dynamicmtx, scoreoffset, u1, u2, lgth1, lgth2, &ithr, used ) ) return( 0 );
+	for( c=0; c<0x100; c++ ) if( used[c] ) for( k=0; k<0x100; k++ ) if( used[k] )
+		if( (int)amino_dynamicmtx[c][k] > mx ) mx = (int)amino_dynamicmtx[c][k];
+	if( mx <= 0 || ithr > mx ) return( 0 );
+	/* the first band only supplies L: its raw maximum is the score of a real history */
+	/* the striped kernel takes a band of a multiple of 8 diagonals (a wider band is still exact) */
+	lo = ( d < 0 ? d : 0 ) - w; hi = ( d > 0 ? d : 0 ) + w; hi += ( 8 - ( hi - lo + 1 ) % 8 ) % 8;
+	if( lband_cells( lgth1, lgth2, lo, hi ) > LBAND_REFILL * full ) return( 0 );
+	if( !Lscore_band( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, (int)lo, (int)hi, &L ) ) return( 0 );
+	lband_tries++;
+	lband_saved -= LBAND_COST1 * lband_cells( lgth1, lgth2, lo, hi ); /* until the band is used */
+	if( lband_check_on() )
+	{
+		double m; int ei, ej;
+		if( !Lfill_band( amino_dynamicmtx, n_dynamicmtx, scoreoffset, s1, s2, lgth1, lgth2, ijp, lstop, (int)lo, (int)hi, &m, &ei, &ej ) || (long long)m != L )
+		{
+			fprintf( stderr, "\nLBAND_CHECK: striped band score %lld, row-major %.17g\n", L, m );
+			exit( 1 );
+		}
+		lr_banded = 0;
+	}
+	if( L <= ( ithr > 0 ? ithr : 0 ) ) return( 0 );
+	kk = ( L + mx - 1 ) / mx;
+	if( kk < 1 || kk > n ) return( 0 );
+	r = n - kk;
+	lo = ( d < 0 ? d : 0 ) - r; hi = ( d > 0 ? d : 0 ) + r; hi += ( 8 - ( hi - lo + 1 ) % 8 ) % 8;
+	if( lband_cells( lgth1, lgth2, lo, hi ) > LBAND_REFILL * full ) return( 0 );
+	lband_saved += full - LBAND_COST2 * lband_cells( lgth1, lgth2, lo, hi );
+	{
+		long long m;
+		if( !Lfill_bandkb( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, (int)lo, (int)hi, &m, endalipt, endaljpt ) ) return( 0 );
+		*maxwmpt = (double)m;
+	}
+	return( 1 );
+}
+#endif
 #if defined(MAFFT_LSTRIPED)
 #if defined(MAFFT_AVX512)
 /*
@@ -1244,7 +1864,11 @@ static int Lfill_int( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 }
 #endif
 
+#if MAFFT_LBAND
+static double L__align11_body( double **n_dynamicmtx, double scoreoffset, char **seq1, char **seq2, int alloclen, int *off1pt, int *off2pt )
+#else
 double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char **seq2, int alloclen, int *off1pt, int *off2pt )
+#endif
 /* score no keisan no sai motokaraaru gap no atukai ni mondai ga aru */
 {
 //	int k;
@@ -1310,6 +1934,10 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	{
 #if defined(MAFFT_LSTRIPED)
 		kb_release();
+#endif
+#if MAFFT_LBAND
+		free( lb_rows ); lb_rows = NULL; lb_cap = 0;
+		free( lb_buf ); lb_buf = NULL; lb_bufcap = 0;
 #endif
 		if( orlgth1 > 0 && orlgth2 > 0 )
 		{
@@ -1431,7 +2059,7 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 #if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
 	/* The byte/bit traceback is self-contained. Only allocate the full int matrix if
 	   the striped fill declines (fractional scoring, range limits or warped alignment). */
-	if( !trywarp )
+	if( !trywarp && !lband_on() )
 	{
 		localstop = lgth1+lgth2+1;
 		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, &maxwm, &endali, &endalj ) )
@@ -1469,6 +2097,23 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	}
 	ijp = commonIP;
 
+#if MAFFT_LBAND
+	/* The exact band first (it needs ijp); if it declines, the striped fill as before. */
+	if( !trywarp && lband_on() )
+	{
+		localstop = lgth1+lgth2+1;
+		if( Lband_try( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, ijp, localstop, &maxwm, &endali, &endalj ) )
+		{
+			kbfill = 2; /* the striped band rows, read through lband_ijv() */
+			goto Lint_done;
+		}
+		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, &maxwm, &endali, &endalj ) )
+		{
+			kbfill = 1;
+			goto Lint_done;
+		}
+	}
+#endif
 #if defined(MAFFT_LSTRIPED) && !MAFFT_KB_NOIJP
 	if( !trywarp )
 	{
@@ -1784,7 +2429,7 @@ fprintf( stderr, "\n" );
 
 Lint_done:
 #if defined(MAFFT_LSTRIPED)
-	if( kbfill ? kb_isstop( endali, endalj ) : ( ijp[endali][endalj] == localstop ) )
+	if( kbfill ? LKB_ISSTOP( kbfill, endali, endalj ) : ( ijp[endali][endalj] == localstop ) )
 #else
 	if( ijp[endali][endalj] == localstop )
 #endif
@@ -1829,6 +2474,45 @@ Lint_done:
 
 	return( maxwm );
 }
+
+#if MAFFT_LBAND
+/*
+ * MAFFT_LBAND_CHECK (any value): every pair is aligned twice, without and with the band, and
+ * the two results (score, offsets, aligned strings) must be identical, else the run stops.
+ * For tests only: it does the all-pairs work twice.
+ */
+static char *lband_copy( const char *t )
+{
+	char *c = malloc( strlen( t ) + 1 );
+	if( !c ) ErrorExit( "Cannot allocate memory." );
+	return( strcpy( c, t ) );
+}
+double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char **seq2, int alloclen, int *off1pt, int *off2pt )
+{
+	if( lband_check_on() && seq1 && lband_on() )
+	{
+		char *a1 = lband_copy( seq1[0] ), *a2 = lband_copy( seq2[0] ), *r1, *r2;
+		int o1, o2, p1, p2;
+		double v0, v1;
+		lband_force = 0;
+		v0 = L__align11_body( n_dynamicmtx, scoreoffset, seq1, seq2, alloclen, &o1, &o2 );
+		r1 = lband_copy( seq1[0] ); r2 = lband_copy( seq2[0] );
+		strcpy( seq1[0], a1 ); strcpy( seq2[0], a2 );
+		lband_force = 1;
+		v1 = L__align11_body( n_dynamicmtx, scoreoffset, seq1, seq2, alloclen, &p1, &p2 );
+		lband_force = -1;
+		if( memcmp( &v0, &v1, sizeof( double ) ) || o1 != p1 || o2 != p2 || strcmp( r1, seq1[0] ) || strcmp( r2, seq2[0] ) )
+		{
+			fprintf( stderr, "\nLBAND_CHECK: banded fill differs (score %.17g vs %.17g, offsets %d,%d vs %d,%d)\n", v0, v1, o1, o2, p1, p2 );
+			exit( 1 );
+		}
+		free( a1 ); free( a2 ); free( r1 ); free( r2 );
+		*off1pt = p1; *off2pt = p2;
+		return( v1 );
+	}
+	return( L__align11_body( n_dynamicmtx, scoreoffset, seq1, seq2, alloclen, off1pt, off2pt ) );
+}
+#endif
 
 
 double L__align11_noalign( double **n_dynamicmtx, char **seq1, char **seq2 )
