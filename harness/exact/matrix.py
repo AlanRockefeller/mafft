@@ -141,8 +141,9 @@ class Runner:
 
     def key(self, binary, args, env):
         files = {a: self.input_digest(a) for a in args if os.path.isfile(a)}
+        # the timeout too: a case that timed out may pass under a longer limit, and the reverse
         return caserun.case_key(binary=self.digest(binary), args=args, files=files,
-                                env=caserun.relevant_env(env))
+                                env=caserun.relevant_env(env), timeout=self.timeout)
 
     def input_digest(self, path):
         if path not in self.inputs:
