@@ -243,3 +243,270 @@ all with the same compiler and flags (gcc 13.3), 2-vCPU VM at nice 19.
 Matching rejections in the ASan run are those of section 5 (FFT-NS-i and NW-NS-i on `one` and,
 under ASan only, on `tiny`). The clang FMA class and its `-ffp-contract=off` alternative were
 run at item 2.8 (163/163 each). arm64, Metal and CUDA remain unverified here.
+
+## 8. Phase 4: speedups
+
+Branch `opt9-speedups`, on top of the Phase 2 and 3 commits. Two speedups are implemented:
+the AVX2 importance gather (item 1) and an exact banded all-pairs fill (item 3). Item 5 was
+measured and is waiting for a decision; the other items have design notes below.
+
+### Production profile
+
+The brief's ranking came from Audit A's simulated 80 × 650 bp input, where refinement was
+about 90% of L-INS-i CPU. On the 12 development inputs of the production corpus (production
+flags, `--thread 1`, build `312056a`, `perf record -e cpu-clock`, 52,470 samples) the shares
+are different:
+
+| Stage | Share of CPU |
+| --- | ---: |
+| all-pairs local DP: `Lfill_kb` 29.8%, `Lscore_kb` 4.0%, `L__align11` 2.0%, `lfill_prepare` 0.6% | 36.4% |
+| refinement DP, `partA__align` | 11.8% |
+| importance fill: `fillimp_track` 8.2%, `fillimp_banded` 5.1% | 13.2% |
+| progressive alignment, `A__align` | 7.5% |
+| `alignableReagion` | 3.7% |
+| `match_calc` | 3.3% |
+| refinement bookkeeping: `cpmx_calc_new` 2.0%, `commongappick_record` 1.9%, `gapruns` 1.6%, `makeresmap` 1.0%, `gapcountf` 0.3% | 6.8% |
+| importance gather, `part_imp_match_out_vead_gapmap` | 1.5% |
+| an unresolved libc address called from the refinement workers (probably the clearing `memset`) | 1.4% |
+| `igs_pairscores_x` | 0.7% |
+
+By program: `dvtditr` 50.7%, `tbfast` 43.8%, `makedirectionlist` 4.3%. All-pairs local DP,
+not refinement, is the largest single target on real ITS data.
+
+### Item 1: AVX2 importance gather (`f52e4fe`)
+
+The given branch in `part_imp_match_out_vead_gapmap`: a vector load where `gapmap2` maps four
+consecutive `j` to four consecutive columns, else `_mm256_i32gather_pd`. Every element still
+gets one add of the same two values, so `imp[]` is bit-identical.
+
+| Inputs | Before | After | Ratio |
+| --- | ---: | ---: | ---: |
+| `dna80dup`, L-INS-i `--thread 1`, 5 rounds | 26.62 s | 26.13 s | 1.019× |
+| 12 development inputs, production flags, 3 rounds | 55.10 s | 55.45 s | 0.994× |
+
+As the audit estimated on the refinement-heavy fixture, but no gain in production, where the
+function is 1.5% of CPU. It is kept because it is exact and costs nothing measurable. Fast
+matrix 163/163.
+
+### Item 3: exact banded all-pairs fill
+
+**Bound first.** `paper/round2-band-certificate.md` shows that, with a feasible raw score
+`L > max(T, 0)` (T the end threshold `ithr`), every cell of the optimal history lies within
+`r = N − ceil(L/M)` diagonals of the band `[min(0,D) − r, max(0,D) + r]`, where M is the
+largest substitution score among the letters used, N the shorter length and D the length
+difference; any superset of that band is also exact. An instrumented build measured, over
+all 607,463 all-pairs pairs of the 100 production inputs, the fraction of cells outside the
+band (0 bound violations):
+
+| Lower bound L | Cells skipped, all | Cells skipped, holdout |
+| --- | ---: | ---: |
+| the exact score (the limit) | 65.4% | 66% |
+| a ±32-diagonal band's maximum | 24.7% | 26% |
+| iterative: that band's maximum, then the certificate's band | 48% | 47% |
+
+Since all-pairs was 36% of CPU, skipping about half its cells predicted roughly 10% less CPU
+end to end if time scaled with cells.
+
+**Implementation** (`core/Lalign11.c`, AVX2 builds without AVX-512, `MAFFT_LBAND`):
+
+- `Lband_try` runs before the full striped fill. It needs gap penalties ≤ 0, both lengths at
+  least 4·w (w = 32), M > 0 and `ithr ≤ M`. Pass 1 computes only the score over
+  `[min(0,D) − w, max(0,D) + w]`; its maximum is the score of a real history, so it is a valid
+  L. If L ≤ max(T, 0), or the certificate band would cover more than 0.6 of the matrix, the
+  pair declines and takes the unchanged full fill. Otherwise the certificate band is filled
+  with traceback.
+- The band kernel is striped in diagonal coordinates (slot d is column `i − hi + d`): the
+  diagonal predecessor is the same slot, the vertical state moves one slot per row, and the
+  horizontal gap term is a prefix maximum built from lane-local maxima and a carry from the
+  previous row. Scores come from `permutevar8x32` lookups on pre-striped letter codes; cells
+  outside the matrix score `INT_MIN/2`, so they cannot win without masks. Stored cells hold
+  `value·4 | kind`, and the traceback reads them through the same tie rules as `Lfill_kb`
+  (`LKB_ISSTOP`, `lband_ijv`). Selects are xor/and/xor, because `vpblendvb` costs two port-5
+  micro-ops on Broadwell.
+- Each thread keeps a running estimate of the cells saved (pass 1 costs 0.8 of a full-fill
+  cell, the traceback band 1.3). Once the estimate is negative after 64 attempts, the thread
+  tries the band only on every 32nd pair. This changes only which exact fill runs.
+- `MAFFT_NOLBAND` turns the band off. `MAFFT_LBAND_CHECK` aligns every pair without and
+  then with the band (the adaptive skip off, so every eligible pair is compared), compares
+  score, offsets and both aligned strings, and exits 1 on any difference.
+
+Builds where `MAFFT_LBAND` is 0 compile to the same objects as before
+(`harness/objcheck.sh`: icelake-server, x86-64 baseline and clang x86-64-v4 have
+0 differing objects; gcc native has 1, `Lalign11.o`). arm64, Metal and CUDA builds do not
+contain the band; they were not built here.
+
+**Correctness.**
+
+- Check mode over all 100 production inputs (production flags, final source): no
+  difference, every output equal to its golden (development 12, holdout 78, difficult 10).
+  An earlier build, before the adaptive skip, also passed.
+- `harness/exact/band_check.py`: 270 simulated DNA families (5 divergences × 3 indel rates ×
+  3 lengths × 6 extras: duplicates, IUPAC codes and N runs, fragments, outliers, reverse
+  complements with lower case), L-INS-i with `--maxiterate 0` or `--adjustdirection
+  --maxiterate 2`, in check mode, each output also compared with stock: 270/270 (135 per
+  strategy).
+- The same grid under ASan+UBSan (UBSan halting): 270/270, no sanitizer report. An earlier
+  run, in which UBSan
+  only printed, reported one signed overflow (`LBAND_NEG * 4` in the row-0 store of slots that
+  are never read); it is fixed, and `band_check.py` now fails any case with a sanitizer report
+  on stderr.
+- Regression matrices on the final source: section 9.
+
+**Speed.** Alternating builds `bt-off` (`-DMAFFT_LBAND=0`) and band, both from `f52e4fe`
+with the same flags (`-O3 -march=native -ffp-contract=off`), production options,
+`--thread 1`, medians of `RUSAGE_CHILDREN` CPU. All outputs identical to the goldens.
+
+| Partition | Inputs | Band off | Band on | CPU | Wall | Per-input median (min) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| development (tuning) | 12 | 55.2 s | 47.3 s | 1.167× | 1.171× | 1.175× (1.002×) |
+| holdout | 78 | 430.8 s | 391.1 s | 1.102× | 1.101× | 1.113× (0.986×) |
+| difficult | 10 | 110.0 s | 103.0 s | 1.068× | 1.064× | 1.037× (0.972×) |
+| all | 100 | 596.0 s | 541.3 s | **1.101×** | **1.100×** | 1.111× (0.972×) |
+
+Two rounds per build (the three-round rule was relaxed for this 4-hour run; the earlier
+partition runs below had 2–3 rounds and agree). Measured end to end, 9.2% less CPU,
+close to the 10% predicted from cells.
+
+**Tuning and the holdout, disclosed.** w and the refill threshold were swept on the
+development inputs only (every setting gave 1.16–1.17×). The first version, without the
+adaptive skip, gave 1.096× on the holdout (430.4 → 392.6 s), but slowed 6 holdout inputs by
+up to 5.8% (min 0.942× per input): divergent inputs whose pairs paid for pass 1 and then
+declined. The adaptive skip was added because of that result, so **the holdout is not
+untouched for the skip**. On those six inputs it moved the total from 0.986× to 1.022× (worst
+0.950× → 0.995×). The difficult partition, untouched by the w and threshold sweep, gave
+1.071× without the skip and 1.068× with it. Three inputs remain below 0.995× in the table:
+`buh4` (difficult, 1042 sequences at low similarity) 0.972×, consistent across rounds and
+with an earlier run; `26et` 0.986×; `eifm` 0.991×. A likely cause, not verified, is per-pair
+fixed cost (`lfill_prepare`, computing M, buffer setup) that the estimate does not count. It
+was left untuned so that the remaining inputs stay untouched.
+
+**The refinement DP.** The certificate rests on the local DP's zero floor and a score that
+only grows by substitution scores bounded by M. `partA__align` is a global profile DP with
+fractional, position-dependent gap costs and importance terms, and no zero floor, so the
+certificate does not carry over. An exact band there would need a different bound (an upper
+bound on the score still reachable from each cell), not studied here.
+
+### Item 5: waiting in ordered `--thread 2` (measured, not implemented)
+
+An instrumented build on the 11 development L-INS-i inputs: 94 of 7,572 attempts (1.2%) were
+recomputed because an earlier position was accepted; the workers spent 5.6 s waiting for
+their commit turn, summed over both threads; CPU `--thread 2`/`--thread 1` 1.053, latency
+`--thread 1`/`--thread 2` 1.547. Waiting dominates, not recomputation. Removing all of it
+would shorten `--thread 2` wall time by at most about 2.8 s of 39 s (about 7%) and save no
+CPU. Holding the turn only during scoring would not help, because scoring
+(`igs_pairscores_x`) is under 1% of CPU; the waiting comes from attempts that finish out of
+order. Recovering it needs a look-ahead: a worker that finishes early starts the next
+uncommitted position, and whoever holds the turn commits parked results in order. That is a
+substantial change to the commit protocol, put to the maintainer before implementation.
+
+### Design notes for the items not implemented
+
+**Item 2, refinement efficiency.** Refinement DP and importance work are about 27% of
+production CPU (`partA__align` 11.8%, importance fill 13.2%, gather 1.5%).
+
+- (a) *Fuse the importance add into `partA_row`.* It removes one pass over each row, a share
+  of the 1.5% gather plus the row traffic; expected ≤ 1–2%. The order `(match + imp) + wm`
+  and `impclean`'s `+ 0.0` must stay.
+- (b) *Generation-stamped importance rows.* The clearing is the probable owner of the
+  unresolved 1.4% libc address; profile with libc symbols before building this.
+- (c) *Incremental profiles and gap counts across rejected attempts.* The rebuild functions
+  total about 6.8%. Within a generation each branch is attempted once, and an acceptance
+  usually changes every row, so reuse would come only from groups whose rows a hash shows
+  unchanged. The bound is 6.8%; the likely gain is much smaller.
+- (d) *Row-mask reuse in `igs_pairscores_x`.* 0.7% of production CPU (17.5% in the audit's
+  FFT-NS-i run). Only 2 of 100 production jobs are `--auto`; worth measuring only for
+  FFT-NS-i workloads.
+- (e) *int16 `ijp`.* Readers of `ijp` are spread over nine aligners (`Salignmm.c`,
+  `partSalignmm.c`, `Dalignmm.c`, `Lalign11.c`, `Galign11.c`, `MSalignmm.c`, `SAalignmm.c`,
+  `Lalignmm.c`, `MSalign11.c`); the all-pairs band does not use it. A narrower matrix saves
+  memory traffic only, needs a fallback above 32,767 and touches every traceback; not
+  recommended before (a)–(c).
+
+**Item 4, common-query batching.** With the band, the all-pairs stage is smaller (the CPU
+saved is about a quarter of it), and batching works on full fills, so the two compete for the
+same pairs. Revisit only for inputs where the band declines most pairs (the divergent ones),
+where batching could take the declined pairs.
+
+**Item 6, ordered refinement for DNA FFT-NS-i.** The threaded FFT-NS-i attempt calls
+`Falign` (`tditeration.c:1326`), which calls `A__align`, `A__align_variousdist`, `MSalignmm`
+or `Aalign` per anchor block; acceptance comes from `intergroup_score`. The commit protocol
+carries over unchanged; what must be shown is that an attempt is a function of the master
+alignment and the branch only. The round-2 table covers `Falign_localhom` and
+`partA__align`, not these. `Falign.c` has 95 `static TLS` objects and `Salignmm.c` 51; each
+needs the same written-before-read argument, including dikarya1's uncleared `Falign` work
+rows and the anchor search's buffers (`alignableReagion`, `crossscore`). `A__align` may share
+`partA__align`'s one-column-block read of gap scratch, so the same guard and one-worker
+fallback would be needed. Test plan: extend `refinement_attempt_reproducible` behind a
+test switch and run the jitter and forced-fallback groups with FFT-NS-i. The `searchAnchors`
+overread (item 2.10) is in `main`, once per run, and does not affect attempts.
+
+**Item 7, runtime CPU dispatch.** The vector paths are chosen at compile time from
+`__AVX2__`/`__AVX512*__` in `mafft_simd.h`, and intrinsics are confined to four files
+(`Lalign11.c`, `partSalignmm.c`, `Salignmm.c`, `mltaln9.c`). `target_clones` does not fit,
+because the code selects paths with `#if`, not inside functions. The practical design: compile
+those four files twice more (AVX2, AVX-512) with renamed external symbols, and pick one set
+at start-up with `cpuid`, either per entry point (an ifunc resolver) or with one table of
+function pointers. Constraints: the clones must use the generic stock build's rounding class,
+so `MAFFT_STOCK_FMA` is 0 and no clone may contract `a*b+c` (the Makefile's ISO `-std`
+already stops gcc from contracting; clang contracts by default and needs
+`-ffp-contract=off`, as in item 2.8); thread-local statics are
+per clone, which is fine because a process uses one set. Verification: the full matrix with
+each clone forced on this CPU, plus objcheck that the baseline objects are unchanged.
+
+**Item 8, workload-aware kernel selection.** The band's adaptive skip is a first instance:
+a run-time estimate that changes only which exact kernel runs. The same pattern fits the
+other choices (striped vs marker fill, row caches, the direct fill-imp threshold), driven by
+quantities already computed (lengths, letter counts, the k-mer distances of the guide tree),
+with the current choice as default. Not benchmarked in this round.
+
+**Item 9, `--unalignlevel`.** Profile of G-INS-i (`--globalpair --maxiterate 1000
+--thread 1`) on a simulated 40 × 650 bp input (`simseq.py 2 40 650 dna rate=0.12
+dup=0.15`), build `312056a`, at nice 19 alongside other jobs:
+
+| | User CPU | Peak RSS | Top functions |
+| --- | ---: | ---: | --- |
+| without `--unalignlevel` | 9.0 s | 33 MB | `G__align11` 44.7%, `partA__align` 27.3%, gather 5.9%, `fillimp_track` 2.9% |
+| `--unalignlevel 0.6` | 38.2 s | 46 MB | `partA__align_variousdist` 77.2%, `G__align11` 9.9%, `scarr_fill` 2.4%, `match_calc_add` 1.7% |
+
+`partA__align_variousdist` has no vector code: `partA__align` has AVX2, AVX-512 and NEON row
+kernels (`partA_row`), the variousdist version none. The recurrence is the same apart from
+the match row, which is a weighted sum over several matrices (`match_calc_add`). Sending its
+row loop through `partA_row`, with the match row computed as now, is the plausible exact
+speedup. Its gain is bounded by that function's 77% share (at most 4.4× end to end on this
+input) and depends on how much faster the vector row is than the scalar one there; not
+measured.
+
+The exclusion from ordered refinement (`specificityconsideration == 0.0`) is not required by
+the commit protocol, which needs only that an attempt depend on the master alignment and the
+branch. It is required by the proof as written, which covers `partA__align` and one scoring
+matrix, not `partA__align_variousdist` and `intergroup_score_multimtx`. Empirical check: a
+scratch build with only that condition removed, G-INS-i (`--globalpair --maxiterate 1000`)
+on 7 inputs (`dna12small`, `dna20alldup`, `dna24div`, `dna30near`, `dna40`, `dna40outlier` and
+the 40 × 650 input above). With `--unalignlevel 0.6` and `0.2` at `--thread 2` and `3`, all
+28 runs used ordered refinement and were byte-identical to stock `--thread 1`.
+`--allowshift` stayed outside the ordered scope through another condition (14 runs not
+ordered; 8 differed from `--thread 1`, stock's usual completion-order behaviour). So
+extending the scope to `--unalignlevel` looks feasible; it needs the dependency table
+extended to `partA__align_variousdist` and the multi-matrix scoring, and the jitter and
+forced-fallback groups run with it, before it can ship.
+
+## 9. Regression matrix after Phase 4
+
+The final source of the band (the working tree later committed), each run from a clean work
+directory through `harness/verify-against-stock.sh`: stock `0a2319b`, the candidate and its
+`-DMAFFT_ORDERED_TEST` build, the same compiler and flags (gcc 13.3), 2-vCPU VM at nice 19.
+
+| Run | Flags | Result |
+| --- | --- | --- |
+| full matrix | `-O3 -march=native -ffp-contract=off` (AVX2, band on) | 675/675 |
+| fast matrix, ASan+UBSan (UBSan halting) | `-O1 -g -fno-omit-frame-pointer -march=native -ffp-contract=off -fsanitize=address,undefined`, `STRIP=true` | 163/163 |
+| `band_check.py` grid against stock | production flags | 270/270 |
+| `band_check.py` grid, ASan+UBSan | as the fast matrix | 270/270 |
+| check mode over the production corpus | production flags | 100/100 |
+| objcheck, final source against `f52e4fe` | gcc icelake-server, gcc x86-64, clang x86-64-v4, gcc native | 0, 0, 0 and 1 (`Lalign11.o`) of 65 objects differ |
+
+Matching rejections are those of section 5. The first ASan+UBSan run, on the source before
+the fix, failed 39 L-INS-i cases (all of them on the `LBAND_NEG * 4` overflow of section 8),
+which is how the overflow was found. The scalar build does not compile the band
+(`MAFFT_LBAND` is 0), and objcheck shows its objects unchanged. arm64, Metal and CUDA remain
+unverified here.

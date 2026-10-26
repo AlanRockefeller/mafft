@@ -6,11 +6,20 @@ Each released version is a tag on the `exact-speedups` branch, a linear series o
 build. Newest first. Terms are explained in the
 [glossary](README.md#glossary).
 
-## `7.526-opt9` — unreleased (branch `audit-fixes`)
+## `7.526-opt9` — unreleased (branches `audit-fixes`, `opt9-speedups`)
 
-Audit fixes and verification infrastructure; no new speedup. Details and evidence:
-[round-4 report](paper/round4-audit-fixes.md).
+An exact banded all-pairs fill, audit fixes and verification infrastructure. Details and
+evidence: [round-4 report](paper/round4-audit-fixes.md).
 
+- **Exact banded all-pairs local DP** (AVX2 builds without AVX-512). A narrow first pass
+  proves a lower bound on each pair's score; by the band certificate, only the cells within
+  the resulting band are then filled. Pairs where that would not pay take the unchanged full
+  fill. On the 100-input Dikarya production corpus with `--thread 1`, **1.10x less CPU**
+  than without the band (holdout 1.10x, development 1.17x, difficult 1.07x), every output
+  identical. `MAFFT_NOLBAND` turns it off; `MAFFT_LBAND_CHECK` runs every pair both ways and
+  stops on a difference.
+- An AVX2 gather in the importance row read: 1.9% less CPU on a refinement-heavy fixture, no
+  measurable change on production inputs.
 - The CLUSTAL header prints stock's `v7.526`, so `--clustalout` output is byte-identical to
   stock. Through dikarya5 it said `7.526-opt8`, so that CLUSTAL files stayed identical to
   opt8's.
