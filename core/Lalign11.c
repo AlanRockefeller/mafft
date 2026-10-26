@@ -1094,6 +1094,7 @@ static inline __attribute__((always_inline)) int lband_striped( double **amino_d
 	if( store )
 	{
 		size_t nr = (size_t)( lgth1 + 1 ) * rs;
+		if( nr > ( (size_t)1 << 26 ) ) return( 0 ); /* as Lfill_int: past 256 MB leave it to the full fill */
 		if( nr > lb_cap )
 		{
 			free( lb_rows ); lb_rows = malloc( sizeof( int ) * nr + 32 );
@@ -1368,7 +1369,8 @@ static int Lband_try( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	if( lband_check_on() )
 	{
 		double m; int ei, ej;
-		if( !Lfill_band( amino_dynamicmtx, n_dynamicmtx, scoreoffset, s1, s2, lgth1, lgth2, ijp, lstop, (int)lo, (int)hi, &m, &ei, &ej ) || (long long)m != L )
+		/* Lfill_band declines past its own row cap or on an allocation failure: nothing to compare */
+		if( Lfill_band( amino_dynamicmtx, n_dynamicmtx, scoreoffset, s1, s2, lgth1, lgth2, ijp, lstop, (int)lo, (int)hi, &m, &ei, &ej ) && (long long)m != L )
 		{
 			fprintf( stderr, "\nLBAND_CHECK: striped band score %lld, row-major %.17g\n", L, m );
 			exit( 1 );
@@ -1381,12 +1383,12 @@ static int Lband_try( double **amino_dynamicmtx, double **n_dynamicmtx, double s
 	r = n - kk;
 	lo = ( d < 0 ? d : 0 ) - r; hi = ( d > 0 ? d : 0 ) + r; hi += ( 8 - ( hi - lo + 1 ) % 8 ) % 8;
 	if( lband_cells( lgth1, lgth2, lo, hi ) > LBAND_REFILL * full ) return( 0 );
-	lband_saved += full - LBAND_COST2 * lband_cells( lgth1, lgth2, lo, hi );
 	{
 		long long m;
 		if( !Lfill_bandkb( amino_dynamicmtx, lgth1, lgth2, u1, u2, ithr, (int)lo, (int)hi, &m, endalipt, endaljpt ) ) return( 0 );
 		*maxwmpt = (double)m;
 	}
+	lband_saved += full - LBAND_COST2 * lband_cells( lgth1, lgth2, lo, hi );
 	return( 1 );
 }
 #endif
