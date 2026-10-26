@@ -51,7 +51,12 @@ def main():
         fa = a.out / (name + '.fa')
         args = [sys.executable, str(HERE / 'simseq.py'), str(1000 + 97 * n + seed), str(a.nseq), length, 'dna',
                 'rate=' + rate, 'indel=' + indel] + extra.split()
-        fa.write_bytes(subprocess.run(args, check=True, capture_output=True).stdout)
+        try:
+            fa.write_bytes(subprocess.run(args, check=True, capture_output=True, timeout=a.timeout).stdout)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            tally.add(' '.join(opts), name, 'simseq.py failed: %s' % type(e).__name__)
+            print('%4d/%d %-48s FAIL simseq.py' % (n + 1, len(grid), name), flush=True)
+            continue
         out = a.out / (name + '.out')
         got = caserun.run_case([a.mafft, '--thread', '1', *opts, str(fa)], out, env=dict(env, MAFFT_LBAND_CHECK='1'),
                                timeout=a.timeout, nice=19, err=a.out / (name + '.err'))
