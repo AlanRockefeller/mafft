@@ -30,7 +30,7 @@ def main():
     ap.add_argument('--output',type=Path,required=True);ap.add_argument('--manifest',type=Path,required=True)
     ap.add_argument('--pairwise',action='store_true');args=ap.parse_args()
     args.output.mkdir(parents=True,exist_ok=False)
-    runs=[];sources=[];builds=set();installed=set()
+    runs=[];sources=[];builds=set();installed=set();legacy=0
     for p in args.runs:
         metadata_path=p.parent/'experiment.json'
         metadata=json.loads(metadata_path.read_text())
@@ -40,6 +40,7 @@ def main():
         # experiments recorded before that field existed have none to compare.
         programs=metadata.get('installed_file_sha256')
         if programs is not None:installed.add(json.dumps(programs,sort_keys=True))
+        else:legacy+=1
         sources.append({'runs':str(p.resolve()),'runs_sha256':sha256_file(p),
                         'experiment':str(metadata_path.resolve()),'experiment_sha256':sha256_file(metadata_path),
                         'binary':build[0],'version':build[1],'launcher_sha256':build[2],
@@ -51,6 +52,8 @@ def main():
             if sha256_file(r['alignment'])!=r['output_sha256']:raise ValueError('Recorded alignment hash changed')
             r['source_log']=str(p.resolve());runs.append(r)
     if len(builds)!=1 or len(installed)>1:raise ValueError('Analyze different MAFFT builds separately')
+    # a legacy experiment's helper programs are unknown, so it cannot be shown to match a recorded set
+    if legacy and installed:raise ValueError('Analyze experiments with and without installed program hashes separately')
     manifest={f['file']:f for f in json.loads(args.manifest.read_text())['files']}
     groups=defaultdict(list)
     for r in runs:groups[r['input_sha256']].append(r)
