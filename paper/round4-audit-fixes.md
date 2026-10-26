@@ -376,9 +376,16 @@ untouched for the skip**. On those six inputs it moved the total from 0.986× to
 0.950× → 0.995×). The difficult partition, untouched by the w and threshold sweep, gave
 1.071× without the skip and 1.068× with it. Three inputs remain below 0.995× in the table:
 `buh4` (difficult, 1042 sequences at low similarity) 0.972×, consistent across rounds and
-with an earlier run; `26et` 0.986×; `eifm` 0.991×. A likely cause, not verified, is per-pair
-fixed cost (`lfill_prepare`, computing M, buffer setup) that the estimate does not count. It
-was left untuned so that the remaining inputs stay untouched.
+with an earlier run; `26et` 0.986×; `eifm` 0.991×. `buh4` never enters the band: its
+production options (`--adjustdirection --auto`) select FFT-NS-2, and a `perf record -e
+cpu-clock` profile of opt9 on it (unstripped build of `37cc54c`, output equal to the
+installed build's) has no samples in `L__align11`; the time is in `localcommonsextet_p2`
+(makedirectionlist, 29.8%), `A__align` (22.0%) and `naivepairscorefast` (15.0%). The two
+builds differ only in `Lalign11.o` (`MAFFT_LBAND` is used nowhere else), so its 2.8% comes
+from the different binary, most likely code layout, not from band work; that is not
+verified. `26et` and `eifm` are L-INS-i inputs and do run the band; for them a likely cause,
+not verified, is per-pair fixed cost (`lfill_prepare`, computing M, buffer setup) that the
+estimate does not count. They were left untuned so that the remaining inputs stay untouched.
 
 **The refinement DP.** The certificate rests on the local DP's zero floor and a score that
 only grows by substitution scores bounded by M. `partA__align` is a global profile DP with
@@ -403,8 +410,8 @@ summed. Every one of the 1,200 runs matched its golden (stock's output).
 
 Round totals (CPU): stock 5,499.6 / 5,497.3 / 5,550.6 s; dikarya5 597.4 / 597.0 / 612.1 s;
 opt9 545.2 / 542.6 / 558.3 s. Against dikarya5, 8 inputs were below 0.995×: `buh4` 0.944×
-(the same input as in the band-off comparison; dikarya5 lacks the gather as well as the band,
-and was built separately), then `3on0` 0.984×, `zdku` 0.986×, `3wt3` 0.988× and `7b9f` 0.989×.
+(the same input as in the band-off comparison, where the band does not run; dikarya5 lacks
+the gather as well as the band, and was built separately), then `3on0` 0.984×, `zdku` 0.986×, `3wt3` 0.988× and `7b9f` 0.989×.
 A fourth build, labelled opt8, was run from `/opt/mafft-7.526-opt8`; that path now reports
 `v7.526-opt8-dikarya5` (the deployment repointed it), so it measured dikarya5 a second time
 (598.4 s, within 0.02% of the release path) and is left out of the table. opt8 itself was
