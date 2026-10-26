@@ -386,6 +386,31 @@ fractional, position-dependent gap costs and importance terms, and no zero floor
 certificate does not carry over. An exact band there would need a different bound (an upper
 bound on the score still reachable from each cell), not studied here.
 
+### Final benchmark: stock, dikarya5 and opt9
+
+Builds: stock `0a2319b` and opt9 `fd6820f`, both gcc 13.3 `-O3 -march=native
+-ffp-contract=off`; dikarya5 as deployed (`/opt/mafft-releases/…-dikarya5-c81eb9794e14`).
+All 100 production inputs, production options, `--thread 1`, 3 alternating rounds, nice 19
+alongside production, 2026-10-26; medians of `RUSAGE_CHILDREN` CPU and of wall time per input,
+summed. Every one of the 1,200 runs matched its golden (stock's output).
+
+| Partition | Inputs | Stock CPU | dikarya5 CPU | opt9 CPU | Stock / opt9 CPU (wall) | dikarya5 / opt9 CPU | opt9 per input vs stock: median (min) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| development | 12 | 562.9 s | 55.4 s | 47.4 s | 11.87× (11.77×) | 1.169× | 11.84× (7.36×) |
+| holdout | 78 | 3,933.8 s | 432.4 s | 393.2 s | 10.00× (9.94×) | 1.099× | 9.87× (2.81×) |
+| difficult | 10 | 1,005.8 s | 110.7 s | 104.5 s | 9.63× (9.60×) | 1.060× | 8.43× (2.18×) |
+| all | 100 | 5,502.6 s | 598.5 s | 545.1 s | **10.09× (10.03×)** | **1.098×** | 9.71× (2.18×) |
+
+Round totals (CPU): stock 5,499.6 / 5,497.3 / 5,550.6 s; dikarya5 597.4 / 597.0 / 612.1 s;
+opt9 545.2 / 542.6 / 558.3 s. Against dikarya5, 8 inputs were below 0.995×: `buh4` 0.944×
+(the same input as in the band-off comparison; dikarya5 lacks the gather as well as the band,
+and was built separately), then `3on0` 0.984×, `zdku` 0.986×, `3wt3` 0.988× and `7b9f` 0.989×.
+A fourth build, labelled opt8, was run from `/opt/mafft-7.526-opt8`; that path now reports
+`v7.526-opt8-dikarya5` (the deployment repointed it), so it measured dikarya5 a second time
+(598.4 s, within 0.02% of the release path) and is left out of the table. opt8 itself was
+not re-measured; dikarya4's 1.45× over opt8 is the measurement in the
+[CHANGELOG](../CHANGELOG.md)'s dikarya4 entry.
+
 ### Item 5: waiting in ordered `--thread 2` (measured, not implemented)
 
 An instrumented build on the 11 development L-INS-i inputs: 94 of 7,572 attempts (1.2%) were

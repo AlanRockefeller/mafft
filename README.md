@@ -13,15 +13,33 @@
 This fork makes MAFFT 7.526 faster under one constraint: for the same input and options, the
 **output is byte-identical to unmodified MAFFT** built for the same platform and rounding class
 ([what is guaranteed](#what-is-guaranteed)). Downstream analyses calibrated on stock MAFFT
-output are unaffected; only how fast the result arrives changes. On the 100-input Dikarya production corpus,
-dikarya4 (by OpenAI Codex) is **1.45x faster than opt8** with `--thread 1`; on 56 later production inputs it
-used **9.6x less CPU than stock MAFFT 7.526**, with all 56 outputs byte-identical to stock's.
-dikarya5 adds ordered refinement, which gives DNA L-INS-i runs with `--thread 2` the
-`--thread 1` alignment **1.50x faster** than `--thread 1` (33% lower latency; same 56
-inputs). dikarya4
-was deployed to Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; this branch is the
-unreleased `7.526-opt9` (audit fixes and verification, no new speedup;
-[changelog](CHANGELOG.md)).
+output are unaffected; only how fast the result arrives changes.
+
+**opt9 against stock MAFFT 7.526** on the 100-input Dikarya production corpus, with `--thread 1`
+and each job's production options (97 are direction-adjusted L-INS-i):
+
+| | stock 7.526 | dikarya5 (deployed) | **opt9** |
+|---|---:|---:|---:|
+| CPU, all 100 inputs | 5,502.6 s | 598.5 s | **545.1 s** |
+| wall time, all 100 inputs | 5,580.1 s | 610.9 s | **556.1 s** |
+| less CPU than stock | 1x | 9.19x | **10.09x** |
+| per input: median (slowest) | | 8.91x (2.31x) | **9.71x (2.18x)** |
+| runs whose output is byte-identical to stock's | 300/300 | 300/300 | **300/300** |
+
+Dikarya VM (2 vCPU Broadwell, no AVX-512), stock and opt9 built with gcc 13.3
+`-O3 -march=native -ffp-contract=off`, dikarya5 as deployed; 3 alternating rounds, medians
+of child CPU time, at nice 19 alongside production (2026-10-26). opt9 used 1.10x less CPU
+than dikarya5 overall (holdout 1.10x, difficult 1.06x); 8 of the 100 inputs were slightly
+slower, the worst (`buh4`) by 6%.
+[Details](paper/round4-audit-fixes.md#8-phase-4-speedups).
+
+The largest step since opt8 is **dikarya4's, by OpenAI Codex**: 1.45x faster than opt8 with
+`--thread 1` on this corpus. dikarya5 adds ordered refinement, which gives DNA L-INS-i runs
+with `--thread 2` the `--thread 1` alignment **1.50x faster** than `--thread 1` (33% lower
+latency; 56 later production inputs). **opt9**, a collaboration between OpenAI Codex (max
+reasoning) and Claude Code, adds an exact banded all-pairs fill (the 1.10x over dikarya5), the
+audit fixes and the verification tooling ([changelog](CHANGELOG.md)). dikarya4 was deployed to
+Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 is unreleased.
 
 It was built for two projects that align fungal ITS sequences in production:
 
@@ -279,7 +297,7 @@ Per-version results are in the [changelog](CHANGELOG.md); the reports are indexe
 
 `git diff 0a2319b v7.526-opt8-dikarya5 -- core/` is the whole change of the latest release
 against upstream `main` (`0a2319b`, the newest official source as of 2026-10-07); `git diff
-0a2319b audit-fixes -- core/` includes the unreleased opt9 fixes. The feature tests are all in
+0a2319b opt9-docs -- core/` includes the unreleased opt9 changes (PR #3). The feature tests are all in
 `core/mafft_simd.h`, and each vector path keeps a scalar version of the same algorithm. Only
 `core/` differs from upstream; `extensions/` is unchanged.
 

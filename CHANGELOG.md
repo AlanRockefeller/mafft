@@ -6,7 +6,7 @@ Each released version is a tag on the `exact-speedups` branch, a linear series o
 build. Newest first. Terms are explained in the
 [glossary](README.md#glossary).
 
-## `7.526-opt9` — unreleased (branches `audit-fixes`, `opt9-speedups`)
+## `7.526-opt9` — unreleased (branch `opt9-docs`, PR #3)
 
 An exact banded all-pairs fill, audit fixes and verification infrastructure. Details and
 evidence: [round-4 report](paper/round4-audit-fixes.md).
