@@ -208,18 +208,48 @@ Ranked by expected gain against risk.
 
 ### 2.1 Fewer refinement cycles
 
-L-INS-i runs up to 16 cycles; `--auto` uses 2 for 100–199 sequences below 1,000 bp.
+L-INS-i runs up to 16 cycles; `--auto` uses 2 for 100–199 sequences below 1,000 bp. The
+option is `--localpair --maxiterate N` and needs no code change; the output is stock's for
+those options.
 
-- **Gain bound.** Refinement (`dvtditr`) is about half of CPU. How many cycles production
-  jobs actually run before converging is not measured; that is the first number to get.
+**Cycles actually run** (dikarya5 `--thread 1` logs, which give the same output as opt9).
+Refinement stops after a cycle that accepts nothing, so a job that ran k cycles already had
+its final alignment after cycle k − 1.
+
+| L-INS-i jobs | Jobs | Cycles run, median (range) | Reached 16 |
+| --- | ---: | ---: | ---: |
+| longest sequence < 1,000 bp | 56 | 3 (1–8) | 0 |
+| ≥ 1,000 bp | 41 | 4 (2–8) | 0 |
+
+**Measured on the 56 short jobs** (2026-10-27): the deployed opt9, production options,
+`--thread 1`, one run per cap, alternating order, nice 19 beside production. CPU is child
+user + system; wall time was dominated by production load and is not used.
+
+| Cap | CPU, 56 jobs | Saved | Byte-identical to current | Homology F1 of the changed (min / median) |
+| ---: | ---: | ---: | ---: | --- |
+| 16 (now) | 235.4 s | — | 56/56 | — |
+| 3 | 210.1 s | 10.8% | 47/56 | 0.988 / 0.9997 |
+| 2 | 181.7 s | 22.8% | 34/56 | 0.983 / 0.9996 |
+
+- **Which jobs stay identical.** At cap 2, exactly the 34 jobs that converged within 3 cycles
+  (as the stopping rule predicts). At cap 3, 47 of the 49 predicted; `3on0` and `8q2l` changed
+  although they converged within 4 cycles, not explained.
+- **Size of the saving.** The 56 short jobs are about 43% of all corpus CPU (235 s of opt9's
+  545 s in the round-4 benchmark, a separate measurement), so cap 2 on them alone would save
+  about 10% of all production MAFFT CPU. Per job the saving varies
+  (median 15%) and single runs are noisy.
+- **Size of the changes.** They are smaller than those of `--threadit 0` in round 2 (lowest
+  F1 0.965 there, 0.983 here). Round 2 also showed that an F1 that high can still move a
+  well-supported split, so the tree test is still needed.
 - **Evidence.**
-  - *For:* Dikarya's own test found `--auto` (local pairs, 2 cycles) indistinguishable from
-    L-INS-i at the tree level below 1,000 bp.
-  - *Against, for long inputs:* above 1,000 bp the failing comparison was against FFT-NS-i,
-    which also changes the pairwise method. So it says nothing about local pairs with 2
-    cycles at that length.
-- **Cost of the experiment.** It is a configuration change (`--maxiterate 2` with
-  `--localpair`), with no code.
+  - *For short jobs:* Dikarya's own test found `--auto` (local pairs, 2 cycles)
+    indistinguishable from L-INS-i at the tree level below 1,000 bp.
+  - *For long jobs, none:* above 1,000 bp the failing comparison was against FFT-NS-i, which
+    also changes the pairwise method, so it says nothing about local pairs with 2 cycles at
+    that length.
+- **Next step.** IQ-TREE on the 22 jobs that change at cap 2: both alignments, with
+  two-seed baselines, judged by the tree test above. The run records are in the private
+  scratch of this session (`iter/short.jsonl`).
 
 ### 2.2 Align the distinct sequences, copy duplicates back
 
