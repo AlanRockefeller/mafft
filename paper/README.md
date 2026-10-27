@@ -1,12 +1,16 @@
 # Technical reports
 
-Newest first. Paths beginning `round2/` inside the reports name files in the private
-measurement archive on the Dikarya host (production inputs, alignments and trees); it is not
+Newest first. Paths beginning `round2/` or `bench/` inside the reports name files in the
+private measurement archive on the Dikarya host,
+`/home/tree/mafft-optimized/archive/research-records-2026-10.tar.xz` (run records, analyses,
+logs and trees, with the paths as cited; bulky builds and alignment outputs were deleted on
+2026-10-27). The 100 production inputs and their goldens stay in `bench/`. None of it is
 published. Terms are explained in the [README glossary](../README.md#glossary).
 
 | report | version | what it covers |
 |---|---|---|
 | [future-optimizations.md](future-optimizations.md) | after opt9 | candidate speedups, exact and output-changing, with their CPU bounds, evidence and how to test them against Dikarya's tree-level standard |
+| [tried-and-rejected.md](tried-and-rejected.md) | dikarya2–opt9 | every attempt that did not ship or gained nothing, exact and output-changing, with the measurement and where it is reported |
 | [round4-audit-fixes.md](round4-audit-fixes.md) | opt9 | harness resume fixes, public fixtures and `verify-against-stock.sh`, CI, ThreadSanitizer and stress audit of ordered refinement, the Phase 2 code fixes and their verification |
 | [round3-ordered-refinement.md](round3-ordered-refinement.md) | dikarya5 | ordered multi-worker refinement: design, why it is exact, scope, latency results, evidence |
 | [round2-performance.md](round2-performance.md) | dikarya4 | round-2 speedups on the Dikarya VM, the 100-input corpus, timing method and results |

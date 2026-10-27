@@ -172,15 +172,8 @@ FFT-NS-i. The corpus had 3 duplicate input files out of 100. Check first whether
 
 ### Tried and rejected (don't repeat without a new reason)
 
-| Experiment | Result | Source |
-| --- | --- | --- |
-| Four-lane striped local DP | 0.978 vs 0.562 ns/cell | [dikarya2](broadwell-dikarya2.md#experiments-rejected-or-not-selected) |
-| Native AVX2 blend instead of xor/and/xor | slower on Broadwell | same |
-| 16/32-row importance bands, branchless bounds | slower in real replays | same; round 2 |
-| GCC PGO (old), PGO+LTO, LTO, clang 15 | regressions or no gain | same; [round 2](round2-performance.md#compiler-research-and-rejected-alternatives) |
-| Eight independent pairs per AVX2 matrix | 3.73× slower (independent), 14× (ragged) | round 2 |
-| Stack-only `scarr` | no change | round 2 |
-| Dynamic duplicate realignment cache | the calls never run in production | round 2 |
+The full list, exact and output-changing, with results and sources, is in
+[tried-and-rejected.md](tried-and-rejected.md).
 
 ## Part 2: changes to output
 
