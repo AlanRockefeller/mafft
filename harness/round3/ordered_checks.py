@@ -75,7 +75,7 @@ def main():
                     stderr_markers=MARKERS, record=dict(options=f['production_options']),
                     key=caserun.case_key(input=str(source.resolve()), input_sha256=caserun.file_digest(source),
                                          binary=binary, threads=threads, options=f['production_options'],
-                                         env=caserun.relevant_env(env)))
+                                         env=caserun.relevant_env(env), timeout=a.timeout))
         caserun.execute(case, manifest, tally, timeout=a.timeout, retry=a.retry, nice=19, log=show)
     manifest.close()
     tally.report()

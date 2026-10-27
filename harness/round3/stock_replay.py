@@ -88,7 +88,7 @@ def replay(a):
                         record=dict(job=item['job'], build=name, load=os.getloadavg()[0]),
                         key=caserun.case_key(input=str(source.resolve()), input_sha256=item['sha256'],
                                              binary=digests[name], options=item['opts'],
-                                             env=caserun.relevant_env(env)))
+                                             env=caserun.relevant_env(env), timeout=a.timeout))
             if caserun.file_digest(source) != item['sha256']:
                 runs.add(case['category'], case['name'], 'input hash changed since select')
                 continue

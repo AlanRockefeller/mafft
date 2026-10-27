@@ -74,7 +74,7 @@ def main():
                             key=caserun.case_key(round=rnd, input=str(Path(item['path']).resolve()),
                                                  input_sha256=caserun.file_digest(item['path']), binary=binary,
                                                  threads=threads, options=item['options'],
-                                                 env=caserun.relevant_env(env)))
+                                                 env=caserun.relevant_env(env), timeout=a.timeout))
                 case['out'].parent.mkdir(exist_ok=True)
                 caserun.execute(case, manifest, tally, timeout=a.timeout, nice=5, log=show)
     manifest.close()
