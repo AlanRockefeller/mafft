@@ -44,7 +44,7 @@ with `--thread 2` the `--thread 1` alignment **1.50x faster** than `--thread 1` 
 latency; 56 later production inputs). **opt9**, a collaboration between OpenAI Codex (max
 reasoning) and Claude Code, adds an exact banded all-pairs fill (the 1.10x over dikarya5), the
 audit fixes and the verification tooling ([changelog](CHANGELOG.md)). dikarya4 was deployed to
-Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 is unreleased.
+Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 was released on 2026-10-27.
 
 It was built for two projects that align fungal ITS sequences in production:
 
@@ -300,9 +300,8 @@ Per-version results are in the [changelog](CHANGELOG.md); the reports are indexe
 
 ## For the MAFFT maintainers
 
-`git diff 0a2319b v7.526-opt8-dikarya5 -- core/` is the whole change of the latest release
-against upstream `main` (`0a2319b`, the newest official source as of 2026-10-07); `git diff
-0a2319b opt9-docs -- core/` includes the unreleased opt9 changes (PR #3). The feature tests are all in
+`git diff 0a2319b v7.526-opt9 -- core/` is the whole change of the latest release against
+upstream `main` (`0a2319b`, the newest official source as of 2026-10-07). The feature tests are all in
 `core/mafft_simd.h`, and each vector path keeps a scalar version of the same algorithm. Only
 `core/` differs from upstream; `extensions/` is unchanged.
 

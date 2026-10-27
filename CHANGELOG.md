@@ -6,7 +6,7 @@ Each released version is a tag on the `exact-speedups` branch, a linear series o
 build. Newest first. Terms are explained in the
 [glossary](README.md#glossary).
 
-## `7.526-opt9` — unreleased (branch `opt9-docs`, PR #3)
+## `v7.526-opt9` — exact banded all-pairs fill
 
 An exact banded all-pairs fill, audit fixes and verification infrastructure. Details and
 evidence: [round-4 report](paper/round4-audit-fixes.md).
@@ -35,7 +35,7 @@ evidence: [round-4 report](paper/round4-audit-fixes.md).
   all-pairs precompute is skipped (every pair on the CPU) when it would need more than 256 MB
   of host memory.
 - A restored EUC-JP comment, a deleted unreachable AVX-512 block, the version string
-  `v7.526-opt9 (2026/Oct/24)`.
+  `v7.526-opt9 (2026/Oct/27)`.
 - New verification: `harness/verify-against-stock.sh` (builds stock and this tree with the same
   flags and compares output byte for byte), the public fixtures in `test/exact/`, a CI workflow,
   ordered-refinement stress and ThreadSanitizer triage tools, and harness runners whose resumes
