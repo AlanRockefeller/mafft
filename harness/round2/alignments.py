@@ -29,11 +29,13 @@ def digest(p):
 
 def installed_hashes(binary):
     """Every installed program: the launcher is a script, the alignment comes from libexec.
-    A release from deploy.py keeps its programs under payload/, behind wrappers in bin/."""
+    A release from deploy.py keeps its programs under payload/, behind wrappers in bin/.
+    Any other layout is refused: hashing the launcher alone would let changed helpers pass."""
     prefix=Path(binary).resolve().parent.parent
     if (prefix/'payload'/'libexec'/'mafft').is_dir():dirs=['bin','payload/bin','payload/libexec/mafft']
     elif (prefix/'libexec'/'mafft').is_dir():dirs=['bin','libexec/mafft']
-    else:return {Path(binary).name:digest(binary)}
+    else:raise SystemExit('--binary must be PREFIX/bin/mafft of an installation (PREFIX/libexec/mafft) '
+                          'or of a deploy.py release (PREFIX/payload/libexec/mafft): '+str(binary))
     return {str(x.relative_to(prefix)):digest(x) for d in dirs for x in sorted((prefix/d).rglob('*')) if x.is_file()}
 
 def write_json(p,d):
