@@ -11,9 +11,13 @@
 > fork to the MAFFT developers. Open an issue here instead.
 
 This fork makes MAFFT 7.526 faster under one constraint: for the same input and options, the
-**output is byte-identical to unmodified MAFFT** built for the same platform and rounding class
-([what is guaranteed](#what-is-guaranteed)). Downstream analyses calibrated on stock MAFFT
-output are unaffected; only how fast the result arrives changes.
+**output is byte-identical to unmodified MAFFT** built for the same platform and rounding class.
+That holds for every run with `--thread 1` or without `--thread`, and for DNA L-INS-i, G-INS-i
+and E-INS-i with `--thread N` in the ordered scope, whose output is stock's **`--thread 1`**
+output. Other `--thread N` runs behave as stock's do with the same threads: where stock's
+multi-threaded refinement varies from run to run, so does this fork's
+([what is guaranteed](#what-is-guaranteed)). Within those limits, downstream analyses calibrated
+on stock MAFFT output are unaffected; only how fast the result arrives changes.
 
 **opt9 against stock MAFFT 7.526** on the 100-input Dikarya production corpus, with `--thread 1`
 and each job's production options (97 are direction-adjusted L-INS-i):
