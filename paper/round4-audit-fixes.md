@@ -551,3 +551,18 @@ The new one, at production flags (gcc 13.3 `-O3 -march=native -ffp-contract=off`
 the fast matrix (163/163, which includes it in the threaded cases) and every full-matrix case
 on it (63/63: 12 strategies, ordered and jitter runs at 2–4 threads, and the forced
 fallbacks).
+
+**The full traceback matrix, deferred again (review of PR #3).** As first committed, the band
+path allocated `commonIP`, the full int traceback matrix, before trying the band. Neither the
+band (its own rows) nor the striped fill (its byte traceback) reads it outside the check mode,
+and dikarya5 allocated it only when the striped fill declined. With a 450,000 KiB
+`ulimit -v`, three divergent 7,000-nt sequences (`simseq.py 7 3 7000 dna rate=0.6`, L-INS-i)
+stopped in the all-pairs stage with the band on and passed it with `MAFFT_NOLBAND=1`. The
+band and the striped fill now run before the allocation, as the striped fill did; the check
+mode, whose row-major fill uses the matrix, allocates it first as before. The fills, and their
+order, are unchanged. Afterwards that input passes the all-pairs stage with the band on (the
+run then stops in progressive alignment, a 7147 × 7147 double matrix, with or without the
+band). At production flags: fast matrix 163/163; the 270 grid inputs above, rerun without the
+check mode, all identical to stock; objcheck against the previous commit shows only
+`Lalign11.o` changed for gcc native and clang x86-64-v3, and 0 of 65 objects for gcc
+icelake-server, gcc x86-64 and clang x86-64-v4.

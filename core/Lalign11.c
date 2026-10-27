@@ -30,6 +30,7 @@ static int lband_check_on( void )
 }
 #else
 #define lband_on() 0
+#define lband_check_on() 0
 #endif
 #if defined(MAFFT_SVE)
 #ifndef LSVE_MINLANES
@@ -2059,11 +2060,20 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	currentw = w1; /* also a valid (unused) argument to Ltracking after an integer fill */
 
 #if defined(MAFFT_LSTRIPED) && MAFFT_KB_NOIJP
-	/* The byte/bit traceback is self-contained. Only allocate the full int matrix if
-	   the striped fill declines (fractional scoring, range limits or warped alignment). */
-	if( !trywarp && !lband_on() )
+	/* The byte/bit traceback and the band rows are self-contained. Only allocate the full int
+	   matrix if the striped fills decline (fractional scoring, range limits or warped alignment),
+	   or for the band's check mode, whose row-major fill uses it. */
+	if( !trywarp && !( lband_on() && lband_check_on() ) )
 	{
 		localstop = lgth1+lgth2+1;
+#if MAFFT_LBAND
+		/* ijp is read only by the check mode, which takes the path below */
+		if( lband_on() && Lband_try( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, NULL, localstop, &maxwm, &endali, &endalj ) )
+		{
+			kbfill = 2; /* the striped band rows, read through lband_ijv() */
+			goto Lint_done;
+		}
+#endif
 		if( Lfill_kb( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, &maxwm, &endali, &endalj ) )
 		{
 			kbfill = 1;
@@ -2100,8 +2110,9 @@ double L__align11( double **n_dynamicmtx, double scoreoffset, char **seq1, char 
 	ijp = commonIP;
 
 #if MAFFT_LBAND
-	/* The exact band first (it needs ijp); if it declines, the striped fill as before. */
-	if( !trywarp && lband_on() )
+	/* Where the full matrix is needed anyway (the check mode, or a build without MAFFT_KB_NOIJP,
+	   whose traceback reads ijp): the exact band first; if it declines, the striped fill as before. */
+	if( !trywarp && lband_on() && ( !MAFFT_KB_NOIJP || lband_check_on() ) )
 	{
 		localstop = lgth1+lgth2+1;
 		if( Lband_try( amino_dynamicmtx, n_dynamicmtx, scoreoffset, seq1[0], seq2[0], lgth1, lgth2, ijp, localstop, &maxwm, &endali, &endalj ) )
