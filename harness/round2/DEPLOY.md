@@ -15,6 +15,13 @@
 >
 > Rollback to dikarya4 would then use the record of the 2026-10-22 transaction, as described
 > [below](#rollback). How the bundle was made: [the opt9 bundle](#the-opt9-bundle).
+>
+> Dikarya job logs since then report `Version 7.526-opt9` (checked on job `3twe`,
+> 2026-10-27 22:56). A permanent, root-owned copy is at `/usr/local/src/mafft-opt9`. It holds
+> this repository (`mafft/`, branch `opt9-release`), the deployed bundle
+> (`round2/opt9-build/`) and the validation corpus and goldens (`bench/`), in the layout this
+> script expects, so `deploy.py` runs there with no extra flags. Its `SHA256SUMS` and
+> `SYMLINKS` verify the tree.
 
 This script deployed dikarya4 to Dikarya production on 2026-10-21 and dikarya5 on
 2026-10-22, and is now pinned to the **7.526-opt9** bundle (source tag `v7.526-opt9`). To
