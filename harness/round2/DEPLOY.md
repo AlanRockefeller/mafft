@@ -1,14 +1,20 @@
 # Deploy the audited opt9 build
 
-> **Status (checked 2026-10-27):** dikarya5 is still the production build. The public command
+> **Status (checked 2026-10-27):** opt9 is the production build. The public command
 > `/opt/mafft-7.526-opt8/bin/mafft` was switched to
-> `/opt/mafft-releases/mafft-7.526-opt8-dikarya5-c81eb9794e14` on 2026-10-22 at 05:59 UTC
-> (activation link `.mafft-release-20261022T055923Z-…`; dikarya4's is from 2026-10-21 at
-> 23:58 UTC), and Dikarya's job logs report `Version 7.526-opt8-dikarya5` from that day on.
-> The deployment records under `/opt/mafft-releases/deployments/` are readable only by root;
-> rollback to dikarya4 uses the record of the 2026-10-22 transaction, as described
-> [below](#rollback). The opt9 bundle is built, checked and pinned here, and a full
-> rehearsal passed, but it has not been applied; see [how it was made](#the-opt9-bundle).
+> `/opt/mafft-releases/mafft-7.526-opt9-c8ade5a0b948` on 2026-10-27 at 15:50 UTC (activation
+> link `.mafft-release-20261027T154953Z-c2ho44yh`, smoke validation passed); it reports
+> `v7.526-opt9 (2026/Oct/27)`. dikarya5 (`…-dikarya5-c81eb9794e14`, activated 2026-10-22 at
+> 05:59 UTC) and dikarya4 remain installed. The deployment records under
+> `/opt/mafft-releases/deployments/` are readable only by root. To return to dikarya5:
+>
+> ```sh
+> sudo python3 harness/round2/deploy.py rollback \
+>   --deployment /opt/mafft-releases/deployments/20261027T154953Z-c2ho44yh/deployment.json --apply
+> ```
+>
+> Rollback to dikarya4 would then use the record of the 2026-10-22 transaction, as described
+> [below](#rollback). How the bundle was made: [the opt9 bundle](#the-opt9-bundle).
 
 This script deployed dikarya4 to Dikarya production on 2026-10-21 and dikarya5 on
 2026-10-22, and is now pinned to the **7.526-opt9** bundle (source tag `v7.526-opt9`). To
@@ -188,7 +194,8 @@ instead of `7.526-opt8`), affects `--clustalout`, which Dikarya does not use. Do
    entry point: activated and verified, 298 golden checks (all 100 corpus inputs with A and
    F, the 97 L-INS-i inputs with O, and the post-activation run), all byte-identical to
    `bench/golden/production-t1`.
-6. **Apply** (needs root; not yet run), then keep the printed rollback command:
+6. **Apply**, run by the owner on 2026-10-27 (activated and verified; record
+   `deployments/20261027T154953Z-c2ho44yh`):
 
    ```sh
    sudo python3 harness/round2/deploy.py deploy \
