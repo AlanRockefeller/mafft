@@ -6,7 +6,7 @@ published. Terms are explained in the [README glossary](../README.md#glossary).
 
 | report | version | what it covers |
 |---|---|---|
-| [round4-audit-fixes.md](round4-audit-fixes.md) | opt9 (unreleased) | harness resume fixes, public fixtures and `verify-against-stock.sh`, CI, ThreadSanitizer and stress audit of ordered refinement, the Phase 2 code fixes and their verification |
+| [round4-audit-fixes.md](round4-audit-fixes.md) | opt9 (released here as opt9m) | harness resume fixes, public fixtures and `verify-against-stock.sh`, CI, ThreadSanitizer and stress audit of ordered refinement, the Phase 2 code fixes and their verification |
 | [round3-ordered-refinement.md](round3-ordered-refinement.md) | dikarya5 | ordered multi-worker refinement: design, why it is exact, scope, latency results, evidence |
 | [round2-performance.md](round2-performance.md) | dikarya4 | round-2 speedups on the Dikarya VM, the 100-input corpus, timing method and results |
 | [round2-score-kernels.md](round2-score-kernels.md) | dikarya4 | the exact AVX2 score kernels: rolling score-only DP, identity shortcut, zero-extension specialization |
