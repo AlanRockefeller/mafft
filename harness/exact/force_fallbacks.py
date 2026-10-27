@@ -25,7 +25,8 @@ def mark(name):
 
 
 SITES = {
-    'lfill': ('core/Lalign11.c', 'if( profbuf == NULL ) return( 0 );',
+    # the two Lfill_int checks; Lfill_band's (check mode only) has no comment
+    'lfill': ('core/Lalign11.c', 'if( profbuf == NULL ) return( 0 ); /* out of memory: the double-precision fill */',
               'if( 1 ) { ' + mark('lfill') + 'free( profbuf ); return( 0 ); }', 2),
     'cprf': ('core/fftFunctions.c', 'if( cprf == NULL ) { ccap = 0; goto profiles_original; }',
              '{ ' + mark('cprf') + 'free( cprf ); cprf = NULL; ccap = 0; goto profiles_original; }', 1),
