@@ -28,10 +28,13 @@ def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
 def installed_hashes(binary):
-    """Every installed program: the launcher is a script, the alignment comes from libexec."""
+    """Every installed program: the launcher is a script, the alignment comes from libexec.
+    A release from deploy.py keeps its programs under payload/, behind wrappers in bin/."""
     prefix=Path(binary).resolve().parent.parent
-    if not (prefix/'libexec'/'mafft').is_dir():return {Path(binary).name:digest(binary)}
-    return {str(x.relative_to(prefix)):digest(x) for d in ['bin','libexec/mafft'] for x in sorted((prefix/d).rglob('*')) if x.is_file()}
+    if (prefix/'payload'/'libexec'/'mafft').is_dir():dirs=['bin','payload/bin','payload/libexec/mafft']
+    elif (prefix/'libexec'/'mafft').is_dir():dirs=['bin','libexec/mafft']
+    else:return {Path(binary).name:digest(binary)}
+    return {str(x.relative_to(prefix)):digest(x) for d in dirs for x in sorted((prefix/d).rglob('*')) if x.is_file()}
 
 def write_json(p,d):
     t=p.with_suffix('.tmp'); t.write_text(json.dumps(d,indent=2)+'\n');t.replace(p)
