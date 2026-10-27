@@ -221,35 +221,55 @@ its final alignment after cycle k − 1.
 | longest sequence < 1,000 bp | 56 | 3 (1–8) | 0 |
 | ≥ 1,000 bp | 41 | 4 (2–8) | 0 |
 
-**Measured on the 56 short jobs** (2026-10-27): the deployed opt9, production options,
+**Measured on the corpus L-INS-i jobs** (2026-10-27): the deployed opt9, production options,
 `--thread 1`, one run per cap, alternating order, nice 19 beside production. CPU is child
 user + system; wall time was dominated by production load and is not used.
 
-| Cap | CPU, 56 jobs | Saved | Byte-identical to current | Homology F1 of the changed (min / median) |
-| ---: | ---: | ---: | ---: | --- |
-| 16 (now) | 235.4 s | — | 56/56 | — |
-| 3 | 210.1 s | 10.8% | 47/56 | 0.988 / 0.9997 |
-| 2 | 181.7 s | 22.8% | 34/56 | 0.983 / 0.9996 |
+| Jobs | Cap | CPU | Saved | Byte-identical to current | Homology F1 of the changed (min / median) |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 56 short (< 1,000 bp) | 16 (now) | 235.4 s | — | 56/56 | — |
+| | 3 | 210.1 s | 10.8% | 47/56 | 0.988 / 0.9997 |
+| | 2 | 181.7 s | 22.8% | 34/56 | 0.983 / 0.9996 |
+| 41 long (≥ 1,000 bp) | 16 (now) | 360.8 s | — | 41/41 | — |
+| | 3 | 287.1 s | 20.4% | 24/41 | 0.993 / 0.9987 |
+| | 2 | 242.7 s | 32.7% | 15/41 | 0.978 / 0.9991 |
 
-- **Which jobs stay identical.** At cap 2, exactly the 34 jobs that converged within 3 cycles
-  (as the stopping rule predicts). At cap 3, 47 of the 49 predicted; `3on0` and `8q2l` changed
-  although they converged within 4 cycles, not explained.
+- **Which jobs stay identical.** Mostly the ones the stopping rule predicts. At cap 2 on short
+  jobs, exactly the 34 that converged within 3 cycles. Elsewhere a few changed although they
+  converged early enough, which is not explained: at cap 3, `3on0` and `8q2l` (short) and 3 of
+  27 long jobs; at cap 2, 1 of 16 long jobs.
 - **Size of the saving.** The 56 short jobs are about 43% of all corpus CPU (235 s of opt9's
   545 s in the round-4 benchmark, a separate measurement), so cap 2 on them alone would save
-  about 10% of all production MAFFT CPU. Per job the saving varies
-  (median 15%) and single runs are noisy.
+  about 10% of all production MAFFT CPU. Long jobs save more per job, because they run more
+  cycles. Per-job savings vary (short jobs at cap 2: median 15%), and single runs are noisy.
 - **Size of the changes.** They are smaller than those of `--threadit 0` in round 2 (lowest
-  F1 0.965 there, 0.983 here). Round 2 also showed that an F1 that high can still move a
-  well-supported split, so the tree test is still needed.
-- **Evidence.**
-  - *For short jobs:* Dikarya's own test found `--auto` (local pairs, 2 cycles)
-    indistinguishable from L-INS-i at the tree level below 1,000 bp.
-  - *For long jobs, none:* above 1,000 bp the failing comparison was against FFT-NS-i, which
-    also changes the pairwise method, so it says nothing about local pairs with 2 cycles at
-    that length.
-- **Next step.** IQ-TREE on the 22 jobs that change at cap 2: both alignments, with
-  two-seed baselines, judged by the tree test above. The run records are in the private
-  scratch of this session (`iter/short.jsonl`).
+  F1 0.965 there, 0.978 here). That says little about trees (below).
+
+**Tree test on the short jobs** (2026-10-27). For each of the 22 short jobs that change at
+cap 2, and for the 9 distinct cap-3 alignments, the current and capped alignments went through
+Dikarya's pipeline: trimAl 1.5 `-gt 0.1`, then IQ-TREE 3.1.4-dikarya1 `-m GTR+F+G4 --alrt
+1000 -T 1` with seeds 73111 and 73129. Topology is compared by normalized Robinson–Foulds
+distance with zero-length branches collapsed. Contradictions count clades with SH-aLRT ≥ 80 in
+one tree that are incompatible with a split of the other. Seed noise is measured as the same
+two quantities between the two seeds on one alignment.
+
+| Cap | Jobs changed | Mean RF above seed noise | Strong-clade contradictions in every cross pair, above seed noise |
+| ---: | ---: | ---: | --- |
+| 2 | 22 | 10, by 0.002–0.05 (`ib0b` 0.12) | 2: `ib0b` (7–8 clades; seeds 0–1), `ppo5` (1; seeds 0) |
+| 3 | 9 | 2, by 0.025 and 0.072 | 1: `7xqo` (1; seeds 0) |
+
+- **`ib0b` fails clearly.** It has 42 sequences and an F1 of 0.9996 against the current
+  alignment, yet every capped tree contradicts 7–8 well-supported clades. Alignment
+  similarity does not predict the tree effect.
+- **Below 100 sequences is outside Dikarya's earlier evidence.** `--auto` itself runs 1000
+  iterations there, and 10 of the 56 short jobs are in that range. Any cap should exclude
+  them, and even 100–199 sequences gave one consistent single-clade loss (`ppo5`).
+- **Long jobs:** the same tree test on the 26 that change at cap 2 is in progress.
+
+Scripts and run records: [`harness/round2/cycle_cap/`](../harness/round2/cycle_cap/).
+`cycles.json` holds the cycles run per job, from the dikarya5 `--thread 1` refinement logs.
+`itercap.py` runs the caps and writes `short.jsonl` and `long.jsonl`. `treetest.py` runs and
+scores the tree test, and `trees-short.json` is its per-job output.
 
 ### 2.2 Align the distinct sequences, copy duplicates back
 
@@ -312,9 +332,10 @@ largest change to the method; research.
 
 ## Suggested order
 
-1. Profile opt9 on the corpus, and count the refinement cycles production jobs run.
-2. Run 2.1 (fewer cycles), 2.2 (duplicates) and 2.3 (FMA) through the tree test. They need
-   little or no code and have the largest likely gains.
+1. Profile opt9 on the corpus.
+2. Run 2.2 (duplicates) and 2.3 (FMA) through the tree test, and finish it for 2.1 on long
+   jobs. They need little or no code and have the largest likely gains. On short jobs 2.1 has
+   failed the test once (`ib0b`, above), so it is not a blanket switch.
 3. In parallel, the exact items: 1.1 (tighter band bound), 1.5 (direction check and
    re-scoring) and 1.3(a)–(b).
 4. 1.4 (importance locality), 2.4 and 2.5 only if the profile still points there.
