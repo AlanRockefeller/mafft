@@ -1,17 +1,18 @@
 # MAFFT 7.526 with exact speedups (unofficial fork)
 
-> [!WARNING]
-> **This is an unofficial fork of MAFFT. It is not affiliated with or endorsed by the MAFFT
-> authors.**
+> **This is an unofficial fork of MAFFT which is 10x faster, while giving the same results. 
+> It is not affiliated with or endorsed by the MAFFT authors.**
+>
+> Created by Josh Walker and Alan Rockefeller using Claude Code and Codex.
 >
 > - Official MAFFT: **https://mafft.cbrc.jp/alignment/software/**
 > - Official source: **https://gitlab.com/sysimm/mafft**
 >
-> For general use, install the official release. Please don't report problems with this
-> fork to the MAFFT developers. Open an issue here instead.
+> Please don't report problems with this fork to the MAFFT developers. Open an issue here instead.
 
 This fork makes MAFFT 7.526 faster under one constraint: for the same input and options, the
-**output is byte-identical to unmodified MAFFT** built for the same platform and rounding class.
+**output is byte-identical to unmodified MAFFT**.  
+
 That holds for every run with `--thread 1` or without `--thread`, and for DNA L-INS-i, G-INS-i
 and E-INS-i with `--thread N` in the ordered scope, whose output is stock's **`--thread 1`**
 output. Other `--thread N` runs behave as stock's do with the same threads: where stock's
