@@ -77,7 +77,13 @@ stock_flags="$cflags${stock_extra:+ $stock_extra}"
 cand_flags="$cflags${cand_extra:+ $cand_extra}"
 stock_prefix=$work/inst/stock
 if [ -n "${MAFFT_STOCK_CACHE:-}" ]; then
-  tag=$(printf '%s\n%s\n%s\n%s\n%s\n' "$stock_rev" "$cc" "$("$cc" --version | head -1)" "$stock_flags" "$make_args" |
+  # -march=native names no CPU, so key on what it resolves to: the predefined target macros.
+  target=""
+  case " $stock_flags " in
+    *" -march=native "*|*" -mcpu=native "*)
+      target=$("$cc" $stock_flags -E -dM -x c /dev/null | LC_ALL=C sort | sha256sum) ;;
+  esac
+  tag=$(printf '%s\n' "$stock_rev" "$cc" "$("$cc" --version | head -1)" "$stock_flags" "$make_args" ${target:+"$target"} |
           sha256sum | cut -c1-16)
   mkdir -p "$MAFFT_STOCK_CACHE"
   stock_prefix=$(cd "$MAFFT_STOCK_CACHE" && pwd -P)/stock-$tag
