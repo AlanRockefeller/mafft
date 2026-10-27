@@ -132,7 +132,7 @@ repeated candidate would again reject. All ten final alignments matched their fr
 goldens. The additional guards preserved all 508 hits in this subset; none of
 its rejected attempts used the short-block exclusion.
 
-See [the v5 semantic result (`round2/reject-memo-v5-semantic-analysis/summary.json`).
+See the v5 semantic result (`round2/reject-memo-v5-semantic-analysis/summary.json`).
 The latest v5 source also passed all 100 full outputs and 612 option/format
 comparisons. Its active guard ran on 97 production jobs, with hits in 84:
 3,632 attempts were reused and 82,371 computed normally. These job-weighted

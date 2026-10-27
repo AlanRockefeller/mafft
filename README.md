@@ -1,182 +1,169 @@
 # MAFFT 7.526 with exact speedups (unofficial fork)
 
-> [!WARNING]
-> **This is an unofficial fork of MAFFT. It is not affiliated with or endorsed by the MAFFT
-> authors.**
+> **This is an unofficial fork of MAFFT which is 10x faster, while giving the same results. 
+> It is not affiliated with or endorsed by the MAFFT authors.**
+>
+> Created by Josh Walker and Alan Rockefeller using Claude Code and Codex.
 >
 > - Official MAFFT: **https://mafft.cbrc.jp/alignment/software/**
 > - Official source: **https://gitlab.com/sysimm/mafft**
 >
-> For general use, install the official release. Please don't report problems with this
-> fork to the MAFFT developers. Open an issue here instead.
+> Please don't report problems with this fork to the MAFFT developers. Open an issue here instead.
 
 This fork makes MAFFT 7.526 faster under one constraint: for the same input and options, the
-**output is byte-identical to unmodified MAFFT** built for the same platform and run with
-`--thread 1` ([what that means](#identical-to-stock)). Downstream analyses calibrated on stock
-MAFFT output are unaffected. Only how fast the result arrives changes.
+**output is byte-identical to unmodified MAFFT**.  
+
+That holds for every run with `--thread 1` or without `--thread`, and for DNA L-INS-i, G-INS-i
+and E-INS-i with `--thread N` in the ordered scope, whose output is stock's **`--thread 1`**
+output. Other `--thread N` runs behave as stock's do with the same threads: where stock's
+multi-threaded refinement varies from run to run, so does this fork's
+([what is guaranteed](#what-is-guaranteed)). Within those limits, downstream analyses calibrated
+on stock MAFFT output are unaffected; only how fast the result arrives changes.
+
+**opt9 against stock MAFFT 7.526** on the 100-input Dikarya production corpus, with `--thread 1`
+and each job's production options (97 are direction-adjusted L-INS-i):
+
+| | stock 7.526 | dikarya5 (deployed) | **opt9** |
+|---|---:|---:|---:|
+| CPU, all 100 inputs | 5,502.6 s | 598.5 s | **545.1 s** |
+| wall time, all 100 inputs | 5,580.1 s | 610.9 s | **556.1 s** |
+| less CPU than stock | 1x | 9.19x | **10.09x** |
+| per input: median (slowest) | | 8.91x (2.31x) | **9.71x (2.18x)** |
+| runs whose output is byte-identical to stock's | 300/300 | 300/300 | **300/300** |
+
+Dikarya VM (2 vCPU Broadwell, no AVX-512), stock and opt9 built with gcc 13.3
+`-O3 -march=native -ffp-contract=off`, dikarya5 as deployed; 3 alternating rounds, medians
+of child CPU time, at nice 19 alongside production (2026-10-26). opt9 used 1.10x less CPU
+than dikarya5 overall (holdout 1.10x, difficult 1.06x); 8 of the 100 inputs were slightly
+slower, the worst (`buh4`) by 6%.
+[Details](paper/round4-audit-fixes.md#8-phase-4-speedups).
+
+The largest step since opt8 is **dikarya4's, by OpenAI Codex**: 1.45x faster than opt8 with
+`--thread 1` on this corpus. dikarya5 adds ordered refinement, which gives DNA L-INS-i runs
+with `--thread 2` the `--thread 1` alignment **1.50x faster** than `--thread 1` (33% lower
+latency; 56 later production inputs). **opt9**, a collaboration between OpenAI Codex (max
+reasoning) and Claude Code, adds an exact banded all-pairs fill (the 1.10x over dikarya5), the
+audit fixes and the verification tooling ([changelog](CHANGELOG.md)). dikarya4 was deployed to
+Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 is unreleased.
 
 It was built for two projects that align fungal ITS sequences in production:
 
 - **A phylogenetics pipeline** running L-INS-i (`--localpair --maxiterate 1000`) on
   alignments of about 180 sequences, on Apple silicon and on AWS (x86 and Graviton).
-- **[Dikarya](https://dikarya.us)**, a phylogenetics web service for fungal ITS barcodes,
-  running `--auto` (mostly L-INS-i-style local pairs, sometimes FFT-NS-i) on an Intel
-  Broadwell server without AVX-512 (the Dikarya host).
+- **[Dikarya](https://dikarya.us)**, a phylogenetics web service for fungal ITS barcodes, on
+  an Intel Broadwell server without AVX-512 (the Dikarya host). Of the 100 production jobs in
+  the round-2 corpus, 97 were direction-adjusted L-INS-i (`--adjustdirection --localpair
+  --maxiterate 1000`), two direction-adjusted `--auto` and one an accurate-direction prepass
+  ([corpus](paper/round2-performance.md)); `--auto` runs L-INS-i or FFT-NS-i depending on the
+  input.
 
 One source tree builds for Apple silicon, Linux arm64, x86-64 with AVX-512 or AVX2, and NVIDIA
 GPUs. The vector code is chosen at compile time; everything else is shared.
 
-## Latest: `v7.526-opt8-dikarya5` — reproducible two-thread refinement
+## Install
 
-Stock MAFFT's multi-threaded iterative refinement is not reproducible: workers accept
-improvements in whatever order they finish, so `--thread 2` can give a different alignment
-on every run. dikarya5 makes the refinement workers **commit their attempts in the order a
-single worker would**, recomputing the rare attempt whose starting alignment changed. The
-result is that, for DNA runs of L-INS-i, G-INS-i and E-INS-i (`--localpair`,
-`--globalpair`, `--genafpair` with `--maxiterate`), **`--thread N` produces exactly the
-`--thread 1` alignment**, which is itself byte-identical to stock MAFFT 7.526 with
-`--thread 1` — while refinement still uses every thread.
+Build into a prefix of your own. `make install` without `PREFIX` installs into `/usr/local`
+and would replace a MAFFT already there.
 
-On the Dikarya VM (two vCPUs), with every job given both CPUs:
+```sh
+cd core
+make clean
+make PREFIX=$HOME/inst/mafft-opt9 CC=gcc CFLAGS="-O3 -march=native"
+make install PREFIX=$HOME/inst/mafft-opt9 CC=gcc CFLAGS="-O3 -march=native"
+$HOME/inst/mafft-opt9/bin/mafft --version
+```
 
-| | `--thread 1` | `--thread 2 --threadit 1` | stock-order `--thread 2` | **dikarya5 `--thread 2`** |
-|---|---:|---:|---:|---:|
-| 12-input latency cohort, mean seconds | 4.22 | 3.62 | 2.76 | **2.87** |
-| 56 new production inputs, mean seconds | 4.96 | 4.26 | 3.19 | **3.31** |
-| speedup over `--thread 1` (56 inputs) | 1.00x | 1.16x | 1.56x | **1.50x** |
-| L-INS-i runs identical to stock `--thread 1` | 106/106 | 106/106 | 78/106 | **106/106** |
+Use the same `CC` and `CFLAGS` for both commands, chosen for your machine:
 
-So a two-thread job now finishes about 1.5x faster than a one-thread job, within 4% of
-stock's non-reproducible two-thread refinement, and 1.26x faster than the previous
-reproducible option (`--threadit 1`). The 97 L-INS-i inputs of the round-2 corpus matched
-their one-thread goldens with 2 threads, and the 11 development L-INS-i inputs with 2, 3 and 4
-threads under randomly injected delays. It uses about 8% more CPU than `--thread 1`, so for
-a backlog of jobs, independent `--thread 1` jobs still give more alignments per hour.
-
-How it works, why it is exact, and its scope are in the
-[ordered-refinement report](paper/round3-ordered-refinement.md). Outside that scope
-(FFT-NS-i refinement, protein, RNA, `--bestfirst` and similar) `--thread N` behaves as stock
-MAFFT. `MAFFT_ORDERED_REFINE=0` in the environment restores the stock behavior.
-
-## `v7.526-opt8-dikarya4` — round 2 (in production on Dikarya since 2026-10-21)
-
-dikarya4 adds rolling score-only DP, a guarded identical-sequence score shortcut,
-zero-extension traceback specialization, exact raw-profile reuse, direct gap-aware pair
-scoring, immutable six-mer histograms and exact reuse of the final no-gain tail of
-refinement attempts. On the 100-input Dikarya production corpus, `--thread 1`, it is
-**1.45x faster than opt8** and 1.084x faster than dikarya2 in wall time, with all 300
-outputs of the three builds byte-identical to the frozen goldens
-([performance report](paper/round2-performance.md)).
-
-**Independent check on new production inputs.** After deployment, the 56 distinct
-alignment inputs that Dikarya received from 2026-10-16 to 2026-10-22 and that are not in
-that corpus (53 L-INS-i, 3 `--auto`; 36–277 sequences, median 135) were rerun with their
-production flags and `--thread 1` through a fresh stock MAFFT 7.526 build (gcc 13.3,
-`-O3 -march=native`), the frozen opt8 build and the installed dikarya4. **All 56 outputs
-were byte-identical across the three builds.** dikarya4 used **9.6x less CPU than stock**
-(2,943 to 307 seconds; per input 3.3x–20.3x, median 10.0x) and **1.45x less than opt8**
-(446 to 307 seconds; every input faster, 1.03x–2.54x). These ran on the shared production
-VM at reduced priority, so the totals carry some contention noise; the ratios agree with
-the corpus study.
-
-The round-2 [threading and phylogenetics study](paper/round2-phylogenetics.md) completed
-610 alignment runs on the 46 originally two-threaded production inputs. Ordinary two-thread
-refinement varied on 25/46 inputs; `--thread 2 --threadit 0` repeated consistently but
-differed from the one-thread result on 24/46; `--thread 2 --threadit 1` matched every
-one-thread golden. The trees showed meaningful topology and resolution sensitivity to those
-differences, without independent evidence that any threading setting is biologically more
-accurate — which is the motivation for dikarya5. See also the
-[experimental methods](paper/round2-methods.md), the
-[optimization harness](harness/round2/README.md), the
-[alignment/tree analysis harness](harness/round2/README-analysis.md) and the
-[production deployment script](harness/round2/DEPLOY.md) (verified bundle, golden checks,
-atomic activation and rollback; dry run by default).
-
-## `v7.526-opt8-dikarya2` — Dikarya VM follow-up
-
-dikarya2 adds eight-lane AVX2 striped local DP with deferred end-cell search, exact ordered
-duplicate-pair reuse, AVX2 profile improvements, cache-size-aware importance filling, and
-faster accurate-direction scoring. It targets the actual two-vCPU VMware guest, whose
-CPUID/GCC tuning is Haswell despite its Xeon E5-2690 v4 brand string. On all 100 production
-inputs with `--thread 1` it is **1.34x faster than opt8** (865 to 647 seconds) with
-**100/100 byte-identical outputs**; the separate 78-input holdout improves 1.30x. One
-FFT-NS-2 case regressed about 5%. See the [Dikarya VM report](paper/broadwell-dikarya2.md)
-and [its harness](harness/broadwell/README.md).
-
-The Dikarya rounds (dikarya2–dikarya5) were measured only on that AVX2 VM, built with GCC
-and `-O3 -march=native -ffp-contract=off`. Other architectures build the same source but
-have not received new runtime validation since opt8.
-
-## Historical results (opt8 and earlier)
-
-Speedup over stock MAFFT 7.526 built the same way on the same machine, wall time, `--thread 1`
-per run. "Pipeline L-INS-i" is the pipeline's test set of real ITS alignments (about 180
-sequences each): a batch of 16 run four at a time on a 4-vCPU instance (eight at a time on the
-M1), and single runs. Where that report's version (`v7.526-opt8`) was not measured on a machine, the
-row gives the most recent version that was.
-
-| machine | workload | version | several runs at once | single run |
-|---|---|---|---|---|
-| Apple M1 (macOS), clang, with the Metal GPU | pipeline L-INS-i | opt8 | 5.1× | 8.1× |
-| AWS c7a (AMD Zen 4), clang | pipeline L-INS-i | opt8 | 8.6×&nbsp;† | 10.5×&nbsp;† |
-| AWS c7i (Intel Sapphire Rapids), clang | pipeline L-INS-i | opt8 | 7.5×&nbsp;† | 8.1×&nbsp;† |
-| AWS c8a (AMD Zen 5), clang | pipeline L-INS-i | opt7 | 9.8× | 12× |
-| AWS c8i (Intel Granite Rapids), clang | pipeline L-INS-i | opt7 | 8.2× | 9.3× |
-| AWS c8g (Graviton4), clang | pipeline L-INS-i | opt8 | 5.0×&nbsp;† | 5.6×&nbsp;† |
-| AWS c7g (Graviton3), clang | pipeline L-INS-i | opt7 | 5.1× | 5.6× |
-| AWS g6 (NVIDIA L4, AMD Zen 3 host), clang + CUDA | pipeline L-INS-i | opt8 | 8.0×&nbsp;‡ | 9.6×&nbsp;‡ |
-| AWS g4dn (NVIDIA T4, Intel Cascade Lake host), clang + CUDA | pipeline L-INS-i | opt7 | 5.8× | |
-| AMD Zen 3 with AVX2 only (the g6 host), gcc `-march=broadwell` | pipeline L-INS-i | opt8 | 5.9× | 7.1× |
-| the same | FFT-NS-i on the same alignments | opt8 | 2.6× | |
-| Dikarya host: Intel Xeon E5-2690 v4 (Broadwell, AVX2), gcc | Dikarya `--auto` jobs | dikarya1 | | 6.4× on local-pair jobs, 2.3× on FFT-NS-i jobs, 6.7× on full L-INS-i |
-
-† Stock was timed on the same instance type in an earlier session; on c8g, opt7 timed in both
-sessions agreed within 1%, but c7i speed has drifted by up to 15% between sessions.<br>
-‡ Against a stock gcc build (clang stock is 2–6% faster). The GPU's share: the same build
-without CUDA was 6.5× and 7.6×.
-
-The speedups depend on the workload and the hardware: sequence count and length, the
-alignment strategy, cache sizes and vector units. Other inputs may gain much less. On AWS,
-GPU instances pair the GPU with few CPU cores, and refinement, which stays on the CPU,
-dominates: at on-demand prices, and at the throughput of the 16-alignment batches, the L4 costs
-about $1.10 per 1,000 pipeline alignments, against about $0.17 on a c7a. The GPU path is for machines with a strong CPU and an idle GPU.
-
-The technical report [`paper/mafft-apple-silicon.pdf`](paper/mafft-apple-silicon.pdf)
-describes the methods, the verification and what didn't work in detail, including how the
-per-architecture work of opt7 was done by parallel agents and consolidated in opt8.
-
-## Building
-
-The build is the same as upstream (see below); choose flags for your machine:
-
-| machine | build in `core/` |
+| machine | `CC` and `CFLAGS` |
 |---|---|
-| macOS, Apple silicon | `make CC=clang && make install` |
-| Linux arm64 (e.g. Graviton3/4) | `make CC=clang CFLAGS="-O3 -mcpu=neoverse-v1" && make install` |
-| x86-64 with AVX-512 | `make CC=clang CFLAGS="-O3 -march=x86-64-v4 -DMAFFT_STOCK_FMA=1" && make install` |
-| x86-64 with AVX2, no AVX-512 | `make CC=gcc CFLAGS="-O3 -march=native" && make install` |
+| macOS, Apple silicon | `CC=clang` (default flags) |
+| Linux arm64 (e.g. Graviton3/4) | `CC=clang CFLAGS="-O3 -mcpu=neoverse-v1"` |
+| x86-64 with AVX-512 | `CC=clang CFLAGS="-O3 -march=x86-64-v4 -DMAFFT_STOCK_FMA=1"` |
+| x86-64 with AVX2, no AVX-512 | `CC=gcc CFLAGS="-O3 -march=native"` |
 | any Linux build with an NVIDIA GPU | add `CUDA=1` to both `make` commands |
 
 - **macOS:** Accelerate and Metal are linked automatically. If Xcode's Metal compiler is
   installed, the GPU kernel is compiled at build time; otherwise at run time.
 - **AVX-512:** on CPUs with VBMI2 (AMD Zen 4 and later, Intel Ice Lake and later), adding
   `-mavx512vpopcntdq -mavx512vbmi2` enables one more vector path; it was about 2% faster on
-  Zen 4 and is how the c8a and c8i results above were built.
+  Zen 4 and is how the c8a and c8i results in the [changelog](CHANGELOG.md#opt8-and-earlier)
+  were built.
 - **AVX2:** the gcc build is the Dikarya host's. clang works too, with `-DMAFFT_STOCK_FMA=1`
-  when the target has FMA (see [below](#identical-to-stock)); it is the CPU side of the g6
-  results above.
+  when the target has FMA (see [rounding classes](#rounding-classes)); it is the CPU side of
+  the g6 results.
 - **CUDA:** needs the CUDA toolkit; `CUDA_HOME`, `NVCC` and `CUDA_ARCH` can be set. Pairs
   outside the kernel's limits, a missing GPU or any CUDA error fall back to the CPU.
-- **GPU off:** `MAFFT_NOGPU=1` makes the Metal and CUDA builds run everything on the CPU.
 - **Other targets** compile the same algorithms in scalar code. They were not verified;
   before relying on one, compare its output with a stock build made by the same compiler
-  (`harness/avx2/compare-builds.sh` runs six option sets).
+  (`harness/verify-against-stock.sh`, or `harness/avx2/compare-builds.sh`, which runs six
+  option sets).
 
-On every target, don't add `-ffast-math` or `-ffp-contract=fast`: they change results. The
-version string doesn't record the compiler or rounding class, so if you cache alignments,
-include both in the cache key. Only `core/` differs from upstream; `extensions/` is unchanged.
+**Check your build against stock** (needs a full clone, for upstream commit `0a2319b`):
 
-## Identical to stock
+```sh
+harness/verify-against-stock.sh --cc gcc --cflags "-O3 -march=native"
+```
+
+It builds stock MAFFT 7.526 and this tree with the same compiler and flags into a temporary
+directory, runs the 163-case fast matrix (every strategy, option set and thread setting on the
+fixtures in `test/exact/`) and exits nonzero on any byte difference; `--full` runs 675 cases.
+For clang on an FMA target add `--candidate-cflags -DMAFFT_STOCK_FMA=1`.
+
+## Warnings
+
+- **Don't add `-ffast-math` or `-ffp-contract=fast`** on any target: they change results.
+- **clang on x86-64 with FMA** must be told the rounding class: the build stops with `#error`
+  unless `-DMAFFT_STOCK_FMA=1` (stock built the same way contracts `a*b+c`) or
+  `-DMAFFT_STOCK_FMA=0` with `-ffp-contract=off` for both builds is given.
+- **Cache keys:** the version string doesn't record the compiler or rounding class, so if you
+  cache alignments, include both in the cache key.
+- **Multi-threaded runs outside the ordered scope** (below) are as non-reproducible as stock's.
+- **Measured hardware:** the Dikarya rounds (dikarya2–dikarya5) were measured only on the
+  Dikarya AVX2 VM. Other architectures build the same source; since opt8 they have been checked
+  only by the fast matrix in CI (gcc on x86-64 and arm64 Linux, clang on x86-64), not timed.
+  Metal and CUDA builds have not been rerun since opt8.
+
+## What is guaranteed
+
+"Stock" means unmodified MAFFT 7.526 (upstream commit `0a2319b`) built with the same compiler
+and flags.
+
+| run | output | reproducible |
+|---|---|---|
+| no `--thread` option (MAFFT's single-threaded default) | stock's, same options | yes |
+| `--thread 1` | stock `--thread 1` | yes |
+| `--thread N`, DNA L-INS-i, G-INS-i or E-INS-i (`--localpair`, `--globalpair`, `--genafpair` with `--maxiterate`), in the ordered scope | stock **`--thread 1`** | yes |
+| `--thread N`, other iterative refinement (FFT-NS-i, protein, RNA, the options below) | stock's own multi-threaded refinement | no, as in stock |
+| `--thread N`, no iterative refinement (e.g. FFT-NS-2) | stock's with the same threads; round 2 checked 72 non-iterative two-thread comparisons against opt8 | as in stock |
+| Metal or CUDA build | not rechecked for opt9; for opt8, the same build without the GPU (733,956 GPU alignments = CPU on the g6 test) | as above |
+
+The ordered scope is decided at run time by `refinement_attempt_reproducible()` in
+`core/tditeration.c`; stderr says `Ordered refinement: N workers commit in one-worker order.`
+when it applies. Measured with a DNA input and `--localpair` or `--globalpair` with
+`--maxiterate 2` (round 4), ordered refinement stays on with `--nofft`, `--kimura`, `--fmodel`, `--weighti`, `--retree`,
+`--op`/`--ep`, `--lop`/`--lexp`, `--oldgenafpair`, `--adjustdirection`,
+`--adjustdirectionaccurately`, `--reorder`, `--treeout`, `--anysymbol`, `--leavegappyregion`
+and `--clustalout`. With 16 such option sets (`--maxiterate 1000`, including `--auto`) on three
+DNA fixtures at `--thread 2` and `--thread 3`, all 96 runs used ordered refinement and were
+byte-identical to stock `--thread 1` (gcc AVX2). These turn it off:
+
+| option or input | why (condition in `refinement_attempt_reproducible()`) |
+|---|---|
+| protein input or `--amino` | DNA only (`dorp == 'd'`) |
+| FFT-NS-i (`--maxiterate` without `--localpair`/`--globalpair`/`--genafpair`), and `--6merpair`, which overrides them | constrained refinement only (`constraint == 2`) |
+| `--bestfirst` | branch-order parallel strategy only (`BAATARI2`) |
+| `--unalignlevel` > 0, `--allowshift` (G-INS-i only; it sets `--unalignlevel 0.8`) | `specificityconsideration == 0` (`dvtditr -s`) |
+| `--randomchain` | fixed guide tree and branch order (inferred from the run, not traced in the code) |
+| `--threadit 0`, `--threadit 1` | refinement with one worker or none (nothing to order) |
+| `--seed` | no seed alignments (`!nkozo`) |
+| RNA structure options, score output, asymmetric scoring matrices | `!rnakozo`, `RNAscoremtx != 'r'`, `!scoreout`, symmetric scores |
+
+`--memsave`, `--add` and `--addfragments` combined with L-INS-i or G-INS-i refinement exit with
+an error in stock MAFFT and in this fork alike. Why ordered refinement is exact, and its
+fallback to one worker, are in the [ordered-refinement report](paper/round3-ordered-refinement.md).
+
+### Rounding classes
 
 Stock MAFFT itself doesn't produce the same alignments on every platform. Apple's clang
 fuses `a*b+c` into one rounding (FMA); gcc with the Makefile's `-std=c99` never does. On the
@@ -191,11 +178,50 @@ fork matches **the stock build of the same platform and rounding class**:
 - **gcc** (any target): stock gcc, no flag needed.
 
 `MAFFT_STOCK_FMA` must match what the compiler does to the rest of the code: a clang build
-for an FMA target *without* the flag matches neither class. Multi-threaded runs
-(`--thread` > 1) of the iterative methods are not reproducible even in stock MAFFT, so the
-guarantee covers single-threaded runs. From dikarya5 on, multi-threaded DNA runs of the
-L-INS-i family are covered too: their refinement commits in one-worker order and gives the
-`--thread 1` alignment ([details](paper/round3-ordered-refinement.md)).
+for an FMA target *without* the flag matches neither class, which is why opt9 refuses to
+build it.
+
+## Runtime switches
+
+None of these changes the output, except as noted for `MAFFT_ORDERED_REFINE`.
+
+| variable | effect |
+|---|---|
+| `MAFFT_ORDERED_REFINE=0` (or `off`, `false`, `no`, any case) | stock completion-order multi-worker refinement instead of ordered refinement (`--thread N` output may then vary run to run, as in stock) |
+| `MAFFT_REJECT_MEMO_STATS=1` | print `REJECT_MEMO hits=… misses=… unsafe=…` on stderr after `--thread 1` refinement (opt9) |
+| `MAFFT_NOGPU` (any value) | Metal and CUDA builds run everything on the CPU |
+| `MAFFT_GPU_SOURCE` (any value) | macOS: compile the Metal kernel from source at run time instead of using the built-in library |
+| `L11GPU_VERBOSE`, `L11GPU_LOG=FILE` | GPU timing diagnostics on stderr, or one line per call appended to `FILE` |
+| `MAFFT_NODUPCACHE` (any value) | turn off reuse of duplicate-pair local alignments |
+| `MAFFT_NODENSEKMER` (any value) | turn off the dense six-mer counts |
+| `MAFFT_NOLBAND` (any value) | AVX2 builds without AVX-512 (`MAFFT_LBAND`, with the striped fill): turn off the exact banded all-pairs fill (opt9) and use the full striped fill for every pair |
+| `MAFFT_LBAND_CHECK` (any value) | the same builds: align every all-pairs pair both without and with the band and stop if they differ (a test mode; it does the all-pairs work twice) |
+| `MAFFT_ORDERED_TEST_UNSAFE=n` | `-DMAFFT_ORDERED_TEST` builds only: force the one-worker fallback at the nth commit |
+| `MAFFT_BINARIES`, `MAFFT_TMPDIR` | as in stock MAFFT |
+
+With `MAFFT_NODUPCACHE=1`, `MAFFT_NODENSEKMER=1`, `MAFFT_NOGPU=1` or
+`MAFFT_REJECT_MEMO_STATS=1`, output on two duplicate-rich fixtures (`dna80dup`, `dna20alldup`)
+with L-INS-i, FFT-NS-2 (`--retree 2`) and `--auto` was identical to stock (round 4, gcc AVX2).
+
+## Threading and phylogenies
+
+The round-2 [threading and phylogenetics study](paper/round2-phylogenetics.md) ran 610
+alignments of the 46 production inputs that Dikarya had originally run with two threads, built
+trees from them, and found a reproducibility problem, not an accuracy ranking:
+
+- ordinary `--thread 2` refinement gave different alignments on repeated runs for **25/46**
+  inputs;
+- `--thread 2 --threadit 0` was repeatable but differed from the one-thread alignment on
+  **24/46**;
+- `--thread 2 --threadit 1` matched every one-thread golden (92/92 runs).
+
+The trees reflect it: a fast IQ-TREE screen found topology differences between the one-thread
+alignment's tree and the first `--thread 2` tree for **19/46** inputs, and against
+`--threadit 0` for **24/46** (this 24 counts trees and is a separate measure from the 24
+alignments above). The trees showed meaningful topology and resolution sensitivity to these
+differences, and some strongly supported splits disappeared, but there is no independent
+evidence that any threading setting is biologically more accurate. dikarya5's ordered refinement removes the choice for in-scope runs:
+`--thread 2` gives the one-thread alignment, so the tree no longer depends on thread timing.
 
 ## How it works
 
@@ -215,7 +241,8 @@ are provably integral. The main pieces, by stage of an L-INS-i run:
   Accelerate on macOS, exact integer sums elsewhere); vector DP rows whose multiply-adds
   round like the stock build's; the importance matrix filled in cache-sized bands and read
   back only over the columns written; substitution profiles skipping the letters absent from
-  a column.
+  a column. dikarya4 reuses the final no-gain tail of refinement attempts, and dikarya5's
+  workers commit attempts in one-worker order.
 - **Bookkeeping everywhere.** Gap runs, residue maps, column profiles and anchor search
   scan 16–64 bytes at a time with byte-compare masks; gap-column removal moves runs instead
   of characters; work buffers are no longer cleared when every byte is written before it is
@@ -226,64 +253,58 @@ without a vector unit run the same algorithms in scalar code.
 
 ## Verification
 
+- **Against stock** ([`harness/verify-against-stock.sh`](harness/verify-against-stock.sh),
+  [fixtures](test/exact/README.md)): stock and this tree built the same way, every strategy,
+  option set and thread setting compared byte for byte; run in CI
+  ([`.github/workflows/exact.yml`](.github/workflows/exact.yml)) for gcc scalar, gcc AVX2,
+  clang FMA class, ASan+UBSan, the threaded ordered-refinement cases and gcc arm64.
 - **Per-call harnesses** ([`harness/`](harness)) patch a scratch copy of the source so that
   every call of a rewritten function is also computed the original way, compared bit for bit,
   and aborted on the first difference. They run across L-INS-i with three gap settings, the
   protein `test/sample`, FFT-NS-i and placement (`--add`, `--addfragments`).
 - **Whole alignments** are compared with stock references: the pipeline's 183-alignment
-  test set, and a canary kit of 13 L-INS-i windows and 12 placement cases.
+  test set, a canary kit of 13 L-INS-i windows and 12 placement cases, and on the Dikarya VM
+  the 100-input production corpus and later production inputs.
+- **Ordered refinement** is stressed with random delays, more workers than CPUs and forced
+  one-worker fallbacks, and checked with ThreadSanitizer against stock
+  ([round-4 report](paper/round4-audit-fixes.md#4-concurrency-audit-of-ordered-refinement-dikarya5)).
 - **Object comparison** (`harness/objcheck.sh`) shows which compiled objects a change touches
   in each build configuration.
 
-State of `v7.526-opt8`:
+Per-version results are in the [changelog](CHANGELOG.md); the reports are indexed in
+[`paper/README.md`](paper/README.md).
 
-| machine | build | result |
-|---|---|---|
-| Apple M1 | clang, with and without the GPU | canary 25/25 (13/13 without the GPU); harnesses identical |
-| AWS c7a (Zen 4) | clang+FMA AVX-512, with and without VBMI2 flags | 183/183 test alignments = Mac reference; canary 25/25; harnesses identical |
-| AWS c7a | gcc `x86-64-v3`, `x86-64-v4` | = stock gcc on a 43-alignment subset |
-| AWS c7i (Sapphire Rapids) | clang+FMA AVX-512 | canary 25/25 |
-| AWS c8g (Graviton4) | clang `-mcpu=neoverse-v1` | 183/183 = Mac reference; harnesses identical |
-| AWS c8g | gcc | harnesses identical (gcc builds match stock gcc, not the Mac) |
-| AWS g6 (L4, Zen 3 host) | clang+FMA `x86-64-v3` + CUDA | 183/183 = Mac reference; canary 25/25 with and without the GPU; 733,956 GPU alignments = CPU |
-| AWS g6 host (Zen 3, AVX2 only) | gcc `-march=broadwell` (the Dikarya host's build class) | 183/183 = `v7.526-opt5-dikarya1`; 13/13 canary windows = stock gcc; FFT-NS-i 16/16 = dikarya1 |
+## Glossary
 
-The original opt8 report did not include a run on the Dikarya host itself. The
-[VM follow-up](paper/broadwell-dikarya2.md) now uses installed opt8 as its directly measured
-reference. In its build class on the earlier Zen 3 host, opt8 was 1.2× faster than dikarya1
-(L-INS-i and FFT-NS-i) with identical output. `v7.526-opt5-dikarya1` retains that earlier code.
-Some historical harness runs were on
-an opt8 commit before the final tuning commit; `harness/opt8/README.md` lists which harness
-scripts apply to which version.
-
-## Versions
-
-Each version is a tag on the `exact-speedups` branch, a linear series on upstream `main`
-(7.526 plus commits from December 2025). `mafft --version` reports the tag's suffix
-(`v7.526-opt1` reports plain `v7.526`). The CLUSTAL output header of the dikarya versions
-still says `7.526-opt8`, so their alignment files stay byte-identical to opt8's. Use the newest unless you need to reproduce an older
-build.
-
-| tag | adds |
+| term | meaning |
 |---|---|
-| `v7.526-opt1` | bookkeeping rewrites, NEON DP rows, closed-form pair scores via Accelerate (Apple silicon) |
-| `v7.526-opt2` | refinement pair-score cache, vector prefix scan, run-based gap counts |
-| `v7.526-opt3` | all-pairs local alignment on the GPU (Metal) |
-| `v7.526-opt4` | GPU kernel compiled at build time, occupancy tuning |
-| `v7.526-opt5` | x86-64 AVX-512 kernels; multiply-adds rounded per platform |
-| `v7.526-opt5-dikarya1` | AVX2 paths for x86-64 without AVX-512, for the Dikarya host: the marker fill, sparse profile scores, uncleared `Falign` work rows |
-| `v7.526-opt6` | the marker fill on AVX-512 builds too |
-| `v7.526-opt7` | Linux arm64 (NEON/SVE), newer x86 AVX-512 kernels, the CUDA all-pairs stage |
-| `v7.526-opt8` | one feature-test header and shared portable code for every target; the AVX-512 kernels without extra flags |
-| `v7.526-opt8-dikarya2` | AVX2 striped local DP with deferred end search, duplicate-pair reuse, AVX2 profile and importance-fill tuning for the Dikarya VM |
-| `v7.526-opt8-dikarya4` | rolling score-only DP, raw-profile row reuse, direct pair scoring, dense six-mer counts, terminal no-gain refinement reuse |
-| `v7.526-opt8-dikarya5` | ordered multi-worker refinement: `--thread N` gives the `--thread 1` alignment |
+| stock | unmodified MAFFT 7.526 (upstream `0a2319b`) built with the same compiler and flags |
+| rounding class | whether a build fuses `a*b+c` into one FMA rounding; output is compared only within a class |
+| golden | a frozen reference output; the Dikarya goldens were frozen from opt8 and match stock `--thread 1` |
+| L-INS-i, G-INS-i, E-INS-i | `--localpair`, `--globalpair`, `--genafpair` with `--maxiterate`: refinement constrained by pairwise alignments |
+| FFT-NS-2, FFT-NS-i | progressive alignment (`--retree 2`), and the same with iterative refinement (`--maxiterate`) |
+| `--auto` | MAFFT picks the strategy from the input size: L-INS-i, FFT-NS-i or FFT-NS-2 |
+| refinement worker | a thread of iterative refinement; `--threadit` sets how many |
+| ordered refinement | dikarya5's multi-worker refinement that commits attempts in one-worker order |
+| A, B, C, F, O | the threading configurations of the round-2 and round-3 studies: `--thread 1`; `--thread 2` (stock refinement); `--thread 2 --threadit 0`; `--thread 2 --threadit 1`; `--thread 2` with ordered refinement |
+| corpus, holdout | the 100 Dikarya production jobs used for timing (12 development, 78 holdout, 10 difficult) |
+| canary | a small kit of L-INS-i windows and placement cases compared with stock references |
+| optN, dikaryaN | releases for general targets (opt) and for the Dikarya host (dikarya); see the [changelog](CHANGELOG.md) |
+
+## Versions and documentation
+
+- [CHANGELOG.md](CHANGELOG.md): every release, its results, and why there is no dikarya3.
+- [paper/README.md](paper/README.md): index of the technical reports.
+- [harness/round2/DEPLOY.md](harness/round2/DEPLOY.md): the Dikarya deployment script, rollback,
+  and the draft opt9 procedure.
 
 ## For the MAFFT maintainers
 
-`git diff 0a2319b v7.526-opt8-dikarya5 -- core/` is the whole change against upstream `main`
-(`0a2319b`, the newest official source as of 2026-10-07). The feature tests are all in
-`core/mafft_simd.h`, and each vector path keeps a scalar version of the same algorithm.
+`git diff 0a2319b v7.526-opt8-dikarya5 -- core/` is the whole change of the latest release
+against upstream `main` (`0a2319b`, the newest official source as of 2026-10-07); `git diff
+0a2319b opt9-docs -- core/` includes the unreleased opt9 changes (PR #3). The feature tests are all in
+`core/mafft_simd.h`, and each vector path keeps a scalar version of the same algorithm. Only
+`core/` differs from upstream; `extensions/` is unchanged.
 
 ## Credits and license
 
@@ -300,6 +321,9 @@ build.
 - **dikarya5** (ordered refinement) and the independent check of dikarya4 against stock
   MAFFT on new production inputs: Claude Code (Claude Opus 5.5, Anthropic), with Alan
   Rockefeller directing.
+- **opt9**: a collaboration between OpenAI Codex (max reasoning) and Claude Code (Claude Opus
+  5.5, Anthropic), with Alan Rockefeller directing. opt9 builds on dikarya4, whose 1.45x over
+  opt8 is Codex's work.
 - MAFFT itself is by Kazutaka Katoh and colleagues. Please cite MAFFT as its authors ask
   (see the official site).
 

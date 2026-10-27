@@ -235,12 +235,14 @@ typedef struct
 } batch_t;
 
 #define CK( x ) do { if( ( x ) != cudaSuccess ) { fail = 1; goto done; } } while( 0 )
+/* host out of memory: give the pairs to the CPU without disabling the GPU */
+#define CKH( p ) do { if( !( p ) ) { nomem = 1; goto done; } } while( 0 )
 
 extern "C" int l11gpu_align( int nseq, char **seqs, const int *lens, const int *code, int ncode, const int *mtx,
                              int pen, int ext, int thr, char gapc,
                              int npairs, const int *pi, const int *pj, l11res *out )
 {
-	int k, p, b, next, fail = 0, njob = 0;
+	int k, p, b, next, fail = 0, nomem = 0, njob = 0;
 	int *job = NULL;
 	size_t total = 0;
 	uint32_t *soff = NULL;
@@ -256,8 +258,10 @@ extern "C" int l11gpu_align( int nseq, char **seqs, const int *lens, const int *
 	t1 = now();
 
 	soff = (uint32_t *)malloc( sizeof( uint32_t ) * nseq );
+	CKH( soff );
 	for( k=0; k<nseq; k++ ) { soff[k] = (uint32_t)total; total += lens[k] + 1; }
 	hcodes = (unsigned char *)malloc( total + 16 );
+	CKH( hcodes );
 	for( k=0; k<nseq; k++ )
 	{
 		for( int i=0; i<lens[k]; i++ ) hcodes[soff[k]+i] = (unsigned char)code[(unsigned char)seqs[k][i]];
@@ -272,6 +276,7 @@ extern "C" int l11gpu_align( int nseq, char **seqs, const int *lens, const int *
 
 	/* pairs the kernel can take: 64 <= l2 <= 32*CMAXV, traceback values fit in int16; ordered by C (stable) */
 	job = (int *)malloc( sizeof( int ) * ( npairs + 1 ) );
+	CKH( job );
 	for( int c=CMIN; c<=CMAXV; c++ ) for( p=0; p<npairs; p++ )
 	{
 		int l1 = lens[pi[p]], l2 = lens[pj[p]];
@@ -310,8 +315,11 @@ extern "C" int l11gpu_align( int nseq, char **seqs, const int *lens, const int *
 					int len = ( d->l1 + d->l2 ) - r->start;
 					char *m1 = cur->hout + d->outoff + r->start;
 					char *m2 = cur->hout + d->outoff + ( d->l1 + d->l2 + 1 ) + r->start;
-					out[q].s1 = (char *)malloc( len + 1 ); memcpy( out[q].s1, m1, len + 1 );
-					out[q].s2 = (char *)malloc( len + 1 ); memcpy( out[q].s2, m2, len + 1 );
+					out[q].s1 = (char *)malloc( len + 1 );
+					out[q].s2 = (char *)malloc( len + 1 );
+					/* out of memory: leave the pair (status -1) to the CPU */
+					if( !out[q].s1 || !out[q].s2 ) { free( out[q].s1 ); free( out[q].s2 ); out[q].s1 = out[q].s2 = NULL; continue; }
+					memcpy( out[q].s1, m1, len + 1 ); memcpy( out[q].s2, m2, len + 1 );
 					out[q].status = 0;
 				}
 				else if( r->status == 1 ) { out[q].s1 = out[q].s2 = NULL; out[q].status = 1; }
@@ -386,6 +394,7 @@ done:
 		fprintf( stderr, "l11gpu: CUDA error (%s); using the CPU\n", cudaGetErrorString( cudaGetLastError() ) );
 		gpu_state = -1;
 	}
+	if( nomem ) fprintf( stderr, "l11gpu: out of memory; using the CPU\n" );
 	for( b=0; b<2; b++ )
 	{
 		if( bt[b].busy ) cudaEventSynchronize( bt[b].ev );
@@ -402,5 +411,5 @@ done:
 		FILE *fp = fopen( getenv( "L11GPU_LOG" ), "a" );
 		if( fp ) { fprintf( fp, "l11gpu pid %d pairs %d gpu %d cells %.0f init %.3f s total %.3f s%s\n", (int)getpid(), npairs, njob, cells, t1 - t0, now() - t0, fail ? " FAILED" : "" ); fclose( fp ); }
 	}
-	return( !fail );
+	return( !fail && !nomem );
 }

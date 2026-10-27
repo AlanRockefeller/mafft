@@ -63,7 +63,7 @@ def create_queue(args):
             if not line.strip():
                 continue
             row = json.loads(line)
-            if row.get("returncode", 0):
+            if row.get("returncode", 0) or row.get("completed") is False:
                 continue
             if args.files and row["input"] not in args.files:
                 continue
@@ -143,6 +143,10 @@ def execute_queue(queue, args):
     if logpath.exists():
         for line in logpath.read_text().splitlines():
             record = json.loads(line)
+            # A recorded tree must still be the tree that was recorded.
+            if record.get("completed") and (not record.get("tree") or not Path(record["tree"]).exists()
+                                            or sha256_file(record["tree"]) != record["tree_sha256"]):
+                raise ValueError(f"Recorded tree missing or changed: {record['requested_id']}")
             done[record["requested_id"]] = record
     requests_by_job = defaultdict(list)
     for request in queue["requests"]:

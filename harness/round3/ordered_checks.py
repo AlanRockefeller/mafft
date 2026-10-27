@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Byte-identity checks for ordered multi-worker refinement (dikarya5).
 
-Every mode compares MAFFT stdout with a one-thread golden and appends one JSON
-record per run to OUT/runs.jsonl.  Finished runs are skipped on restart.
+Every mode compares MAFFT stdout with a one-thread golden.  Each finished run
+is appended to OUT/manifest.jsonl (see harness/exact/caserun.py) under a key
+covering the input and its hash, the installed binary hash, the options and
+the MAFFT environment.  On restart a case is skipped only if its manifest
+record still checks out; earlier failures stay in the failure count.
 
   corpus  every input of the corpus manifest with --thread THREADS
   stress  development L-INS-i inputs with 2, 3 and 4 threads, then forced
@@ -15,23 +18,13 @@ goldens GOLDEN/<file>.
 import argparse
 import json
 import os
-import subprocess
-import time
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'exact'))
+import caserun  # noqa: E402
 
-def run(mafft, threads, options, path, out, env):
-    started = time.monotonic()
-    with open(out, 'wb') as stdout, open(str(out) + '.err', 'wb') as stderr:
-        proc = subprocess.Popen([mafft, '--thread', str(threads), *options, str(path)],
-                                stdout=stdout, stderr=stderr, env=env,
-                                preexec_fn=lambda: os.nice(19))
-        _, status, usage = os.wait4(proc.pid, 0)
-    err = Path(str(out) + '.err').read_bytes()
-    return dict(status=status, wall=time.monotonic() - started,
-                cpu=usage.ru_utime + usage.ru_stime,
-                ordered=b'Ordered refinement: ' in err,
-                rerun=b'rerunning with one worker' in err)
+MARKERS = {'ordered': b'Ordered refinement: ', 'rerun': b'rerunning with one worker'}
 
 
 def main():
@@ -43,6 +36,8 @@ def main():
     p.add_argument('--golden', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--threads', type=int, default=2)
+    p.add_argument('--timeout', type=float, default=3600, help='seconds per MAFFT run (default 3600)')
+    p.add_argument('--retry', action='store_true', help='rerun recorded failures (they still count)')
     a = p.parse_args()
 
     files = json.loads(a.manifest.read_text())['files']
@@ -58,24 +53,35 @@ def main():
             cases.append((f, 2, {'MAFFT_ORDERED_REFINE': '0'}))
 
     a.out.mkdir(parents=True, exist_ok=True)
-    bad = 0
-    with open(a.out / 'runs.jsonl', 'a') as log:
-        for f, threads, extra in cases:
-            tag = '.'.join([f['file'], 't%d' % threads] + ['%s%s' % kv for kv in extra.items()])
-            out = a.out / (tag + '.fa')
-            if out.exists():
-                continue
-            env = dict(base)
-            env.update(extra)
-            rec = run(a.mafft, threads, f['production_options'], a.data / f['file'], out, env)
-            rec.update(case=tag, options=f['production_options'],
-                       same=out.read_bytes() == (a.golden / f['file']).read_bytes())
-            log.write(json.dumps(rec) + '\n')
-            log.flush()
-            in_scope = '--localpair' in f['production_options'] and 'MAFFT_ORDERED_REFINE' not in extra
-            bad += in_scope and (not rec['same'] or rec['status'] != 0)
-    print('in-scope failures:', bad)
-    return 1 if bad else 0
+    binary = caserun.install_digest(a.mafft)
+    manifest = caserun.Manifest(a.out / 'manifest.jsonl')
+    tally = caserun.Tally()
+
+    def show(record):
+        print('%-48s %-9s %8.1fs %s' % (record['case'], 'ok' if record['failure'] is None else 'FAIL',
+                                        record['wall'], record['failure'] or ''), flush=True)
+
+    for f, threads, extra in cases:
+        tag = '.'.join([f['file'], 't%d' % threads] + ['%s%s' % kv for kv in extra.items()])
+        env = dict(base)
+        env.update(extra)
+        source = a.data / f['file']
+        argv = [a.mafft, '--thread', str(threads), *f['production_options'], str(source)]
+        in_scope = '--localpair' in f['production_options'] and 'MAFFT_ORDERED_REFINE' not in extra
+        category = ('%s t%d' % (a.mode, threads) if not extra else
+                    '%s %s' % (a.mode, ','.join(extra)))
+        case = dict(name=tag, category=category, argv=argv, env=env, out=a.out / (tag + '.fa'),
+                    expected=caserun.file_digest(a.golden / f['file']), in_scope=in_scope,
+                    stderr_markers=MARKERS, record=dict(options=f['production_options']),
+                    key=caserun.case_key(input=str(source.resolve()), input_sha256=caserun.file_digest(source),
+                                         binary=binary, threads=threads, options=f['production_options'],
+                                         env=caserun.relevant_env(env), timeout=a.timeout))
+        caserun.execute(case, manifest, tally, timeout=a.timeout, retry=a.retry, nice=19, log=show)
+    manifest.close()
+    tally.report()
+    caserun.write_json(a.out / 'summary.json', tally.as_dict())
+    print('in-scope failures:', tally.failed)
+    return 1 if tally.failed else 0
 
 
 if __name__ == '__main__':

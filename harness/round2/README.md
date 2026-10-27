@@ -21,8 +21,8 @@ python3 harness/round2/build.py --source "$validation_source" \
 `build.py` uses GCC and `-O3 -march=native -ffp-contract=off -g` by default.
 Its new private output contains source, build commands/logs, installed files
 and hashes. It refuses an existing output directory. Preserve that directory
-and use another path for each variant. The CLUSTAL alignment stamp remains
-opt8 while diagnostics identify dikarya4.
+and use another path for each variant. The CLUSTAL alignment stamp is stock
+7.526's (it was opt8 through dikarya5); diagnostics identify the fork's version.
 
 `MAFFT_REJECT_MEMO` defaults to one in the shared header. Its narrow runtime
 guards authorize exact reuse only in a verified terminal no-gain suffix of

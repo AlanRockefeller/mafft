@@ -27,6 +27,17 @@ FORMAT = '{"user":%U,"system":%S,"rss_kib":%M,"major_faults":%F,"minor_faults":%
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
+def installed_hashes(binary):
+    """Every installed program: the launcher is a script, the alignment comes from libexec.
+    A release from deploy.py keeps its programs under payload/, behind wrappers in bin/.
+    Any other layout is refused: hashing the launcher alone would let changed helpers pass."""
+    prefix=Path(binary).resolve().parent.parent
+    if (prefix/'payload'/'libexec'/'mafft').is_dir():dirs=['bin','payload/bin','payload/libexec/mafft']
+    elif (prefix/'libexec'/'mafft').is_dir():dirs=['bin','libexec/mafft']
+    else:raise SystemExit('--binary must be PREFIX/bin/mafft of an installation (PREFIX/libexec/mafft) '
+                          'or of a deploy.py release (PREFIX/payload/libexec/mafft): '+str(binary))
+    return {str(x.relative_to(prefix)):digest(x) for d in dirs for x in sorted((prefix/d).rglob('*')) if x.is_file()}
+
 def write_json(p,d):
     t=p.with_suffix('.tmp'); t.write_text(json.dumps(d,indent=2)+'\n');t.replace(p)
 
@@ -102,7 +113,7 @@ def main():
         if f['sha256'] not in seen:
             independent.append(f);seen[f['sha256']]=f['file']
     version=subprocess.run([str(args.binary),'--version'],capture_output=True,text=True,env=env)
-    metadata={'binary':str(args.binary),'launcher_sha256':digest(args.binary),
+    metadata={'binary':str(args.binary),'launcher_sha256':digest(args.binary),'installed_file_sha256':installed_hashes(args.binary),
               'version':version.stdout+version.stderr,'manifest_sha256':digest(args.manifest),
               'configs':CONFIGS,'selected_configs':args.configs,'selected_files':files,'independent_files':[f['file'] for f in independent],
               'replicates':args.replicates,'a_replicates':args.a_replicates,
@@ -111,8 +122,8 @@ def main():
     mp=args.output/'experiment.json'
     if mp.exists():
         old=json.loads(mp.read_text())
-        for k in ['binary','launcher_sha256','manifest_sha256','selected_files','selected_configs','replicates','a_replicates']:
-            if old[k]!=metadata[k]:raise SystemExit('resume metadata mismatch: '+k)
+        for k in ['binary','launcher_sha256','installed_file_sha256','manifest_sha256','selected_files','selected_configs','replicates','a_replicates']:
+            if old.get(k)!=metadata[k]:raise SystemExit('resume metadata mismatch: '+k)
     else:mp.write_text(json.dumps(metadata,indent=2)+'\n')
     logpath=args.output/'runs.jsonl';done={}
     if logpath.exists():

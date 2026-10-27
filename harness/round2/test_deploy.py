@@ -109,6 +109,9 @@ class DeploymentTests(unittest.TestCase):
         result = self.apply()
         self.assertTrue(self.entrypoint.is_symlink())
         self.assertEqual(subprocess.check_output([str(self.entrypoint), '--version'], text=True).strip(), deploy.VERSION)
+        # tiny.fasta runs --auto: A and F before activation (no ordered O check), then A after.
+        record = json.loads(Path(result['deployment']).with_name('result.json').read_text())
+        self.assertEqual(record['golden_checks'], 3)
         code, _ = self.rollback(result)
         self.assertEqual(code, 0, self.last_error)
         self.assertEqual(deploy.snapshot(self.entrypoint), before)

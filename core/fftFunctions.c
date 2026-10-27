@@ -294,6 +294,8 @@ int alignableReagion( int    clus1, int    clus2,
 				free( cprf );
 				ccap = (size_t)len * nu * 2 + 1;
 				cprf = malloc( sizeof( double ) * ccap );
+				/* out of memory: the original column-by-column profiles below */
+				if( cprf == NULL ) { ccap = 0; goto profiles_original; }
 			}
 			cp1 = cprf; cp2 = cprf + (size_t)len * nu;
 			memset( cprf, 0, sizeof( double ) * (size_t)len * nu * 2 );
@@ -356,6 +358,7 @@ int alignableReagion( int    clus1, int    clus2,
 			goto profiles_done;
 		}
 	}
+profiles_original:
 	for( i=0; i<len; i++ )
 	{
 		/* make prfs */

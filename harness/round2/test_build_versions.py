@@ -11,7 +11,7 @@ class BuildVersionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             core = Path(temporary)
             (core / 'mltaln.h').write_text('#define VERSION "7.526-opt8-dikarya4"\n'
-                                         '#define ALIGNMENT_VERSION "7.526-opt8"\n')
+                                         '#define ALIGNMENT_VERSION "7.526"\n')
             (core / 'mafft.tmpl').write_text('version="v7.526-opt8-dikarya4 (2024/Apr/26)"; export version\n')
             self.assertEqual(check_version_stamps(core)['native'], '7.526-opt8-dikarya4')
             (core / 'mafft.tmpl').write_text('version="v7.526-opt8-dikarya3 (2024/Apr/26)"; export version\n')
@@ -21,7 +21,7 @@ class BuildVersionTests(unittest.TestCase):
     def test_missing_stamps_cannot_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
             core = Path(temporary)
-            (core / 'mltaln.h').write_text('#define ALIGNMENT_VERSION "7.526-opt8"\n')
+            (core / 'mltaln.h').write_text('#define ALIGNMENT_VERSION "7.526"\n')
             (core / 'mafft.tmpl').write_text('version="unrecognized"\n')
             with self.assertRaisesRegex(ValueError, 'must agree'):
                 check_version_stamps(core)

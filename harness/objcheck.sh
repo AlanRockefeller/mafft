@@ -10,7 +10,7 @@
 #     x86-v4-fma     clang -arch x86_64 -O3 -march=x86-64-v4 -DMAFFT_STOCK_FMA=1  (AWS production)
 #     x86-v4x-fma    clang -arch x86_64 -O3 -march=x86-64-v4 -mavx512vpopcntdq -mavx512vbmi2 -DMAFFT_STOCK_FMA=1
 #     x86-v3-fma     clang -arch x86_64 -O3 -march=x86-64-v3 -DMAFFT_STOCK_FMA=1
-#     x86-broadwell  clang -arch x86_64 -O3 -march=broadwell
+#     x86-broadwell  clang -arch x86_64 -O3 -march=broadwell         (-DMAFFT_STOCK_FMA=1 added, below)
 #     x86-v2         clang -arch x86_64 -O3 -march=x86-64-v2
 #     x86-base       clang -arch x86_64 -O3
 #   on Linux, any of the above without -arch, plus gcc-<march> (gcc -O3 -march=<march>) and
@@ -40,6 +40,13 @@ for cfg in "$@"; do
     gcc-*)         cc="gcc"; fl="-O3 -march=${cfg#gcc-}";;
     clang-*)       cc="clang"; fl="-O3 -march=${cfg#clang-}";;
     *) echo "unknown config $cfg" >&2; exit 2;;
+  esac
+  # clang on x86-64 with FMA must be told the rounding class (core/mafft_simd.h): stock contracts.
+  case $cc in clang*)
+    case "$fl" in *MAFFT_STOCK_FMA*) ;; *)
+      if $cc $fl -dM -E -x c /dev/null 2>/dev/null | grep -q '__FMA__' &&
+         $cc $fl -dM -E -x c /dev/null 2>/dev/null | grep -q '__x86_64__'; then fl="$fl -DMAFFT_STOCK_FMA=1"; fi;;
+    esac;;
   esac
   n=0; d=0; list=""
   for side in old new; do

@@ -4,6 +4,18 @@ Scripts behind the [ordered-refinement report](../../paper/round3-ordered-refine
 and the independent stock comparison of dikarya4 in the main README. They need Python
 3.8+ and private builds; they never touch an installed MAFFT except to run it.
 
+## Restarts
+
+All three scripts record each finished run in `OUT/manifest.jsonl` through
+[`harness/exact/caserun.py`](../exact/caserun.py). A record is keyed by the input path and
+hash, the hash of the installed launcher and every program under `libexec/mafft`, the
+options and the `MAFFT_*`/locale environment, so a rebuilt binary or a changed input is run
+again rather than reused. Output is written to a temporary file and renamed into place
+only after exit status 0; anything else is kept as `*.failed`. On restart a recorded pass
+counts only if its output still has the recorded hash and the golden is unchanged, and a
+recorded failure keeps counting, also after `--retry` reruns it. `summary.json` gives pass
+and fail counts per category. Older `runs.jsonl` files from before this change are not read.
+
 ## Builds
 
 Build the release, a test-hook build and a sanitizer build from the same source with the
@@ -38,7 +50,8 @@ python3 harness/round3/ordered_checks.py stress --mafft /private/dikarya5-test/i
   --golden bench/golden/production-t1 --out /private/ordered-stress
 ```
 
-Both exit nonzero if an in-scope (L-INS-i) run fails or differs. Out-of-scope inputs
+Both exit nonzero if an in-scope (L-INS-i) run fails, times out (`--timeout`, default
+3600 s per run, kills the whole process group) or differs. Out-of-scope inputs
 (FFT-NS-i via `--auto`) and `MAFFT_ORDERED_REFINE=0` runs are recorded but may differ:
 they use stock completion-order refinement.
 
@@ -52,7 +65,8 @@ python3 harness/round3/stock_replay.py replay --set /private/replay-set.json \
   dikarya4=/opt/mafft-7.526-opt8/bin/mafft
 ```
 
-`select` keeps each distinct input/option pair whose input hash is not in the corpus and
+`replay` exits nonzero if any run fails or times out, or if any build's bytes differ from
+the `--reference` build (default: the first named). `select` keeps each distinct input/option pair whose input hash is not in the corpus and
 drops the recorded `--thread`; `replay` runs `--thread 1` at nice 10. Equal SHA-256 per job
 across builds is the result; CPU totals are descriptive on a shared VM.
 

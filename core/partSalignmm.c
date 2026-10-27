@@ -133,6 +133,23 @@ static void part_imp_match_out_vead_gapmap( double *imp, int i1, int lgth2, int 
 		__m512d g = _mm512_i32gather_pd( _mm256_loadu_si256( (__m256i *)( gapmap2 + j ) ), row, 8 );
 		_mm512_storeu_pd( imp + j, _mm512_add_pd( _mm512_loadu_pd( imp + j ), g ) );
 	}
+#elif defined(MAFFT_AVX2)
+	/* Where gapmap2 maps 4 consecutive j to 4 consecutive columns, one vector load of the row;
+	   otherwise an AVX2 gather.  The same single add for every element. */
+	{
+		const __m128i step = _mm_setr_epi32( 0, 1, 2, 3 );
+		for( ; j+4<=b; j+=4 )
+		{
+			__m128i idx = _mm_loadu_si128( (const __m128i *)( gapmap2 + j ) );
+			int g0 = gapmap2[j];
+			__m256d g;
+			if( _mm_movemask_epi8( _mm_cmpeq_epi32( idx, _mm_add_epi32( _mm_set1_epi32( g0 ), step ) ) ) == 0xffff )
+				g = _mm256_loadu_pd( row + g0 );
+			else
+				g = _mm256_i32gather_pd( row, idx, 8 );
+			_mm256_storeu_pd( imp + j, _mm256_add_pd( _mm256_loadu_pd( imp + j ), g ) );
+		}
+	}
 #elif defined(MAFFT_A64)
 	/* No gather on NEON: where gapmap2 maps 4 consecutive j to 4 consecutive columns (most of the
 	   time), two vector loads; otherwise the scalar adds.  The same add for every element. */
@@ -211,6 +228,7 @@ void part_imp_match_init_strict( double *imp, int clus1, int clus2, int lgth1, i
 		free( improwlo ); free( improwhi );
 		improwlo = malloc( sizeof( int ) * impalloclen );
 		improwhi = malloc( sizeof( int ) * impalloclen );
+		if( !improwlo || !improwhi ) ErrorExit( "Cannot allocate memory." );
 		impclean = 0;
 	}
 
@@ -400,6 +418,7 @@ static void mcx_build( double **cpmx2, int lgth2, unsigned int *colm )
 	free( mcx_K ); free( mcx_off );
 	mcx_K = malloc( mcx_nblk + 1 );
 	mcx_off = malloc( sizeof( int ) * ( mcx_nblk + 1 ) );
+	if( !mcx_K || !mcx_off ) { free( mcx_K ); free( mcx_off ); mcx_K = NULL; mcx_off = NULL; return; } /* mcx_ok = 0: mc_match's grouped loop */
 	for( b=0; b<mcx_nblk; b++ )
 	{
 		int kb = 0;
@@ -411,6 +430,12 @@ static void mcx_build( double **cpmx2, int lgth2, unsigned int *colm )
 		free( mcx_let ); free( mcx_msk ); free( mcx_val );
 		mcx_cap = (size_t)nlev + 1;
 		mcx_let = malloc( 8 * mcx_cap ); mcx_msk = malloc( mcx_cap ); mcx_val = malloc( sizeof( double ) * 8 * mcx_cap );
+		if( !mcx_let || !mcx_msk || !mcx_val )
+		{
+			free( mcx_let ); free( mcx_msk ); free( mcx_val );
+			mcx_let = mcx_msk = NULL; mcx_val = NULL; mcx_cap = 0;
+			return;
+		}
 	}
 	memset( mcx_let, 0, 8 * (size_t)nlev ); memset( mcx_msk, 0, nlev );
 	for( b=0; b<mcx_nblk; b++ ) for( c=0; c<8; c++ )
@@ -468,6 +493,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 #endif
 
 	mc_ready = 0;
+	fill = NULL;
 	if( mc_alloc < lgth2 + 2 )
 	{
 		free( mc_perm ); free( mc_gstart ); free( mc_gcnt ); free( mc_goff ); free( mc_vstart ); free( mc_glet ); free( mc_val );
@@ -478,6 +504,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 		mc_goff = malloc( sizeof( int ) * mc_alloc );
 		mc_vstart = malloc( sizeof( int ) * mc_alloc );
 		mc_glet = NULL; mc_val = NULL;
+		if( !mc_perm || !mc_gstart || !mc_gcnt || !mc_goff || !mc_vstart ) { key = colgrp = keyoff = keycnt = tab = NULL; hash = NULL; goto nomem; }
 	}
 	key = malloc( sizeof( int ) * ( lgth2 * nalphabets + 1 ) );
 	colgrp = malloc( sizeof( int ) * ( lgth2 + 1 ) );
@@ -486,10 +513,11 @@ static void mc_build( double **cpmx2, int lgth2 )
 	hash = malloc( sizeof( unsigned long long ) * ( lgth2 + 1 ) );
 	for( tabsize=64; tabsize < 2*lgth2+2; tabsize*=2 ) ;
 	tab = malloc( sizeof( int ) * tabsize );
+	if( !key || !colgrp || !keyoff || !keycnt || !hash || !tab ) goto nomem;
 	for( k=0; k<tabsize; k++ ) tab[k] = -1;
 
 #if defined(MAFFT_AVX512)
-	if( nalphabets <= 32 ) { colm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ); cpmx_colmask( cpmx2, nalphabets, lgth2, colm ); }
+	if( nalphabets <= 32 ) { colm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ); if( colm ) cpmx_colmask( cpmx2, nalphabets, lgth2, colm ); }
 #endif
 	for( j=0; j<lgth2; j++ )
 	{
@@ -527,10 +555,12 @@ static void mc_build( double **cpmx2, int lgth2 )
 	for( j=0; j<lgth2; j++ ) mc_gstart[colgrp[j]+1]++;
 	for( g=0; g<nkey; g++ ) mc_gstart[g+1] += mc_gstart[g];
 	fill = malloc( sizeof( int ) * ( nkey + 1 ) );
+	if( !fill ) goto nomem;
 	for( g=0; g<nkey; g++ ) fill[g] = mc_gstart[g];
 	for( j=0; j<lgth2; j++ ) mc_perm[fill[colgrp[j]]++] = j;
 	free( mc_glet );
 	mc_glet = malloc( sizeof( int ) * ( keylen + 1 ) );
+	if( !mc_glet ) goto nomem;
 	n = 0;
 	for( g=0; g<nkey; g++ )
 	{
@@ -543,6 +573,7 @@ static void mc_build( double **cpmx2, int lgth2 )
 	}
 	free( mc_val );
 	mc_val = malloc( sizeof( double ) * ( n + 1 ) );
+	if( !mc_val ) goto nomem;
 	for( g=0; g<nkey; g++ )
 	{
 		int gs = mc_gstart[g], gsize = mc_gstart[g+1] - gs;
@@ -560,6 +591,15 @@ static void mc_build( double **cpmx2, int lgth2 )
 #endif
 	mc_len = lgth2;
 	mc_ready = 1;
+	return;
+nomem: /* out of memory: mc_ready stays 0 and match_calc takes the original loop */
+	free( key ); free( colgrp ); free( keyoff ); free( keycnt ); free( hash ); free( tab ); free( fill );
+#if defined(MAFFT_AVX512)
+	free( colm );
+#endif
+	free( mc_perm ); free( mc_gstart ); free( mc_gcnt ); free( mc_goff ); free( mc_vstart ); free( mc_glet ); free( mc_val );
+	mc_perm = mc_gstart = mc_gcnt = mc_goff = mc_vstart = mc_glet = NULL; mc_val = NULL;
+	mc_alloc = 0;
 }
 
 #ifndef MAFFT_AVX2_MCMATCH
@@ -591,7 +631,11 @@ static void mc_match( double *match, double **cpmx1, int i1, int lgth2 )
 	int g, k, n;
 	double *scarr;
 	static TLS int scalloc = 0;
-	if( scalloc < nalphabets ) { free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc ); }
+	if( scalloc < nalphabets )
+	{
+		free( mc_scarr ); scalloc = nalphabets; mc_scarr = malloc( sizeof( double ) * scalloc );
+		if( !mc_scarr ) ErrorExit( "Cannot allocate memory." );
+	}
 	scarr = mc_scarr;
 	scarr_fill( scarr, n_dis_consweight_multi, cpmx1, i1 );
 #if defined(MAFFT_AVX512)
@@ -738,6 +782,7 @@ static void match_calc( double *match, double **cpmx1, double **cpmx2, int i1, i
 		if( nalphabets <= 32 )
 		{
 			unsigned int *cm = malloc( sizeof( unsigned int ) * ( lgth2 + 1 ) ), m;
+			if( !cm ) ErrorExit( "Cannot allocate memory." );
 			cpmx_colmask( cpmx2, nalphabets, lgth2, cm );
 			for( j=0; j<lgth2; j++ )
 			{
@@ -987,6 +1032,7 @@ static void at_expand( char **seq, char **mseq, int n, int *col, int ncol, int c
 	int nw = ( ncol + 63 ) / 64, w;
 	unsigned long long *m = malloc( sizeof( unsigned long long ) * ( nw + 1 ) );
 	const __m512i vgap = _mm512_set1_epi8( gapc );
+	if( !m ) ErrorExit( "Cannot allocate memory." );
 	for( w=0; w<nw; w++ )
 	{
 		unsigned long long mm = 0;
@@ -1090,6 +1136,7 @@ static void Atracking_localhom( double *impwmpt, double *lasthorizontalw, double
 	   across all sequences, without touching icyc+jcyc cache lines per column. */
 	col1 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
 	col2 = malloc( sizeof( int ) * ( lgth1+lgth2+2 ) );
+	if( !col1 || !col2 ) ErrorExit( "Cannot allocate memory." );
 	cp = lgth1+lgth2;
 	iin = lgth1; jin = lgth2;
 	*impwmpt = 0.0;
@@ -1378,37 +1425,13 @@ static void partA_row( int i, int lgth2, double *prev, double *cur, double *m, i
 		}
 		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
 	}
-#elif defined(MAFFT_AVX512)
-	/* The running best as a prefix scan over (value, position) pairs, 8 at a time: a later pair
-	   replaces an earlier one only if its value is strictly greater (ties keep the earlier, as '>'), which is
-	   associative, so three shift+compare+blend steps (and the carry from the previous block)
-	   give each lane exactly the scalar loop's best and bi.  Blends, not max, so ties between
-	   -0 and +0 resolve as in the scalar loop. */
-	{
-		__m512d cv = _mm512_set1_pd( best ), vpre = _mm512_set1_pd( gf1vapre );
-		__m256i ck = _mm256_set1_epi32( bi ), vk = _mm256_setr_epi32( 0, 1, 2, 3, 4, 5, 6, 7 ), veight = _mm256_set1_epi32( 8 );
-		for( ; j+8<=lgth2; j+=8 )
-		{
-			__m512d x = VMULADD( _mm512_loadu_pd( ogcp2 + j ), vpre, _mm512_loadu_pd( prev + j - 1 ) ), e;
-			__m256i t = vk, f;
-			__mmask8 c;
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 7 ) ); f = _mm256_alignr_epi32( t, ck, 7 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 6 ) ); f = _mm256_alignr_epi32( t, ck, 6 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			e = _mm512_castsi512_pd( _mm512_alignr_epi64( _mm512_castpd_si512( x ), _mm512_castpd_si512( cv ), 4 ) ); f = _mm256_alignr_epi32( t, ck, 4 );
-			c = _mm512_cmp_pd_mask( x, e, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, e, x ); t = _mm256_mask_blend_epi32( c, f, t );
-			c = _mm512_cmp_pd_mask( x, cv, _CMP_GT_OQ ); x = _mm512_mask_blend_pd( c, cv, x ); t = _mm256_mask_blend_epi32( c, ck, t );
-			_mm512_storeu_pd( MI + j + 1, x );
-			_mm256_storeu_si256( (__m256i *)( MPI + j + 1 ), t );
-			cv = _mm512_permutexvar_pd( _mm512_set1_epi64( 7 ), x );
-			ck = _mm256_permutexvar_epi32( _mm256_set1_epi32( 7 ), t );
-			vk = _mm256_add_epi32( vk, veight );
-		}
-		best = _mm512_cvtsd_f64( cv ); bi = _mm256_cvtsi256_si32( ck );
-	}
 #elif defined(MAFFT_AVX2_PATHS)
-	/* The AVX-512 scan above, 4 at a time. */
+	/* The running best as a prefix scan over (value, position) pairs, 4 at a time: a later pair
+	   replaces an earlier one only if its value is strictly greater (ties keep the earlier, as '>'),
+	   which is associative, so two shift+compare+blend steps (and the carry from the previous
+	   block) give each lane exactly the scalar loop's best and bi.  Blends, not max, so ties
+	   between -0 and +0 resolve as in the scalar loop.  MAFFT_AVX2_SHORT_SCAN applies the carry
+	   as the AVX-512 scan above does. */
 	{
 		__m256d cv = _mm256_set1_pd( best ), vpre = _mm256_set1_pd( gf1vapre );
 		__m128i ck = _mm_set1_epi32( bi ), vk = _mm_setr_epi32( 0, 1, 2, 3 ), vfour = _mm_set1_epi32( 4 );
@@ -2013,6 +2036,7 @@ double partA__align( char **seq1, char **seq2, double *eff1, double *eff2, int i
 		rowalloc = lgth2+2;
 		rowMI = malloc( sizeof( double ) * rowalloc );
 		rowMPI = malloc( sizeof( int ) * rowalloc );
+		if( !rowMI || !rowMPI ) ErrorExit( "Cannot allocate memory." );
 	}
 	lastj = lgth2+1;
 

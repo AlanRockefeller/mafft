@@ -37,7 +37,7 @@
 
 
 
-#define VERSION "7.526-opt8-dikarya5"
+#define VERSION "7.526-opt9"
 /* Exact terminal no-gain refinement reuse. Both the worker and Falign must
  * see the same switch; -DMAFFT_REJECT_MEMO=0 retains the original work. */
 #ifndef MAFFT_REJECT_MEMO
@@ -45,14 +45,15 @@
 #endif
 /* Multi-worker refinement that commits attempts in branch order, so it computes
  * the one-worker alignment.  -DMAFFT_ORDERED_REFINE=0, or MAFFT_ORDERED_REFINE=0
- * in the environment, retains the original completion-order commits. */
+ * (or off, false, no, in any case) in the environment, retains the original
+ * completion-order commits. */
 #ifndef MAFFT_ORDERED_REFINE
 #define MAFFT_ORDERED_REFINE 1
 #endif
 #define MAFFT_FALIGN_SAFETY ( MAFFT_REJECT_MEMO || MAFFT_ORDERED_REFINE )
-/* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout. Preserve
-   the designated opt8 reference's header byte-for-byte across this speedup. */
-#define ALIGNMENT_VERSION "7.526-opt8"
+/* Unlike diagnostics, the CLUSTAL version stamp is alignment stdout: keep
+   stock 7.526's header so --clustalout output is byte-identical to stock. */
+#define ALIGNMENT_VERSION "7.526"
 #define SHOWVERSION reporterr( "%s (%s) Version " VERSION "\nalg=%c, model=%s, amax=%3.1f\n%d thread(s)\n\n", progName( argv[0] ), (dorp=='d')?"nuc":((nblosum==-2)?"text":"aa"), alg, modelname, specificityconsideration, nthread )
 
 #if defined(MAFFT_AVX512)

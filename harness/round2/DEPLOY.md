@@ -1,10 +1,20 @@
-# Deploy the audited Dikarya4 build
+# Deploy the audited Dikarya5 build
 
-This script deployed dikarya4 to Dikarya production on 2026-10-21. It is pinned to that
-build's hashes; deploying dikarya5 needs its own audited bundle and updated pins
-(`VERSION`, `BUILD_SHA`, `INSTALL_SHA` and the default `--build`).
+> **Status (checked 2026-10-24):** dikarya5 is the production build. The public command
+> `/opt/mafft-7.526-opt8/bin/mafft` was switched to
+> `/opt/mafft-releases/mafft-7.526-opt8-dikarya5-c81eb9794e14` on 2026-10-22 at 05:59 UTC
+> (activation link `.mafft-release-20261022T055923Z-…`; dikarya4's is from 2026-10-21 at
+> 23:58 UTC), and Dikarya's job logs report `Version 7.526-opt8-dikarya5` from that day on.
+> The deployment records under `/opt/mafft-releases/deployments/` are readable only by root;
+> rollback to dikarya4 uses the record of the 2026-10-22 transaction, as described
+> [below](#rollback). The unreleased opt9 has not been built as a bundle or deployed; see
+> [the draft procedure](#draft-deploying-opt9-not-done).
 
-`deploy.py` installs the already validated **7.526-opt8-dikarya4** binary bundle.
+This script deployed dikarya4 to Dikarya production on 2026-10-21 and is now pinned to
+the **7.526-opt8-dikarya5** bundle (source tag `v7.526-opt8-dikarya5`). To deploy
+dikarya4 again, use this script as of commit `8933faa` (the dikarya4 source is tag `v7.526-opt8-dikarya4`).
+
+`deploy.py` installs the already validated **7.526-opt8-dikarya5** binary bundle.
 It uses Python 3.10+ and the studied Linux x86-64 AVX2 VM, without a compiler,
 network access or additional Python packages. It verifies the pinned build,
 installed-file, corpus and golden-manifest hashes before making changes.
@@ -14,7 +24,7 @@ The research records use `/opt/mafft-7.526-opt8/bin/mafft` and some historical
 opt5 paths; `command -v mafft` currently finds the distribution installation.
 The command below uses the recorded opt8 path explicitly.
 
-From the `mafft-round2` worktree, preview the deployment:
+From a worktree of this repository, preview the deployment:
 
 ```sh
 python3 harness/round2/deploy.py deploy \
@@ -32,7 +42,7 @@ sudo python3 harness/round2/deploy.py deploy \
   --entrypoint /opt/mafft-7.526-opt8/bin/mafft --apply
 ```
 
-Default artifacts are the sibling `round2/dikarya4-r2-build`,
+Default artifacts are the sibling `round2/dikarya5-build`,
 `bench/production-corpus.json`, `bench/data`, `bench/golden/production-t1` and
 `bench/golden.sha256`. Override their locations with `--build`, `--corpus`,
 `--data`, `--golden` and `--golden-manifest`. The bundle needs its `build.json`,
@@ -70,8 +80,10 @@ and byte-compares real golden outputs on four representative inputs:
 | `t4lr` | Direction adjustment and FFT-NS-i via `--auto` |
 | `icv1` | Accurate direction adjustment and the recorded noniterative strategy |
 
-Every input runs with A (`--thread 1`) and F (`--thread 2 --threadit 1`), keeping
-its recorded strategy and direction flags. For a full 200-job check, add
+Every input runs with A (`--thread 1`) and F (`--thread 2 --threadit 1`), and L-INS-i
+inputs (`--localpair`) also with O (plain `--thread 2`, ordered refinement), keeping
+its recorded strategy and direction flags. FFT-NS-i keeps stock two-thread refinement,
+so O is not compared with the golden there. For a full 200-job check, add
 `--validation full`. These are sequential correctness checks; their durations
 are not performance measurements. `--timeout` sets a per-command limit,
 defaulting to 600 seconds. A timed-out/interrupted validation kills only its
@@ -125,12 +137,15 @@ rollback to them may be needed. The script performs no garbage collection.
 Deployment passes caller arguments through. Configure the scheduler separately:
 
 - Backlog with two available CPUs: two independent `--thread 1` jobs.
-- A lone request with both CPUs free: `--thread 2 --threadit 1` is the measured
-  latency option preserving the tested one-thread outputs.
+- A lone request with both CPUs free: plain `--thread 2`. From dikarya5 its L-INS-i
+  refinement commits in one-worker order and gives the one-thread output, about 1.26x
+  faster than `--thread 2 --threadit 1`
+  ([round-3 report](../../paper/round3-ordered-refinement.md)). FFT-NS-i (`--auto` on
+  some inputs) still refines in completion order with two threads.
 - Include downstream tree searches in the same two-CPU budget.
 
 `--threadit 0` was repeatable in the study but changed some alignments relative
-to A. Ordinary `--thread 2` refinement was nondeterministic. The
+to A. Through dikarya4, ordinary `--thread 2` refinement was nondeterministic. The
 [performance report](../../paper/round2-performance.md) records the measured
 benefits and their limits; the
 [phylogenetic study](../../paper/round2-phylogenetics.md) does not rank biological
@@ -147,3 +162,31 @@ The tests use disposable fake installations and exercise dry runs, relocation,
 file/link/absent rollback, failed pre/post checks, competing changes, locks,
 corrupt backups, helper pinning and timeout cleanup. Production paths are never
 used by the tests.
+
+## Draft: deploying opt9 (not done)
+
+Nothing below has been run. opt9 (branch `audit-fixes`) changes no alignment output that
+Dikarya uses: the round-2 corpus goldens and stock `--thread 1` output are unchanged, and the
+only stdout change, the CLUSTAL header (`v7.526` instead of `7.526-opt8`), affects
+`--clustalout`, which Dikarya does not use. Each step needs the owner's approval.
+
+1. **Release commit.** Merge `audit-fixes` into `exact-speedups`, set the release date in
+   `core/mafft.tmpl` (`v7.526-opt9 (YYYY/Mon/DD)`), and tag `v7.526-opt9`.
+2. **Bundle.** Build from a clean archive of the tag, as for dikarya4:
+   `git archive v7.526-opt9 | tar -x -C "$src"` then
+   `python3 harness/round2/build.py --source "$src" --output round2/opt9-build --jobs 1`
+   (GCC, `-O3 -march=native -ffp-contract=off -g`, the dikarya5 bundle's flags).
+3. **Check against stock.** `harness/verify-against-stock.sh --full --cflags "-O3 -march=native
+   -ffp-contract=off"` (675 cases), then the 100-input corpus through the bundle against
+   `bench/golden/production-t1`: every input with `--thread 1` and with
+   `--thread 2 --threadit 1`, and plain `--thread 2` only on the L-INS-i inputs (FFT-NS-i keeps
+   stock two-thread refinement, as in the validation table above), as for dikarya5
+   ([round-3 evidence](../../paper/round3-ordered-refinement.md#evidence)).
+4. **Pin the script.** In `deploy.py`, set `SOURCE_COMMIT`, `VERSION`
+   (`v7.526-opt9 (…)`), `BUILD_SHA`, `INSTALL_SHA` and `RELEASE_NAME` from the new bundle's
+   `build.json` and `binary-sha256.json`; the corpus and golden hashes stay. Run
+   `python3 -m unittest test_deploy -v`.
+5. **Dry run**, then **`--apply`** with the owner's go-ahead, exactly as in
+   [the deployment section above](#deploy-the-audited-dikarya5-build); keep the printed
+   rollback command.
+

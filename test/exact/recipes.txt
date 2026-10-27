@@ -1,0 +1,15 @@
+# name          simseq.py arguments (harness/exact/simseq.py); regenerate with harness/exact/make_fixtures.py
+dna40           1 40 600 dna
+dna80dup        2 80 650 dna rate=0.12 dup=0.15
+dna60rc         3 60 500 dna rc=0.2
+dna50amb        4 50 700 dna n=0.2 iupac=0.2 lower=1
+dna120frag      5 120 600 dna rate=0.05 dup=0.3 frag=0.1
+dna40outlier    11 40 600 dna outlier=0.1
+dna20alldup     15 20 600 dna dup=1
+dna30near       16 30 600 dna rate=0.01
+aa60            8 60 250 aa rate=0.15 dup=0.1 frag=0.1
+aa40div         14 40 400 aa rate=0.3 indel=0.5 lower=1
+dna6x5k         21 6 5000 dna
+dna12small      31 12 300 dna rate=0.1
+aa12small       32 12 150 aa rate=0.15
+dna24div        41 24 400 dna rate=0.3 indel=0.3

@@ -1954,6 +1954,9 @@ static double score2dist( double pscore, double selfscore1, double selfscore2)
  */
 static l11res *gpupairs = NULL;
 static int gpun = 0;
+/* Host memory of the precompute (pair lists, result tables, aligned strings) above which
+   every pair stays on the CPU, as it does without a GPU. */
+#define GPUPAIRS_MAXBYTES ( 256.0 * 1024 * 1024 )
 
 static size_t gpuidx( int i, int j ) /* i < j */
 {
@@ -1989,6 +1992,7 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 		A[(int)amino[a]][(int)amino[b]] = (double)n_dis_consweight_multi[a][b];
 	for( a=0; a<0x100; a++ ) if( used[a] ) code[a] = ncode++;
 	mtx = calloc( ( ncode+1 ) * ( ncode+1 ), sizeof( int ) );
+	if( !mtx ) { FreeDoubleMtx( A ); return; } /* out of memory: every pair on the CPU */
 	for( a=0; a<0x100; a++ ) if( used[a] ) for( b=0; b<0x100; b++ ) if( used[b] )
 	{
 		v = A[a][b];
@@ -1998,10 +2002,13 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 	}
 	FreeDoubleMtx( A );
 
+	/* pi, pj and the gpupairs table hold every pair */
+	if( (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) > GPUPAIRS_MAXBYTES ) { free( mtx ); return; }
 	lens = malloc( sizeof( int ) * njob );
-	for( i=0; i<njob; i++ ) lens[i] = strlen( seq[i] );
 	pi = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
 	pj = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
+	if( !lens || !pi || !pj ) { free( pi ); free( pj ); free( lens ); free( mtx ); return; }
+	for( i=0; i<njob; i++ ) lens[i] = strlen( seq[i] );
 	for( i=0; i<njob-1; i++ ) for( j=i+1; j<njob; j++ )
 	{
 		if( !lens[i] || !lens[j] ) continue;
@@ -2012,7 +2019,8 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 		total += 2.0 * ( lens[i] + lens[j] + 1 );
 		pi[np] = i; pj[np] = j; np++;
 	}
-	if( np && total < 1.0e9 )
+	/* plus the results of the pairs sent, and their aligned strings */
+	if( np && (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) + (double)np * sizeof( l11res ) + total <= GPUPAIRS_MAXBYTES )
 	{
 		l11res *r = calloc( np, sizeof( l11res ) );
 		if( r && l11gpu_align( njob, seq, lens, code, ncode, mtx, penalty, penalty_ex, ithr, *newgapstr, np, pi, pj, r ) )

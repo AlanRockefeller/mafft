@@ -12,8 +12,11 @@ import json
 import os
 from pathlib import Path
 import resource
-import subprocess
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "exact"))
+from caserun import run_group  # noqa: E402  (kills the whole process group on timeout)
 
 MODES = {
     "production": [],  # per-input options from the corpus manifest; --threads still explicit
@@ -98,7 +101,7 @@ def main():
                     before = resource.getrusage(resource.RUSAGE_CHILDREN)
                     started = time.monotonic()
                     with dest.open("xb") as out, dest.with_suffix(".stderr").open("xb") as err:
-                        result = subprocess.run(argv, env=env, stdout=out, stderr=err, timeout=a.timeout)
+                        result = run_group(argv, env=env, stdout=out, stderr=err, timeout=a.timeout)
                     elapsed = time.monotonic() - started
                     after = resource.getrusage(resource.RUSAGE_CHILDREN)
                     record = dict(build=name, input=source.name, input_sha256=digest(source),
@@ -113,14 +116,18 @@ def main():
                                   outblocks=after.ru_oublock - before.ru_oublock,
                                   voluntary_switches=after.ru_nvcsw - before.ru_nvcsw,
                                   involuntary_switches=after.ru_nivcsw - before.ru_nivcsw,
-                                  returncode=result.returncode, output_sha256=digest(dest),
+                                  returncode=result["returncode"], timed_out=result["timed_out"],
+                                  launch_error=result["launch_error"], output_sha256=digest(dest),
                                   stderr_sha256=digest(dest.with_suffix(".stderr")))
                     record["cpu"] = record["user"] + record["system"]
                     text = dest.with_suffix(".stderr").read_text(errors="replace")
                     record["strategy"] = next((s for s in ("L-INS-i", "FFT-NS-i", "FFT-NS-2", "G-INS-i", "E-INS-i") if s in text), "unknown")
-                    ok = result.returncode == 0 and dest.stat().st_size > 0
+                    ok = result["returncode"] == 0 and not result["timed_out"] and dest.stat().st_size > 0
                     if a.golden:
                         gold = a.golden / f"{a.mode}-t{a.threads}" / source.name
+                        if a.freeze and not ok:
+                            # never freeze a timed-out, failed or empty output as a golden
+                            raise SystemExit(f"failed: {argv}; nothing frozen; retained {dest}")
                         if a.freeze:
                             gold.parent.mkdir(parents=True, exist_ok=True)
                             with gold.open("xb") as f:

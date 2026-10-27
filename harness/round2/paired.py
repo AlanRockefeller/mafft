@@ -97,7 +97,10 @@ def main():
     if logpath.exists():
         for line in logpath.read_text().splitlines():
             r = json.loads(line)
-            if (r['returncode'] or not r['identical'] or digest(r['alignment']) != r['output_sha256']
+            # Same failure criteria as the runner below, which stops after logging such a record.
+            if (r['returncode'] or r.get('timed_out') or r.get('resources_error') or r.get('cpu') is None
+                    or not r['identical'] or not Path(r['alignment']).stat().st_size
+                    or digest(r['alignment']) != r['output_sha256']
                     or r['golden_sha256'] != golden_hashes[r['input']]
                     or digest(Path(r['alignment']).parent / 'stderr.txt') != r['stderr_sha256']):
                 raise SystemExit('Prior failed/changed record; preserve it and choose a new directory')

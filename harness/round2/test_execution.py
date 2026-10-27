@@ -61,7 +61,8 @@ class AlignmentExecutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             source=root/'fixture.fasta';source.write_text('>a\nACGT\n')
-            binary=root/'fixture-binary';binary.write_text('fixture')
+            (root/'prefix/bin').mkdir(parents=True);(root/'prefix/libexec/mafft').mkdir(parents=True)
+            binary=root/'prefix/bin/mafft';binary.write_text('fixture')
             manifest=root/'manifest.json'
             manifest.write_text(json.dumps({'files':[{'file':source.name,'sha256':sha256_file(source),
                                                       'production_threads':2,'production_options':[]}]}))
@@ -80,6 +81,36 @@ class AlignmentExecutionTests(unittest.TestCase):
             self.assertIsNone(row['resources'])
             self.assertFalse(row['resources_complete'])
             self.assertFalse(json.loads((output/'STATUS.json').read_text())['finished'])
+
+
+    def test_installed_hashes_cover_a_release_and_refuse_other_layouts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for name in ['bin/mafft','payload/bin/mafft','payload/libexec/mafft/tbfast','other/lone/mafft']:
+                (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_text(name)
+            self.assertEqual(sorted(alignments.installed_hashes(root/'bin/mafft')),
+                             ['bin/mafft','payload/bin/mafft','payload/libexec/mafft/tbfast'])
+            with self.assertRaisesRegex(SystemExit,'--binary must be'):
+                alignments.installed_hashes(root/'other/lone/mafft')
+
+    def test_resume_refuses_a_rebuilt_libexec_program(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            source=root/'fixture.fasta';source.write_text('>a\nACGT\n')
+            (root/'prefix/bin').mkdir(parents=True);(root/'prefix/libexec/mafft').mkdir(parents=True)
+            binary=root/'prefix/bin/mafft';binary.write_text('launcher')
+            program=root/'prefix/libexec/mafft/tbfast';program.write_text('build 1')
+            manifest=root/'manifest.json'
+            manifest.write_text(json.dumps({'files':[{'file':source.name,'sha256':sha256_file(source),
+                                                      'production_threads':2,'production_options':[]}]}))
+            argv=['alignments.py','--manifest',str(manifest),'--data',str(root),'--binary',str(binary),
+                  '--output',str(root/'results'),'--configs','B','--replicates','0','--a-replicates','0']
+            version=SimpleNamespace(stdout='fixture',stderr='')
+            with patch('sys.argv',argv),patch('alignments.subprocess.run',return_value=version),patch('sys.stdout',new_callable=io.StringIO):
+                alignments.main()
+                program.write_text('build 2')
+                with self.assertRaisesRegex(SystemExit,'resume metadata mismatch: installed_file_sha256'):
+                    alignments.main()
 
 
 class PlanExecutionTests(unittest.TestCase):
