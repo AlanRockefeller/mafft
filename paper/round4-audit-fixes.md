@@ -542,3 +542,12 @@ the fix, failed 39 L-INS-i cases (all of them on the `LBAND_NEG * 4` overflow of
 which is how the overflow was found. The scalar build does not compile the band
 (`MAFFT_LBAND` is 0), and objcheck shows its objects unchanged. arm64, Metal and CUDA remain
 unverified here.
+
+**`dna20alldup`, regenerated after the review of PR #3.** Up to this point `simseq.py` made
+`dup=1` by random copying, so the fixture called "all duplicates" in section 4
+held a few distinct sequences, about six copies each. `dup=1` now makes every sequence the
+same, and the fixture holds 20 identical sequences. Every result above used the old file.
+The new one, at production flags (gcc 13.3 `-O3 -march=native -ffp-contract=off`), passed
+the fast matrix (163/163, which includes it in the threaded cases) and every full-matrix case
+on it (63/63: 12 strategies, ordered and jitter runs at 2–4 threads, and the forced
+fallbacks).

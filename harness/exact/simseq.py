@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """simseq.py SEED NSEQ ROOTLEN dna|aa [dup=F rc=F n=F lower=1 iupac=F rate=F frag=F indel=F outlier=F] > out.fa
-Random-tree sequence family with substitutions and indels."""
+Random-tree sequence family with substitutions and indels; dup=1 makes every sequence the same."""
 import random, sys
 a = sys.argv[1:]; seed, nseq, rootlen, typ = int(a[0]), int(a[1]), int(a[2]), a[3]
 opt = dict(x.split('=') for x in a[4:]); f = lambda k, d: float(opt.get(k, d))
@@ -30,7 +30,11 @@ for i, s in enumerate(seqs):
     if typ == 'dna' and rng.random() < f('rc', 0): s = s.translate(comp)[::-1]
     if opt.get('lower') == '1' and rng.random() < 0.3: s = s.lower()
     seqs[i] = s
-for _ in range(int(round(f('dup', 0) * nseq))): seqs[rng.randrange(nseq)] = seqs[rng.randrange(nseq)]
+if f('dup', 0) >= 1:
+    seqs = [seqs[0]] * nseq  # every sequence the same
+else:
+    for _ in range(round(f('dup', 0) * nseq)):
+        seqs[rng.randrange(nseq)] = seqs[rng.randrange(nseq)]
 rng.shuffle(seqs)
 for i, s in enumerate(seqs):
     print('>s%d_%d' % (i, rng.randrange(10**6)))
