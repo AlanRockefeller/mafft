@@ -3,6 +3,8 @@
 usage: treetest.py run   ITER OUT JOB.fasta...   (2 parallel IQ-TREE workers)
        treetest.py score OUT
 Alignments: ref = ITER/JOB.cap1000.fa (must match golden), cap2/cap3 = ITER/JOB.capN.fa when they differ.
+OUT/JOB must not exist yet. The strong-clade contradiction counts add both directions: strong
+clades of the first tree contradicted by the second, plus those of the second by the first.
 """
 import hashlib, itertools, json, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +15,7 @@ from tree import parse_newick, IndexedTree, incompatible, ZERO_THRESHOLD, SHALRT
 TRIMAL = '/home/tree/miniforge3/bin/trimal'
 IQTREE = '/opt/iqtree-3.1.4-dikarya1/bin/iqtree3'
 SEEDS = (73111, 73129)
+W = Path(__file__).resolve().parents[4]
 
 
 def fasta(path):
@@ -29,7 +32,10 @@ def fasta(path):
 def prepare(iterdir, out, job):
     """Write renamed (t0..tN, by alignment order) copies of each distinct alignment; return tasks."""
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    golden = {l.split()[1].lstrip('*').split('/')[-1]: l.split()[0] for l in open(W / 'bench/golden.sha256')}
     ref = iterdir / f'{job}.cap1000.fa'
+    if sha(ref) != golden[job]:
+        sys.exit(f'{ref}: not the golden alignment')
     names = [n for n, _ in fasta(ref)]
     variants = {'ref': ref}
     for cap in ('2', '3'):
@@ -37,26 +43,24 @@ def prepare(iterdir, out, job):
         if sha(p) != sha(ref) and all(sha(p) != sha(q) for q in variants.values()):
             variants['cap' + cap] = p
     tasks = []
-    d = out / job; d.mkdir(parents=True, exist_ok=True)
+    d = out / job; d.mkdir(parents=True)  # fails on a reused OUT: no stale trims or trees
     for tag, p in variants.items():
         recs = fasta(p)
         assert [n for n, _ in recs] == names, (job, tag)
         (d / f'{tag}.fa').write_text(''.join(f'>t{i}\n{s}\n' for i, (_, s) in enumerate(recs)))
+        # trim here, once, before either seed's IQ-TREE run is scheduled
+        subprocess.run(['nice', '-n', '19', TRIMAL, '-in', str(d / f'{tag}.fa'), '-out', str(d / f'{tag}.trim.fa'), '-gt', '0.1'],
+                       check=True, capture_output=True)
         tasks += [(d, tag, seed) for seed in SEEDS]
     return tasks
 
 
 def run(task):
     d, tag, seed = task
-    trimmed = d / f'{tag}.trim.fa'
-    if not trimmed.exists():
-        subprocess.run(['nice', '-n', '19', TRIMAL, '-in', str(d / f'{tag}.fa'), '-out', str(trimmed), '-gt', '0.1'],
-                       check=True, capture_output=True)
     prefix = d / f'{tag}.s{seed}'
-    if not Path(str(prefix) + '.treefile').exists():
-        subprocess.run(['nice', '-n', '19', IQTREE, '-s', str(trimmed), '-m', 'GTR+F+G4', '--alrt', '1000',
-                        '-T', '1', '-seed', str(seed), '--prefix', str(prefix), '-redo', '-quiet'],
-                       check=True, capture_output=True)
+    subprocess.run(['nice', '-n', '19', IQTREE, '-s', str(d / f'{tag}.trim.fa'), '-m', 'GTR+F+G4', '--alrt', '1000',
+                    '-T', '1', '-seed', str(seed), '--prefix', str(prefix), '-redo', '-quiet'],
+                   check=True, capture_output=True)
     return str(prefix)
 
 
