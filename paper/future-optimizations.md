@@ -243,8 +243,9 @@ cap 2, and for the 9 distinct cap-3 alignments, the current and capped alignment
 Dikarya's pipeline: trimAl 1.5 `-gt 0.1`, then IQ-TREE 3.1.4-dikarya1 `-m GTR+F+G4 --alrt
 1000 -T 1` with seeds 73111 and 73129. Topology is compared by normalized Robinson–Foulds
 distance with zero-length branches collapsed. Contradictions count clades with SH-aLRT ≥ 80 in
-one tree that are incompatible with a split of the other. Seed noise is measured as the same
-two quantities between the two seeds on one alignment.
+either tree that are incompatible with a split of the other, so the counts in the tables add
+both directions. Seed noise is measured as the same two quantities between the two seeds on
+one alignment.
 
 | Cap | Jobs changed | Mean RF above seed noise | Strong-clade contradictions in every cross pair, above seed noise |
 | ---: | ---: | ---: | --- |
@@ -252,8 +253,9 @@ two quantities between the two seeds on one alignment.
 | 3 | 9 | 2, by 0.025 and 0.072 | 1: `7xqo` (1; seeds 0) |
 
 - **`ib0b` fails clearly.** It has 42 sequences and an F1 of 0.9996 against the current
-  alignment, yet every capped tree contradicts 7–8 well-supported clades. Alignment
-  similarity does not predict the tree effect.
+  alignment, yet the current and capped trees contradict 7–8 of each other's well-supported
+  clades; the capped trees contradict 3–4 of the current trees' 16–17. Alignment similarity
+  does not predict the tree effect.
 - **Below 100 sequences is outside Dikarya's earlier evidence.** `--auto` itself runs 1000
   iterations there, and 10 of the 56 short jobs are in that range. Any cap should exclude
   them, and even 100–199 sequences gave one consistent single-clade loss (`ppo5`).
@@ -269,8 +271,8 @@ the same renamed alignments, as do `o9i3` and `zdku`, so they count once below.
 - **Cap 2 fails on long jobs of every size.** `2x7u` has 265 sequences, `ceuc` 140 and `4gfa`
   135.
 - **Cap 3 is not always closer than cap 2.** On `9rjy` (24 sequences), the cap-2 trees equal
-  the current ones, but the cap-3 trees contradict 9 of its 15 well-supported clades, at an
-  F1 of 0.994.
+  the current ones, but the cap-3 trees contradict 5 of the current trees' 15 well-supported
+  clades (9 counting both directions), at an F1 of 0.994.
 - **Both long cap-3 failures have fewer than 100 sequences** (`9rjy`, `cbsy` with 22).
 
 **Conclusion.** No cap is safe as a blanket switch. Cap 3 restricted to jobs with at least 100
