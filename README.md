@@ -1,6 +1,6 @@
 # MAFFT 7.526 with exact speedups (unofficial fork)
 
-> **This is an unofficial fork of MAFFT which is 10x faster, while giving the same results. 
+> **This is an unofficial fork of MAFFT which is up to 10x faster, while giving the same results. 
 > It is not affiliated with or endorsed by the MAFFT authors.**
 >
 > Created by Josh Walker and Alan Rockefeller using Claude Code and Codex.
@@ -38,13 +38,32 @@ than dikarya5 overall (holdout 1.10x, difficult 1.06x); 8 of the 100 inputs were
 slower, the worst (`buh4`) by 6%.
 [Details](paper/round4-audit-fixes.md#8-phase-4-speedups).
 
+**opt9 on the pipeline's machines**, against stock built the same way, on its L-INS-i test set
+(real ITS alignments of about 180 sequences, `--thread 1` per run; a batch of 16 run four at a
+time on 4-vCPU AWS instances, eight at a time on the M1; stock, opt8 and opt9 interleaved in
+one session per machine, 2026-10-27; every output identical to stock's):
+
+| machine | batch of 16 | single runs | opt9 vs opt8 |
+|---|---:|---:|---:|
+| Apple M1, clang, with the Metal GPU | 5.6x | 8.7x | 1.04–1.07x |
+| AWS c7a (AMD Zen 4), clang AVX-512 | 8.7x | 10.7x | 1.03–1.04x |
+| AWS c7i (Intel Sapphire Rapids), clang AVX-512 | 7.4x | 8.3x | 1.05–1.07x |
+| AWS c8g (Graviton4), clang | 5.1x | 5.7x | 1.05x |
+
+The newest tag is **`v7.526-opt9m`** (Josh Walker's): opt9 with the GPU precompute's memory cap
+raised from 256 MiB to 1 GiB, so that Apple silicon keeps using the GPU on large L-INS-i inputs
+(about 500 ITS sequences: 8.3 s instead of 24–26 s for the all-pairs stage on the M1). CPU
+builds are compiled exactly as opt9, so the Dikarya VM keeps running the `v7.526-opt9` bundle.
+Times and older machines are in the [changelog](CHANGELOG.md).
+
 The largest step since opt8 is **dikarya4's, by OpenAI Codex**: 1.45x faster than opt8 with
 `--thread 1` on this corpus. dikarya5 adds ordered refinement, which gives DNA L-INS-i runs
 with `--thread 2` the `--thread 1` alignment **1.50x faster** than `--thread 1` (33% lower
 latency; 56 later production inputs). **opt9**, a collaboration between OpenAI Codex (max
 reasoning) and Claude Code, adds an exact banded all-pairs fill (the 1.10x over dikarya5), the
 audit fixes and the verification tooling ([changelog](CHANGELOG.md)). dikarya4 was deployed to
-Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 was released on 2026-10-27.
+Dikarya production on 2026-10-21 and dikarya5 on 2026-10-22; opt9 was released on 2026-10-27,
+and `v7.526-opt9m` adds a larger GPU memory cap for Apple silicon.
 
 It was built for two projects that align fungal ITS sequences in production:
 
@@ -120,9 +139,9 @@ For clang on an FMA target add `--candidate-cflags -DMAFFT_STOCK_FMA=1`.
   cache alignments, include both in the cache key.
 - **Multi-threaded runs outside the ordered scope** (below) are as non-reproducible as stock's.
 - **Measured hardware:** the Dikarya rounds (dikarya2–dikarya5) were measured only on the
-  Dikarya AVX2 VM. Other architectures build the same source; since opt8 they have been checked
-  only by the fast matrix in CI (gcc on x86-64 and arm64 Linux, clang on x86-64), not timed.
-  Metal and CUDA builds have not been rerun since opt8.
+  Dikarya AVX2 VM. opt9 was also verified and timed on the M1 (with Metal), c7a, c7i and c8g
+  (table above); other architectures are checked by the fast matrix in CI (gcc on x86-64 and
+  arm64 Linux, clang on x86-64). CUDA builds have not been rerun since opt8.
 
 ## What is guaranteed
 
@@ -136,7 +155,7 @@ and flags.
 | `--thread N`, DNA L-INS-i, G-INS-i or E-INS-i (`--localpair`, `--globalpair`, `--genafpair` with `--maxiterate`), in the ordered scope | stock **`--thread 1`** | yes |
 | `--thread N`, other iterative refinement (FFT-NS-i, protein, RNA, the options below) | stock's own multi-threaded refinement | no, as in stock |
 | `--thread N`, no iterative refinement (e.g. FFT-NS-2) | stock's with the same threads; round 2 checked 72 non-iterative two-thread comparisons against opt8 | as in stock |
-| Metal or CUDA build | not rechecked for opt9; for opt8, the same build without the GPU (733,956 GPU alignments = CPU on the g6 test) | as above |
+| Metal or CUDA build | the same build without the GPU: Metal rechecked for opt9 on the M1 (canary 25/25, 132/132 timed alignments = stock references); CUDA last checked for opt8 (733,956 GPU alignments = CPU on the g6 test) | as above |
 
 The ordered scope is decided at run time by `refinement_attempt_reproducible()` in
 `core/tditeration.c`; stderr says `Ordered refinement: N workers commit in one-worker order.`
@@ -190,6 +209,7 @@ None of these changes the output, except as noted for `MAFFT_ORDERED_REFINE`.
 | `MAFFT_ORDERED_REFINE=0` (or `off`, `false`, `no`, any case) | stock completion-order multi-worker refinement instead of ordered refinement (`--thread N` output may then vary run to run, as in stock) |
 | `MAFFT_REJECT_MEMO_STATS=1` | print `REJECT_MEMO hits=… misses=… unsafe=…` on stderr after `--thread 1` refinement (opt9) |
 | `MAFFT_NOGPU` (any value) | Metal and CUDA builds run everything on the CPU |
+| `MAFFT_GPU_MAXMB=N` | Metal and CUDA builds: host memory (MiB) above which the all-pairs GPU precompute is skipped and every pair runs on the CPU; default 1024 (opt9m; 256 in opt9) |
 | `MAFFT_GPU_SOURCE` (any value) | macOS: compile the Metal kernel from source at run time instead of using the built-in library |
 | `L11GPU_VERBOSE`, `L11GPU_LOG=FILE` | GPU timing diagnostics on stderr, or one line per call appended to `FILE` |
 | `MAFFT_NODUPCACHE` (any value) | turn off reuse of duplicate-pair local alignments |
@@ -300,8 +320,8 @@ Per-version results are in the [changelog](CHANGELOG.md); the reports are indexe
 
 ## For the MAFFT maintainers
 
-`git diff 0a2319b v7.526-opt9 -- core/` is the whole change of the latest release against
-upstream `main` (`0a2319b`, the newest official source as of 2026-10-07). The feature tests are all in
+`git diff 0a2319b v7.526-opt9m -- core/` is the whole change of the latest release
+against upstream `main` (`0a2319b`, the newest official source as of 2026-10-07). The feature tests are all in
 `core/mafft_simd.h`, and each vector path keeps a scalar version of the same algorithm. Only
 `core/` differs from upstream; `extensions/` is unchanged.
 
@@ -323,6 +343,8 @@ upstream `main` (`0a2319b`, the newest official source as of 2026-10-07). The fe
 - **opt9**: a collaboration between OpenAI Codex (max reasoning) and Claude Code (Claude Opus
   5.5, Anthropic), with Alan Rockefeller directing. opt9 builds on dikarya4, whose 1.45x over
   opt8 is Codex's work.
+- **opt9m**: Claude Code (Claude Opus 5.5, Anthropic), with Josh Walker advising: opt9
+  verified and timed on Apple silicon, AWS x86 and Graviton, and the GPU memory cap raised.
 - MAFFT itself is by Kazutaka Katoh and colleagues. Please cite MAFFT as its authors ask
   (see the official site).
 
