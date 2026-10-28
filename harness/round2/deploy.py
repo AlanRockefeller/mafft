@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage the audited Dikarya5 build, verify it, then atomically activate MAFFT.
+"""Stage the audited opt9 build, verify it, then atomically activate MAFFT.
 
 Dry-run by default. Requires Python 3.10+, Linux, and no third-party modules.
 The public entrypoint is explicit; pipeline arguments are passed through.
@@ -25,13 +25,13 @@ import time
 import uuid
 
 
-SOURCE_COMMIT = '9f3a58408f2036593e4907263f2fbcaa5241ea65'
-VERSION = 'v7.526-opt8-dikarya5 (2024/Apr/26)'
-BUILD_SHA = '680743b3060648b6c573b425bcef57607ecf9b631b1660efb90c0aa130fa9cbe'
-INSTALL_SHA = 'c81eb9794e1476a986ddfc6a21823b27a542c2f1d565fc873e56df7c04a94066'
+SOURCE_COMMIT = '9d391cf6f6f4114fce929413bc3137b88548acbe'
+VERSION = 'v7.526-opt9 (2026/Oct/27)'
+BUILD_SHA = 'a45a927deed3cc98819320702e7670697eea54de7d65d1e1a0536d09f783c152'
+INSTALL_SHA = 'c8ade5a0b948bd7deacbebbb14737b37d12fe844cadaeb28d5c85269c85bd783'
 CORPUS_SHA = '65cb78000f3d7315bdef8906ba273317242a102b1e3c958b1f0e18bb1f1999b7'
 GOLDEN_SHA = 'c1313b0d4696313bbefc1a6b453654be32e6f73221557cd5b658fd11053ba444'
-RELEASE_NAME = 'mafft-7.526-opt8-dikarya5-' + INSTALL_SHA[:12]
+RELEASE_NAME = 'mafft-7.526-opt9-' + INSTALL_SHA[:12]
 SCHEMA = 'mafft-production-deployment-v1'
 SMOKE_INPUTS = ('1msv.fasta', 'buh4.fasta', 't4lr.fasta', 'icv1.fasta')
 THREADS = {'A': ['--thread', '1'], 'F': ['--thread', '2', '--threadit', '1'], 'O': ['--thread', '2']}
@@ -559,7 +559,7 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     d = sub.add_parser('deploy', help='Verify/stage the audited build and activate an explicit command')
     d.add_argument('--entrypoint', type=Path, required=True, help='The production mafft command to replace atomically')
-    d.add_argument('--build', type=Path, default=WORKSPACE / 'round2/dikarya5-build')
+    d.add_argument('--build', type=Path, default=WORKSPACE / 'round2/opt9-build')
     d.add_argument('--releases-dir', type=Path, default=Path('/opt/mafft-releases'))
     d.add_argument('--corpus', type=Path, default=WORKSPACE / 'bench/production-corpus.json')
     d.add_argument('--data', type=Path, default=WORKSPACE / 'bench/data')

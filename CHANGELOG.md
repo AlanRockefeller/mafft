@@ -6,7 +6,40 @@ Each released version is a tag on the `exact-speedups` branch, a linear series o
 build. Newest first. Terms are explained in the
 [glossary](README.md#glossary).
 
-## `7.526-opt9` — unreleased (branch `opt9-docs`, PR #3)
+## `v7.526-opt9m` — opt9 with a larger GPU memory cap
+
+opt9 (below, unchanged otherwise) with two changes for Apple silicon, plus measurements of
+opt9 on the pipeline's machines.
+
+- **GPU precompute cap raised from 256 MiB to 1 GiB**, and `MAFFT_GPU_MAXMB` (MiB) sets
+  another value. At 256 MiB the M1 skipped the GPU on the pipeline's largest L-INS-i windows
+  (532 and 498 ITS sequences need 256–320 MiB): the all-pairs stage of the 532-sequence window
+  took 24–26 s instead of 8.3 s. With the GPU on, that window peaks at about 460 MB against
+  290 MB for stock; 1 GiB is about opt8's limit. Only Metal and CUDA builds contain this code;
+  CPU builds compile exactly as opt9. Output is unchanged (the cap only chooses the GPU or the
+  CPU, which agree).
+- `harness/verify-against-stock.sh` runs under macOS's bash 3.2 (it stopped with
+  `extra[@]: unbound variable`).
+
+**opt9 on the pipeline's L-INS-i test set** (real ITS alignments of about 180 sequences,
+`--thread 1` per run): a batch of 16 run four at a time on 4-vCPU AWS instances, eight at a
+time on the M1, plus single runs; stock, opt8 and opt9 interleaved in one session per machine
+(2026-10-27). On these inputs the GPU cap does not apply, so opt9 and opt9m run the same way.
+
+| machine | batch: stock / opt8 / opt9 | opt9 vs stock | single runs: stock / opt8 / opt9 | opt9 vs stock | opt9 vs opt8 |
+|---|---|---|---|---|---|
+| Apple M1, clang, with the Metal GPU | 324.5 / 60.0 / 57.5 s | 5.6× | 1051.9 / 128.8 / 120.5 s | 8.7× | 1.04–1.07× |
+| AWS c7a (Zen 4), clang AVX-512 | 408.3 / 48.0 / 46.7 s | 8.7× | 206.3 / 20.0 / 19.3 s | 10.7× | 1.03–1.04× |
+| AWS c7i (Sapphire Rapids), clang AVX-512 | 622 / 88 / 84 s | 7.4× | 188.3 / 24.5 / 22.8 s | 8.3× | 1.05–1.07× |
+| AWS c8g (Graviton4), clang | 377.3 / 77.3 / 74.0 s | 5.1× | 174.0 / 32.2 / 30.7 s | 5.7× | 1.05× |
+
+With `--adjustdirection` the batch times were within 1–3% of these on every machine. Every
+timed output matched stock's. Verification of opt9 on these machines: canary 25/25 everywhere
+(M1 with and without the GPU); the 183-alignment test set = Mac references on c7a, c7i and
+c8g; the 163-case fast matrix of `verify-against-stock.sh` 163/163 on all four;
+`--adjustdirection` outputs = stock.
+
+## `v7.526-opt9` — exact banded all-pairs fill
 
 An exact banded all-pairs fill, audit fixes and verification infrastructure. Details and
 evidence: [round-4 report](paper/round4-audit-fixes.md).
@@ -33,9 +66,9 @@ evidence: [round-4 report](paper/round4-audit-fixes.md).
 - Every allocation the fast paths added is checked; an allocation failure takes the original
   computation where the function has one, else exits as stock's allocators do. The GPU
   all-pairs precompute is skipped (every pair on the CPU) when it would need more than 256 MB
-  of host memory.
+  of host memory (1 GiB in opt9m).
 - A restored EUC-JP comment, a deleted unreachable AVX-512 block, the version string
-  `v7.526-opt9 (2026/Oct/24)`.
+  `v7.526-opt9 (2026/Oct/27)`.
 - New verification: `harness/verify-against-stock.sh` (builds stock and this tree with the same
   flags and compares output byte for byte), the public fixtures in `test/exact/`, a CI workflow,
   ordered-refinement stress and ThreadSanitizer triage tools, and harness runners whose resumes

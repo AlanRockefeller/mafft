@@ -37,7 +37,7 @@
 
 
 
-#define VERSION "7.526-opt9"
+#define VERSION "7.526-opt9m"
 /* Exact terminal no-gain refinement reuse. Both the worker and Falign must
  * see the same switch; -DMAFFT_REJECT_MEMO=0 retains the original work. */
 #ifndef MAFFT_REJECT_MEMO

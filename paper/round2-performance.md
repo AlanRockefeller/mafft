@@ -34,8 +34,8 @@ machine](broadwell-dikarya2.md), was checked against the actual filesystem rathe
 than assumed correct from remembered paths. All 88 relevant core source files in
 the previous working tree matched the verified handoff and `bench/final2`
 snapshot. Those successful, previously uncommitted changes were preserved in
-commit `8894774` and branch `archive/dikarya2-verified`. This round uses the
-separate `mafft-round2` worktree and branch `perf/dikarya-round2`.
+commit `8894774` and branch `archive/dikarya2-verified`. This round used
+branch `perf/dikarya-round2` (merged into `exact-speedups`).
 
 The original opt8 source remains independently available at commit
 `322527b8f0b4b6b030cd4325a8aafe7c970a5764` and `bench/opt8`. Its production
@@ -456,7 +456,7 @@ exploratory audit that merged keys across invocations is superseded by the
 tested parser and `round2/rejected-branch-audit`.
 
 The isolated, default-off prototype is preserved on branch
-`experiment/rejected-branch-memo` in the separate `mafft-reject-memo` worktree.
+`experiment/rejected-branch-memo` (on GitHub, `ad2ccd1`).
 It retains exact rejected scores and original convergence-history updates,
 invalidating every branch after an acceptance. Guards restrict it to one worker,
 BAATARI2, fixed tree/order, zero cut, DNA, ordinary constrained profile alignment,

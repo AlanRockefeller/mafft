@@ -107,5 +107,5 @@ fi
 echo "stock:     $("$stock_prefix/bin/mafft" --version 2>&1)"
 echo "candidate: $("$work/inst/candidate/bin/mafft" --version 2>&1)"
 exec python3 "$here/exact/matrix.py" --stock "$stock_prefix/bin/mafft" \
-  --candidate "$work/inst/candidate/bin/mafft" "${test_args[@]}" \
-  --out "$work/matrix" --jobs "$jobs" $full "${extra[@]}"
+  --candidate "$work/inst/candidate/bin/mafft" ${test_args[@]+"${test_args[@]}"} \
+  --out "$work/matrix" --jobs "$jobs" $full ${extra[@]+"${extra[@]}"}

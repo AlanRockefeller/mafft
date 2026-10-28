@@ -1,20 +1,34 @@
-# Deploy the audited Dikarya5 build
+# Deploy the audited opt9 build
 
-> **Status (checked 2026-10-24):** dikarya5 is the production build. The public command
+> **Status (checked 2026-10-27):** opt9 is the production build. The public command
 > `/opt/mafft-7.526-opt8/bin/mafft` was switched to
-> `/opt/mafft-releases/mafft-7.526-opt8-dikarya5-c81eb9794e14` on 2026-10-22 at 05:59 UTC
-> (activation link `.mafft-release-20261022T055923Z-…`; dikarya4's is from 2026-10-21 at
-> 23:58 UTC), and Dikarya's job logs report `Version 7.526-opt8-dikarya5` from that day on.
-> The deployment records under `/opt/mafft-releases/deployments/` are readable only by root;
-> rollback to dikarya4 uses the record of the 2026-10-22 transaction, as described
-> [below](#rollback). The unreleased opt9 has not been built as a bundle or deployed; see
-> [the draft procedure](#draft-deploying-opt9-not-done).
+> `/opt/mafft-releases/mafft-7.526-opt9-c8ade5a0b948` on 2026-10-27 at 15:50 UTC (activation
+> link `.mafft-release-20261027T154953Z-c2ho44yh`, smoke validation passed); it reports
+> `v7.526-opt9 (2026/Oct/27)`. dikarya5 (`…-dikarya5-c81eb9794e14`, activated 2026-10-22 at
+> 05:59 UTC) and dikarya4 remain installed. The deployment records under
+> `/opt/mafft-releases/deployments/` are readable only by root. To return to dikarya5:
+>
+> ```sh
+> sudo python3 harness/round2/deploy.py rollback \
+>   --deployment /opt/mafft-releases/deployments/20261027T154953Z-c2ho44yh/deployment.json --apply
+> ```
+>
+> Rollback to dikarya4 would then use the record of the 2026-10-22 transaction, as described
+> [below](#rollback). How the bundle was made: [the opt9 bundle](#the-opt9-bundle).
+>
+> Dikarya job logs since then report `Version 7.526-opt9` (checked on job `3twe`,
+> 2026-10-27 22:56). A permanent, root-owned copy is at `/usr/local/src/mafft-opt9`. It holds
+> this repository (`mafft/`, branch `opt9-release`), the deployed bundle
+> (`round2/opt9-build/`) and the validation corpus and goldens (`bench/`), in the layout this
+> script expects, so `deploy.py` runs there with no extra flags. Its `SHA256SUMS` and
+> `SYMLINKS` verify the tree.
 
-This script deployed dikarya4 to Dikarya production on 2026-10-21 and is now pinned to
-the **7.526-opt8-dikarya5** bundle (source tag `v7.526-opt8-dikarya5`). To deploy
-dikarya4 again, use this script as of commit `8933faa` (the dikarya4 source is tag `v7.526-opt8-dikarya4`).
+This script deployed dikarya4 to Dikarya production on 2026-10-21 and dikarya5 on
+2026-10-22, and is now pinned to the **7.526-opt9** bundle (source tag `v7.526-opt9`). To
+deploy dikarya5 again, use this script as of commit `307a46f` (source tag
+`v7.526-opt8-dikarya5`); for dikarya4, as of commit `8933faa` (tag `v7.526-opt8-dikarya4`).
 
-`deploy.py` installs the already validated **7.526-opt8-dikarya5** binary bundle.
+`deploy.py` installs the already validated **7.526-opt9** binary bundle.
 It uses Python 3.10+ and the studied Linux x86-64 AVX2 VM, without a compiler,
 network access or additional Python packages. It verifies the pinned build,
 installed-file, corpus and golden-manifest hashes before making changes.
@@ -42,7 +56,7 @@ sudo python3 harness/round2/deploy.py deploy \
   --entrypoint /opt/mafft-7.526-opt8/bin/mafft --apply
 ```
 
-Default artifacts are the sibling `round2/dikarya5-build`,
+Default artifacts are the sibling `round2/opt9-build`,
 `bench/production-corpus.json`, `bench/data`, `bench/golden/production-t1` and
 `bench/golden.sha256`. Override their locations with `--build`, `--corpus`,
 `--data`, `--golden` and `--golden-manifest`. The bundle needs its `build.json`,
@@ -163,30 +177,37 @@ file/link/absent rollback, failed pre/post checks, competing changes, locks,
 corrupt backups, helper pinning and timeout cleanup. Production paths are never
 used by the tests.
 
-## Draft: deploying opt9 (not done)
+## The opt9 bundle
 
-Nothing below has been run. opt9 (branch `audit-fixes`) changes no alignment output that
-Dikarya uses: the round-2 corpus goldens and stock `--thread 1` output are unchanged, and the
-only stdout change, the CLUSTAL header (`v7.526` instead of `7.526-opt8`), affects
-`--clustalout`, which Dikarya does not use. Each step needs the owner's approval.
+opt9 changes no alignment output that Dikarya uses: the round-2 corpus goldens and stock
+`--thread 1` output are unchanged, and the only stdout change, the CLUSTAL header (`v7.526`
+instead of `7.526-opt8`), affects `--clustalout`, which Dikarya does not use. Done on
+2026-10-27 on the Dikarya VM, at nice 19:
 
-1. **Release commit.** Merge `audit-fixes` into `exact-speedups`, set the release date in
-   `core/mafft.tmpl` (`v7.526-opt9 (YYYY/Mon/DD)`), and tag `v7.526-opt9`.
-2. **Bundle.** Build from a clean archive of the tag, as for dikarya4:
-   `git archive v7.526-opt9 | tar -x -C "$src"` then
-   `python3 harness/round2/build.py --source "$src" --output round2/opt9-build --jobs 1`
-   (GCC, `-O3 -march=native -ffp-contract=off -g`, the dikarya5 bundle's flags).
-3. **Check against stock.** `harness/verify-against-stock.sh --full --cflags "-O3 -march=native
-   -ffp-contract=off"` (675 cases), then the 100-input corpus through the bundle against
-   `bench/golden/production-t1`: every input with `--thread 1` and with
-   `--thread 2 --threadit 1`, and plain `--thread 2` only on the L-INS-i inputs (FFT-NS-i keeps
-   stock two-thread refinement, as in the validation table above), as for dikarya5
-   ([round-3 evidence](../../paper/round3-ordered-refinement.md#evidence)).
-4. **Pin the script.** In `deploy.py`, set `SOURCE_COMMIT`, `VERSION`
-   (`v7.526-opt9 (…)`), `BUILD_SHA`, `INSTALL_SHA` and `RELEASE_NAME` from the new bundle's
-   `build.json` and `binary-sha256.json`; the corpus and golden hashes stay. Run
-   `python3 -m unittest test_deploy -v`.
-5. **Dry run**, then **`--apply`** with the owner's go-ahead, exactly as in
-   [the deployment section above](#deploy-the-audited-dikarya5-build); keep the printed
-   rollback command.
+1. **Release commit.** PR #3 was merged into `exact-speedups` (`c961b51`); `9d391cf` dates the
+   launcher `v7.526-opt9 (2026/Oct/27)` and is tagged `v7.526-opt9`.
+2. **Bundle.** From a clean archive of the tag (`git archive v7.526-opt9 | tar -x -C "$src"`):
+   `python3 harness/round2/build.py --source "$src" --output round2/opt9-build --jobs 2`
+   (GCC 13.3, `-O3 -march=native -ffp-contract=off -g`, the dikarya5 bundle's flags). 57
+   installed files; `build.json` sha256 `a45a927d…`, `binary-sha256.json` sha256 `c8ade5a0…`.
+3. **Check against stock.** `harness/verify-against-stock.sh --full --cflags "-O3
+   -march=native -ffp-contract=off"` on the tag: 675/675 cases identical to stock 7.526
+   (`0a2319b`, same flags); two inputs are rejected with the same nonzero exit by both builds.
+4. **Pin the script.** `deploy.py` pins `SOURCE_COMMIT` `9d391cf`, `VERSION`
+   `v7.526-opt9 (2026/Oct/27)`, the two bundle hashes and `RELEASE_NAME`
+   `mafft-7.526-opt9-c8ade5a0b948`; the corpus and golden hashes are unchanged.
+   `python3 -m unittest test_deploy`: 27 tests OK.
+5. **Rehearsal.** A real `deploy --apply --validation full` into a scratch release root and
+   entry point: activated and verified, 298 golden checks (all 100 corpus inputs with A and
+   F, the 97 L-INS-i inputs with O, and the post-activation run), all byte-identical to
+   `bench/golden/production-t1`.
+6. **Apply**, run by the owner on 2026-10-27 (activated and verified; record
+   `deployments/20261027T154953Z-c2ho44yh`):
 
+   ```sh
+   sudo python3 harness/round2/deploy.py deploy \
+     --entrypoint /opt/mafft-7.526-opt8/bin/mafft --apply
+   ```
+
+   The default smoke validation reruns 1msv, buh4, t4lr and icv1 before the switch; add
+   `--validation full` to rerun the whole corpus there (about 30 minutes).
