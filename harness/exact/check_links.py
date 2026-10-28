@@ -26,20 +26,22 @@ def slug(text):
     return text.replace(' ', '-')
 
 
-def lines_outside_code(path):
+def lines_outside_code(path, keep_spans=False):
+    """Lines outside fenced blocks; inline code spans are removed unless keep_spans
+    (headings keep them: GitHub slugs the span's text)."""
     inside = False
     for n, line in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
         if FENCE.match(line):
             inside = not inside
             continue
         if not inside:
-            yield n, re.sub(r'`[^`]*`', '', line)
+            yield n, line if keep_spans else re.sub(r'`[^`]*`', '', line)
 
 
 def anchors(path, cache={}):
     if path not in cache:
         seen, out = {}, set()
-        for _, line in lines_outside_code(path):
+        for _, line in lines_outside_code(path, keep_spans=True):
             m = HEADING.match(line)
             if m:
                 s = slug(m.group(2))
