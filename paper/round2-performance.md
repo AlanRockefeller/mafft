@@ -456,7 +456,7 @@ exploratory audit that merged keys across invocations is superseded by the
 tested parser and `round2/rejected-branch-audit`.
 
 The isolated, default-off prototype is preserved on branch
-`experiment/rejected-branch-memo` (local to the Dikarya host's clone).
+`experiment/rejected-branch-memo` (on GitHub, `ad2ccd1`).
 It retains exact rejected scores and original convergence-history updates,
 invalidating every branch after an acceptance. Guards restrict it to one worker,
 BAATARI2, fixed tree/order, zero cut, DNA, ordinary constrained profile alignment,
