@@ -257,12 +257,32 @@ two quantities between the two seeds on one alignment.
 - **Below 100 sequences is outside Dikarya's earlier evidence.** `--auto` itself runs 1000
   iterations there, and 10 of the 56 short jobs are in that range. Any cap should exclude
   them, and even 100–199 sequences gave one consistent single-clade loss (`ppo5`).
-- **Long jobs:** the same tree test on the 26 that change at cap 2 is in progress.
+**Tree test on the long jobs** (2026-10-28), the same pipeline, on the 26 jobs that change
+at cap 2 and the 17 that change at cap 3. Three corpus entries (`1mhv`, `f1q8`, `asmt`) give
+the same renamed alignments, as do `o9i3` and `zdku`, so they count once below.
+
+| Cap | Distinct alignments changed | Mean RF above seed noise | Strong-clade contradictions in every cross pair, above seed noise |
+| ---: | ---: | ---: | --- |
+| 2 | 23 | 10, by 0.011–0.056 (`cbsy` 0.105) | 4: `2x7u` (10–11 clades; seeds 1–2), `cbsy` (4; seeds 0), `ceuc` (2–4; seeds 0), `4gfa` (2; seeds 0) |
+| 3 | 16 | 6, by 0.008–0.056 (`cbsy` 0.105, `9rjy` 0.381) | 2: `9rjy` (9; seeds 0), `cbsy` (3; seeds 0) |
+
+- **Cap 2 fails on long jobs of every size.** `2x7u` has 265 sequences, `ceuc` 140 and `4gfa`
+  135.
+- **Cap 3 is not always closer than cap 2.** On `9rjy` (24 sequences), the cap-2 trees equal
+  the current ones, but the cap-3 trees contradict 9 of its 15 well-supported clades, at an
+  F1 of 0.994.
+- **Both long cap-3 failures have fewer than 100 sequences** (`9rjy`, `cbsy` with 22).
+
+**Conclusion.** No cap is safe as a blanket switch. Cap 3 restricted to jobs with at least 100
+sequences comes closest: it changed 21 distinct alignments (9 short, 12 long), and one of
+them (`7xqo`, short) consistently lost one clade. Offering even that would need a larger tree
+test first.
+The rows are in [tried and rejected](tried-and-rejected.md#output-changing-attempts).
 
 Scripts and run records: [`harness/round2/cycle_cap/`](../harness/round2/cycle_cap/).
 `cycles.json` holds the cycles run per job, from the dikarya5 `--thread 1` refinement logs.
 `itercap.py` runs the caps and writes `short.jsonl` and `long.jsonl`. `treetest.py` runs and
-scores the tree test, and `trees-short.json` is its per-job output.
+scores the tree test, and `trees-short.json` and `trees-long.json` are its per-job output.
 
 ### 2.2 Align the distinct sequences, copy duplicates back
 
@@ -326,9 +346,10 @@ largest change to the method; research.
 ## Suggested order
 
 1. Profile opt9 on the corpus.
-2. Run 2.2 (duplicates) and 2.3 (FMA) through the tree test, and finish it for 2.1 on long
-   jobs. They need little or no code and have the largest likely gains. On short jobs 2.1 has
-   failed the test once (`ib0b`, above), so it is not a blanket switch.
+2. Run 2.2 (duplicates) and 2.3 (FMA) through the tree test. They need little or no code and
+   have the largest likely gains. 2.1 failed the test on short and long jobs (`ib0b`, `2x7u`,
+   `9rjy`, above), so it is not a blanket switch; cap 3 at ≥ 100 sequences would need a
+   larger test.
 3. In parallel, the exact items: 1.1 (tighter band bound), 1.5 (direction check and
    re-scoring) and 1.3(a)–(b).
 4. 1.4 (importance locality), 2.4 and 2.5 only if the profile still points there.
