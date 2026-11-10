@@ -5,7 +5,7 @@ name: exact
 
 on:
   push:
-    branches: [exact-speedups, audit-fixes]
+    branches: [exact-speedups, test]
   pull_request:
   workflow_dispatch:
     inputs:
