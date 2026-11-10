@@ -1955,8 +1955,25 @@ static double score2dist( double pscore, double selfscore1, double selfscore2)
 static l11res *gpupairs = NULL;
 static int gpun = 0;
 /* Host memory of the precompute (pair lists, result tables, aligned strings) above which
-   every pair stays on the CPU, as it does without a GPU. */
-#define GPUPAIRS_MAXBYTES ( 256.0 * 1024 * 1024 )
+   every pair stays on the CPU, as it does without a GPU.  1 GiB: L-INS-i of ~500 ITS
+   sequences needs ~300 MiB here, on top of the ~300 MiB stock itself uses, and every
+   machine with a usable GPU (8 GB or more) has room for it. */
+#define GPUPAIRS_MAXBYTES ( 1024.0 * 1024 * 1024 )
+
+/* The limit above, or MAFFT_GPU_MAXMB (in MiB) when that is set.  Read once per run. */
+static double gpupairs_maxbytes( void )
+{
+	char *e = getenv( "MAFFT_GPU_MAXMB" ), *end;
+	double mb;
+	if( !e || !*e ) return( GPUPAIRS_MAXBYTES );
+	mb = strtod( e, &end );
+	if( end == e || *end || !( mb >= 0.0 ) )
+	{
+		reporterr( "Ignoring MAFFT_GPU_MAXMB=%s (not a number of MiB); using %.0f.\n", e, GPUPAIRS_MAXBYTES / ( 1024 * 1024 ) );
+		return( GPUPAIRS_MAXBYTES );
+	}
+	return( mb * 1024 * 1024 );
+}
 
 static size_t gpuidx( int i, int j ) /* i < j */
 {
@@ -1967,7 +1984,7 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 {
 	int code[0x100], chof[0x100], ncode = 0, a, b, i, j, *mtx, *lens, *pi, *pj, np = 0, maxabs = 0, ithr;
 	unsigned char used[0x100];
-	double **A, v, total = 0.0;
+	double **A, v, total = 0.0, maxbytes;
 
 	gpupairs = NULL;
 	if( alg != 'L' || use_fft || !store_localhom || nadd || trywarp || getenv( "MAFFT_NOGPU" ) ) return;
@@ -2003,7 +2020,8 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 	FreeDoubleMtx( A );
 
 	/* pi, pj and the gpupairs table hold every pair */
-	if( (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) > GPUPAIRS_MAXBYTES ) { free( mtx ); return; }
+	maxbytes = gpupairs_maxbytes();
+	if( (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) > maxbytes ) { free( mtx ); return; }
 	lens = malloc( sizeof( int ) * njob );
 	pi = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
 	pj = malloc( sizeof( int ) * ( (size_t)njob * ( njob - 1 ) / 2 ) );
@@ -2020,7 +2038,7 @@ static void gpupairs_prepare( int njob, char **seq, int *targetmap, int alloclen
 		pi[np] = i; pj[np] = j; np++;
 	}
 	/* plus the results of the pairs sent, and their aligned strings */
-	if( np && (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) + (double)np * sizeof( l11res ) + total <= GPUPAIRS_MAXBYTES )
+	if( np && (double)njob * ( njob - 1 ) / 2 * ( 2 * sizeof( int ) + sizeof( l11res ) ) + (double)np * sizeof( l11res ) + total <= maxbytes )
 	{
 		l11res *r = calloc( np, sizeof( l11res ) );
 		if( r && l11gpu_align( njob, seq, lens, code, ncode, mtx, penalty, penalty_ex, ithr, *newgapstr, np, pi, pj, r ) )
